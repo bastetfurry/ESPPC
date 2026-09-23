@@ -1,0 +1,16 @@
+.pio/
+.vscode/*
+!.vscode/extensions.json
+*.bin
+tools/bios
+compile_commands.json
+.cache/
+
+# Disk images in data/ are NOT committed by default: a rescue disk built from retail DOS is
+# not redistributable. Once it is rebuilt on FreeDOS (which is freely redistributable), drop
+# the exclusion for that one file, eg:  !data/rescue-freedos.img
+data/fs/*.img
+
+# Hard disk / floppy images used for testing are not committed either: they are large (the
+# MS-DOS install is 80MB) and, when built from retail DOS, not redistributable.
+images/*.img
