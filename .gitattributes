@@ -1,0 +1,12 @@
+# src/biosrom.h is generated from tools/bios.asm by tools/cbios.sh -- it is a hex dump of the
+# assembled BIOS ROM, so a one-instruction change shifts everything after it and produces a
+# diff of hundreds of unreadable lines.
+#
+# It is committed on purpose (a clone then builds without needing nasm), but treated as a
+# build artefact:
+#   -diff                  git shows "Binary files differ" instead of the hex dump
+#   linguist-generated     collapsed in pull requests, excluded from language stats
+#
+# Review the change in tools/bios.asm instead. On a merge conflict here, do not hand-resolve:
+# take either side, then regenerate with tools/cbios.sh.
+src/biosrom.h -diff linguist-generated
