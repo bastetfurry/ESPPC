@@ -697,7 +697,10 @@ bool Machine::setEGAMode(int biosMode)
   // Text modes on the EGA path. These are not the CGA text modes: characters live in plane 0,
   // attributes in plane 1 and the glyphs in plane 2, so the renderer draws whatever font the
   // guest has loaded rather than a fixed one out of ROM.
-  if (m_egaBiosLoaded && (biosMode == 0x02 || biosMode == 0x03)) {
+  if (m_egaBiosLoaded && biosMode <= 0x03) {
+
+    int textColumns = (biosMode <= 0x01) ? 40 : 80;
+
 
     m_graphicsAdapter.enableVideo(false);
 
@@ -726,15 +729,16 @@ bool Machine::setEGAMode(int biosMode)
     for (int i = 0; i < 16; ++i)
       m_EGAACPalette[i] = i;
 
-    m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), 80, m_EGA.bankMask(), m_EGA.offsetMask());
+    m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), textColumns, m_EGA.bankMask(), m_EGA.offsetMask());
     m_graphicsAdapter.setEGAStartAddress(0);
     m_graphicsAdapter.setEGACharHeight(14);
+    m_graphicsAdapter.setEGATextColumns(textColumns);
     m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
     m_graphicsAdapter.setBit7Blink(true);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_EGA_80x25_16Colors);
     m_graphicsAdapter.enableVideo(true);
 
-    printf("EGA: text mode %02X, 80x25 with the font in plane 2\n", biosMode);
+    printf("EGA: text mode %02X, %dx25 with the font in plane 2\n", biosMode, textColumns);
     return true;
   }
 

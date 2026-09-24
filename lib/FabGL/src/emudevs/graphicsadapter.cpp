@@ -167,7 +167,7 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     } else if (emulation == Emulation::PC_Text_EGA_80x25_16Colors) {
       // A text mode that does not use FontInfo: the glyphs come from plane 2. The geometry still
       // has to be published, because the cursor position is computed against getTextColumns().
-      m_columns = 80;
+      m_columns = m_egaTextColumns;
       m_rows    = m_VGADCtrl.getViewPortHeight() / m_egaCharHeight;
     }
   }
@@ -196,6 +196,7 @@ GraphicsAdapter::GraphicsAdapter()
     m_egaOffsetMask(0x7fff),
     m_egaStart(0),
     m_egaCharHeight(14),
+    m_egaTextColumns(80),
     m_egaPal2(nullptr)
 {
   for (int i = 0; i < 4; ++i)
@@ -840,13 +841,13 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_
 // m_egaCharHeight are used.
 void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t * dest, int scanLine)
 {
-  constexpr int COLUMNS = 80;
-
   auto ga = (GraphicsAdapter*) arg;
 
   if (!ga->m_egaBanks || !ga->m_egaPal2)
     return;
 
+  int columns    = ga->m_egaTextColumns;
+  int charWidth  = (columns >= 80) ? 8 : 16;      // 40 column modes double every pixel
   int charHeight = ga->m_egaCharHeight;
   int textRow    = scanLine / charHeight;
   int glyphRow   = scanLine % charHeight;
@@ -861,19 +862,17 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
   bool bit7blink = ga->m_bit7blink;
   bool blinktime = bit7blink && !((ga->m_frameCounter & 0x3f) < 0x1f);
 
-  // the palette table maps two 4 bit indices to two raw pixels; for text the two halves of the
-  // byte are the same index, so index it with 0x11 * colour to get a solid pair
   uint16_t const * P = ga->m_egaPal2;
 
-  uint32_t rowBase = (ga->m_egaStart + (uint32_t)textRow * COLUMNS) & ga->m_egaOffsetMask;
+  uint32_t rowBase = (ga->m_egaStart + (uint32_t)textRow * columns) & ga->m_egaOffsetMask;
 
-  for (int col = 0; col < COLUMNS; ++col) {
+  for (int col = 0; col < columns; ++col) {
 
     uint32_t o = (rowBase + col) & ga->m_egaOffsetMask;
     uint32_t w = ga->m_egaBanks[(o >> 13) & ga->m_egaBankMask][o & 8191];
 
-    uint8_t ch   = (uint8_t) w;             // plane 0
-    uint8_t attr = (uint8_t)(w >> 8);       // plane 1
+    uint8_t ch   = (uint8_t) w;             // plane 0: character
+    uint8_t attr = (uint8_t)(w >> 8);       // plane 1: attribute
 
     bool blink = false;
     if (bit7blink) {
@@ -881,21 +880,30 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
       attr &= 0x7f;
     }
 
-    // glyph row out of plane 2, 32 bytes per character
-    uint32_t go = ((uint32_t)ch * 32 + glyphRow) & ga->m_egaOffsetMask;
+    // plane 2 holds the glyphs, 32 bytes per character -- rewrite it and the font changes
+    uint32_t go   = ((uint32_t)ch * 32 + glyphRow) & ga->m_egaOffsetMask;
     uint8_t  bits = (uint8_t)(ga->m_egaBanks[(go >> 13) & ga->m_egaBankMask][go & 8191] >> 16);
 
     if (showCursor && col == cursorCol && glyphRow >= charHeight - 2)
       bits = 0xff;
 
-    uint16_t fg = P[(attr & 0x0f) * 0x11];
-    uint16_t bg = P[(attr >> 4) * 0x11];
+    uint8_t fg = (uint8_t) P[(attr & 0x0f) * 0x11];
+    uint8_t bg = (uint8_t) P[(attr >> 4) * 0x11];
     if (blink)
       fg = bg;
 
-    // FabGL's scanline byte order is swizzled in pairs, which the ^2 in the pixel index handles
-    for (int k = 0; k < 8; ++k)
-      dest[col * 8 + (k ^ 2)] = (uint8_t)(((bits >> (7 - k)) & 1) ? fg : bg);
+    int x0 = col * charWidth;
+    for (int k = 0; k < 8; ++k) {
+      uint8_t px = ((bits >> (7 - k)) & 1) ? fg : bg;
+      if (charWidth == 8) {
+        // FabGL's scanline byte order is swizzled in pairs
+        dest[(x0 + k) ^ 2] = px;
+      } else {
+        int x = x0 + k * 2;
+        dest[x ^ 2]       = px;
+        dest[(x + 1) ^ 2] = px;
+      }
+    }
   }
 }
 

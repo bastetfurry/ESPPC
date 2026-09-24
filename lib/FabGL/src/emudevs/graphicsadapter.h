@@ -122,6 +122,10 @@ public:
   // EGA text: character height in scanlines (14 for mode 3 on an EGA, 8 for 43 line mode)
   void setEGACharHeight(int h)                             { m_egaCharHeight = h; }
 
+  // EGA text: 40 or 80 columns. The 40 column modes are the same 640 pixel scanline with every
+  // pixel doubled, which is what halving the dot clock does on the real card.
+  void setEGATextColumns(int c)                            { m_egaTextColumns = c; m_columns = c; }
+
   // text modes methods
   void setCursorShape(int start, int end);
   void setCursorPos(int row, int column);
@@ -200,6 +204,7 @@ private:
   uint32_t            m_egaOffsetMask; // banks * EGA_BANK_ENTRIES - 1
   uint32_t            m_egaStart;      // first byte-column of the displayed page
   int16_t             m_egaCharHeight; // scanlines per character in EGA text
+  int16_t             m_egaTextColumns;
   uint8_t             m_egaPalette[16];
   uint32_t *          m_egaSpread[4];  // plane byte -> eight packed 4 bit pixel indices
   uint16_t *          m_egaPal2;       // two packed indices -> two raw VGA pixel bytes
