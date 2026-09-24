@@ -68,13 +68,27 @@ It still refuses the screen modes, so something further gates them.
 
 ## Ruled out, with evidence
 
-**The `AH=12h` answer.** Swept `CL` across all three capability classes (09, 0B, 00, 03, 06) plus
-`BL=0` variants. No change in any case.
+Every run below carried a positive control: `T.BAS` starts with `SCREEN 1`, which produces
+`VID04` on the serial line from `bios.asm`'s mode-set debug print. Without that control, "no EGA
+modes attempted" is indistinguishable from "the probe never ran" -- which did happen, twice. An
+earlier sweep was run *before* the control existed and had to be discarded and redone.
 
-That sweep is only trustworthy because the probe carries a positive control: `T.BAS` starts with
-`SCREEN 1`, which produces `VID04` on the serial line from `bios.asm`'s mode-set debug print. If
-the control is absent, "no EGA modes attempted" is indistinguishable from "the probe never ran" --
-which did happen, twice.
+**The whole `AH=12h BL=10h` answer space.** All controls passed, no EGA mode attempted in any case:
+
+| `CL` (switch settings) | `BL` (memory size) | result |
+|---|---|---|
+| 09, 03 (capability 0x08) | 1 | none |
+| 0B, 0A, 04, 05 (capability 0x10) | 1 | none |
+| 00 (capability 0x04) | 1 | none |
+| 0B | 0 (64 KB) | none |
+| 09, 0B, 03 | 3 (256 KB) | none |
+| 09 | 2 (192 KB) | none |
+
+`BH` is 0 (colour) throughout. So switch settings, capability class and reported memory size are
+all irrelevant to the decision.
+
+**The save pointer table at 40:A8 being non-zero.** Pointed it at zeroed BDA space; no change.
+(This does not rule out QBasic *following* the table and wanting real contents.)
 
 
 ## NOT ruled out: forcing the capability byte
@@ -138,6 +152,51 @@ Verify with `d f0dfa 20`; the sequence reads `80 FB 10 75 08 B7 00 B3 01 B5 00 B
   the monitor goes to the monitor's command parser, which answers `unknown command` and looks
   exactly like a machine that is ignoring you.
 - **Always give a guest-side probe a positive control.**
+
+
+## Using a real EGA BIOS instead
+
+86Box with a fully emulated EGA card runs QBasic's `SCREEN 7/8/9` correctly (and refuses 10, which
+wants a monochrome display -- consistent with the disassembly, where `BH` from `AH=12h` selects
+the mono branch). So a real EGA BIOS demonstrably satisfies whatever we are missing.
+
+Usable ROMs exist in the 86Box repository, e.g. `ibm_6277356_ega_card_u44_27128.bin` and
+`108281-001.bin`: 16 KB, valid `55AA` option ROM header, 32 blocks, checksum zero.
+
+**This is not a drop-in.** What it would take:
+
+1. POST has to scan for option ROMs -- C000..C7FF in 2 KB steps, check `55AA`, verify the
+   checksum, `call far` to offset 3. `bios.asm` does not do this today. Small piece of work.
+2. The BIOS then hooks INT 10h itself and sets up the save pointer table, the INT 1Fh/43h font
+   pointers, the BDA fields and the character generator -- all correctly, replacing a pile of our
+   hand-rolled approximations. That is the attraction.
+3. But it drives the hardware through **real registers**, so the emulation has to be accurate
+   enough to be driven by firmware rather than told what to do:
+   - **CRTC**: we have a CGA 6845, not an EGA CRTC. The real BIOS programs around 25 registers,
+     and the display mode would have to be *derived* from them instead of being handed to us by
+     the `AH=0Bh` hook in `helpersEntry`.
+   - **Sequencer**: clocking mode (8/9 dot, dot clock divided by two) and memory mode (odd/even,
+     chain) become live rather than stored and ignored.
+   - **Attribute Controller**: all 20 registers, including mode control.
+4. **Text modes would go through the EGA as well**, and this is the big one. A real EGA BIOS sets
+   modes 0..3 on the EGA: characters in plane 0, attributes in plane 1, and the font loaded into
+   plane 2, with odd/even addressing. The entire CGA text path at 0xB8000 gets bypassed, so we
+   would need a full EGA text renderer reading glyphs out of plane 2. That is exactly the
+   compatibility machinery this project deliberately sidestepped by keeping the CGA path intact.
+
+So it is a rewrite of the video subsystem, and it forces solving the EGA text problem that was
+avoided on purpose at the start.
+
+**Licensing:** these ROMs are IBM copyright 1984 and cannot be committed, the same constraint as
+the DOS disk images. They would have to be user supplied on the SD card or in SPIFFS, with a
+configuration option pointing at one.
+
+**Memory:** no internal RAM cost. 16 KB at guest 0xC0000 sits in the UMA hole, which is already
+part of the 1 MB of PSRAM.
+
+**Order of work, if it is wanted:** find the actual gate first. If it turns out to be one more
+INT 10h call or BDA field, it is cheap to add and the rewrite is unnecessary. Doing the rewrite
+without knowing the cause risks a large change that does not even fix the symptom.
 
 
 ## Is this worth more effort?
