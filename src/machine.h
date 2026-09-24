@@ -98,6 +98,10 @@ public:
   // BIOS. romPath is copied. Must be called before run().
   void setEGABios(char const * romPath);
   bool egaBiosInstalled() const                { return m_egaBiosLoaded; }
+
+  // Called from POST once the IVT is in place: points the option ROM's own INT 10h handler at
+  // this BIOS's handler, so the ROM is present and hooked but never actually drives the hardware.
+  void prepareVideoROM();
   int ramSizeKB()                              { return m_ramSizeKB; }
 
   void setSysReqCallback(SysReqCallback value) { m_sysReqCallback = value; }

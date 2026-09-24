@@ -13,7 +13,43 @@ The ROM shipped in `data/fs/ega.bin` is the IBM EGA BIOS (`ibm_6277356_ega_card_
 from the 86Box ROM set): 16 KB, valid `55AA` header, 32 blocks, checksum zero.
 
 
-## Status: initialisation runs, then dies in configuration dispatch
+## Status: the ROM initialises, and the machine boots
+
+The approach is deliberately "fake it": the ROM is real where it is *looked at*, and ours where it
+is *used*. POST calls the ROM's init, the init hooks INT 10h to its own handler, and the emulator
+has already rewritten the first instruction of that handler into a far jump back into this BIOS.
+The ROM therefore never drives hardware that is not emulated, while everything that inspects the
+machine -- the option ROM signature, IVT[10h] pointing into C000, the save pointer table, the
+font pointers -- sees a genuine EGA BIOS.
+
+What a boot now looks like:
+
+    EGA BIOS: loaded /spiffs/ega.bin, 32 blocks (16384 bytes), checksum ok
+    EGA BIOS: planar memory ready
+    EGA BIOS: INT 10h handler C000:0CD7 redirected to F000:040E
+    ROM<  VID07  VID03  VID01  >
+
+The init calls INT 10h twice to set its initial mode; both land in this BIOS (VID07, VID03) and
+it returns. The card beeps one long and three short on the way through -- the IBM code for an EGA
+adapter failure -- because its self test does not like the hardware, but it carries on regardless
+and POST completes.
+
+State it leaves behind, read out of the running machine:
+
+| field | value |
+|-------|-------|
+| IVT[10h] | C000:0CD7 (redirected on entry to F000:040E) |
+| IVT[1Fh] | C000:3560, graphics font |
+| 40:A8 | C000:010C, save pointer table |
+| 40:87 / 88 / 89 / 8A | 04 / 09 / 81 / 04 |
+
+**It does not fix QBasic.** With a real EGA BIOS present, hooked, and having populated all of the
+above, QBasic still refuses SCREEN 7..10 with error 5. That is worth recording as a result in its
+own right: the gate is not "is a real EGA BIOS installed", which was the hypothesis behind
+adopting one.
+
+
+## Where the ROM's own code stops, if it is ever let loose
 
 Working end to end:
 
@@ -46,7 +82,7 @@ dispatches through a **jump table at C000:0128**:
 | 6 | 01BC | | E | 0204 |
 | 7 | 01C7 | | F | 0204 |
 
-Control never returns from that call. Those routines program the CRTC, Sequencer and Attribute
+Control never returns from that call when the ROM's own INT 10h is left in place. Those routines program the CRTC, Sequencer and Attribute
 Controller for the detected display, and the emulation does not implement them: 3D4/3D5 is still
 a CGA 6845, the Sequencer's clocking and memory mode registers are stored and ignored, and the
 Attribute Controller only implements the palette. The machine boot loops as a result.

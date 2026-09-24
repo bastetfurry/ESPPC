@@ -478,6 +478,47 @@ bool Machine::loadEGABios()
 }
 
 
+// The EGA BIOS hooks INT 10h to its own handler and then calls it to set the initial mode. That
+// handler programs a real CRTC, Sequencer and Attribute Controller, none of which exist here, so
+// it never comes back.
+//
+// We do not need it. There is already a working INT 10h in this BIOS, with the EGA modes wired
+// to the planar engine. So let the ROM hook the vector -- anything inspecting IVT[10h], the save
+// pointer table or the ROM signature sees a genuine EGA BIOS -- and redirect the first
+// instruction of its handler to a far jump into ours. The card is real where it is looked at and
+// ours where it is used.
+//
+// The hook site is found rather than hardcoded: every EGA BIOS installs its handler with
+// "mov word [0x40], imm16", and the immediate is the handler's offset within the ROM.
+void Machine::prepareVideoROM()
+{
+  if (!m_egaBiosLoaded)
+    return;
+
+  uint16_t ourIP = *(uint16_t*)(s_memory + 0x10 * 4);
+  uint16_t ourCS = *(uint16_t*)(s_memory + 0x10 * 4 + 2);
+
+  uint8_t * rom = s_memory + 0xc0000;
+
+  for (int i = 0; i < 0x8000 - 6; ++i) {
+    if (rom[i] == 0xc7 && rom[i + 1] == 0x06 && rom[i + 2] == 0x40 && rom[i + 3] == 0x00) {
+      uint16_t handler = rom[i + 4] | (rom[i + 5] << 8);
+      uint8_t * p = rom + handler;
+      p[0] = 0xea;                          // jmp far ourCS:ourIP
+      p[1] = (uint8_t) ourIP;
+      p[2] = (uint8_t)(ourIP >> 8);
+      p[3] = (uint8_t) ourCS;
+      p[4] = (uint8_t)(ourCS >> 8);
+      printf("EGA BIOS: INT 10h handler C000:%04X redirected to %04X:%04X\n",
+             handler, ourCS, ourIP);
+      return;
+    }
+  }
+
+  printf("EGA BIOS: could not find where the ROM hooks INT 10h\n");
+}
+
+
 void Machine::stepCPU()
 {
   i8086::step();

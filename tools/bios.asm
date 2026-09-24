@@ -285,6 +285,12 @@ boot:
 ; The markers printed either side of the call go to the emulator console, so a ROM that hangs
 ; during its own initialisation can be told apart from one that never ran.
 
+  ; Let the emulator prepare any video option ROM first: it redirects the ROM's own INT 10h
+  ; handler into this BIOS, so the ROM can hook the vector and be inspected like a real one
+  ; without ever having to drive hardware that is not emulated.
+  mov  ah, 0x0d
+  emu_helper
+
   push ds
   push es
 

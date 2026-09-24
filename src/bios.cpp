@@ -264,6 +264,11 @@ void BIOS::helpersEntry()
       i8086::setAL((m_machine->bootDrive() & 1) | (m_machine->bootDrive() > 1 ? 0x80 : 0x00));
       break;
 
+    // AH = 0x0D, prepare any video option ROM before POST hands control to it
+    case 0x0d:
+      m_machine->prepareVideoROM();
+      break;
+
     // AH = 0x0B, video mode hook, called from int10_set_vm before it programs the CGA registers.
     //   AL = requested BIOS video mode
     //   returns AL = 1 when the emulator has set the mode up itself and the BIOS must skip its
