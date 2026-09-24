@@ -132,6 +132,8 @@ public:
   bool setEGAMode(int biosMode);
   void leaveEGAMode();
   bool EGAActive() const               { return m_EGAActive; }
+  EGA * ega()                          { return &m_EGA; }
+  uint8_t const * egaPalette() const   { return m_EGAACPalette; }
 
   // Enables the serial debug console (see serialdbg.h). Must be called before run(), and only
   // when COM1 is left unattached -- they share the same pins.

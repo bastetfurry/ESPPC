@@ -447,6 +447,9 @@ void Machine::setCGA6845Register(uint8_t value)
     // video memory start offset (0x0c = H, 0x0d = L)
     case 0x0c:
     case 0x0d:
+      // NOTE: the EGA start address, which is how software page flips, is not wired up here.
+      // Planet X3 runs correctly without it, so this is a known gap rather than a bug to fix
+      // speculatively -- it needs a program that actually page flips to test against.
       m_CGAMemoryOffset = ((m_CGA6845[0xc] << 8) | m_CGA6845[0xd]) << 1;
       setCGAMode();
       break;
@@ -538,15 +541,27 @@ bool Machine::setEGAMode(int biosMode)
 {
   GraphicsAdapter::Emulation em;
   int stride;
-  int banks;    // only what the mode addresses: 8000, 16000 or 28000 byte-columns
 
   switch (biosMode) {
-    case 0x0d: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_320x200_16Colors; stride = 40; banks = 1; break;
-    case 0x0e: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x200_16Colors; stride = 80; banks = 2; break;
-    case 0x0f: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x350_2Colors;  stride = 80; banks = 4; break;
-    case 0x10: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x350_16Colors; stride = 80; banks = 4; break;
+    case 0x0d: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_320x200_16Colors; stride = 40; break;
+    case 0x0e: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x200_16Colors; stride = 80; break;
+    case 0x0f: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x350_2Colors;  stride = 80; break;
+    case 0x10: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x350_16Colors; stride = 80; break;
     default:   return false;
   }
+
+  // Always the full four banks.
+  //
+  // Sizing this to what one page of the mode needs looked like a free 64 KB in 640x200, and it
+  // is wrong: a mode's displayed page is not all the memory software uses. Mode 0Eh has a page
+  // size of 0x4000 and a real EGA holds four of them, 0Dh has eight pages of 0x2000, and
+  // software page-flips through them. With two banks everything past byte-column 16384 wrapped
+  // onto page 0, which is what made Planet X3 glitch.
+  //
+  // Four banks give 32768 byte-columns per plane, so two pages in mode 0Eh and four in 0Dh --
+  // still half of a real EGA's 64 KB per plane, but enough for the double buffering software
+  // actually does.
+  constexpr int banks = EGA_BANK_COUNT;
 
   // stop the scanline ISR before anything it reads is freed or reallocated
   m_graphicsAdapter.enableVideo(false);

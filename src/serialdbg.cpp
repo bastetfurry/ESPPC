@@ -383,6 +383,7 @@ void SerialDebug::help()
   write("  d [addr] [len]    dump memory, addr is seg:off or linear hex\r\n");
   write("  e addr bb bb ..   write bytes\r\n");
   write("  f bb bb ..        search conventional memory for a byte sequence\r\n");
+  write("  p                 dump the framebuffer as a binary stream\r\n");
   write("  i port            read an I/O port\r\n");
   write("  o port val        write an I/O port\r\n");
   write("  s [n]             single step n instructions, then show registers\r\n");
@@ -544,6 +545,73 @@ void SerialDebug::cmdFind(char const * args)
 }
 
 
+// p -- dump the framebuffer as a binary stream.
+//
+// The screen mirror can only show text modes, which is useless precisely when working on
+// graphics. This writes a one line header and then the raw framebuffer, so the host can rebuild
+// the picture exactly rather than guess at it from ASCII art. The guest is frozen while the
+// monitor is open, so the frame is stable.
+void SerialDebug::cmdScreenshot()
+{
+  auto ga = m_machine->graphicsAdapter();
+
+  if (m_machine->EGAActive()) {
+
+    int      w      = ga->getGraphWidth();
+    int      h      = ga->getGraphHeight();
+    int      stride = w / 8;
+    uint32_t bytes  = (uint32_t) stride * h * 4;      // four planes per byte-column
+
+    writeFmt("SCREENSHOT fmt=ega w=%d h=%d stride=%d bytes=%u pal=", w, h, stride, (unsigned)bytes);
+    for (int i = 0; i < 16; ++i)
+      writeFmt("%02x", m_machine->egaPalette()[i]);
+    write("\r\n");
+
+    auto ega = m_machine->ega();
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < stride; ++x) {
+        uint32_t v = *ega->bankPtr((uint32_t)y * stride + x);
+        uint8_t  b[4] = { (uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24) };
+        Serial.write(b, 4);
+      }
+      Serial.flush();
+      vTaskDelay(1);        // let the idle task run; this is tens of KB down a 115200 line
+    }
+
+    write("\r\nSCREENSHOTEND\r\n");
+    return;
+  }
+
+  auto em = ga->emulation();
+  auto fb = m_machine->frameBuffer();
+
+  if (fb && (em == GraphicsAdapter::Emulation::PC_Graphics_320x200_4Colors ||
+             em == GraphicsAdapter::Emulation::PC_Graphics_640x200_2Colors ||
+             em == GraphicsAdapter::Emulation::PC_Graphics_HGC_720x348)) {
+
+    bool   hgc    = (em == GraphicsAdapter::Emulation::PC_Graphics_HGC_720x348);
+    bool   four   = (em == GraphicsAdapter::Emulation::PC_Graphics_320x200_4Colors);
+    int    w      = hgc ? 720 : (four ? 320 : 640);
+    int    h      = hgc ? 348 : 200;
+    uint32_t bytes = hgc ? 32768 : 16384;   // including the interleaved bank gaps
+
+    writeFmt("SCREENSHOT fmt=%s w=%d h=%d stride=%d bytes=%u pal=\r\n",
+             hgc ? "hgc" : (four ? "cga4" : "cga2"), w, h, w / (four ? 4 : 8), (unsigned)bytes);
+
+    for (uint32_t i = 0; i < bytes; i += 256) {
+      Serial.write(fb + i, 256);
+      Serial.flush();
+      vTaskDelay(1);
+    }
+
+    write("\r\nSCREENSHOTEND\r\n");
+    return;
+  }
+
+  write("text mode -- attach the screen mirror instead\r\n");
+}
+
+
 void SerialDebug::cmdInPort(char const * args)
 {
   bool ok = false;
@@ -600,6 +668,7 @@ void SerialDebug::runMonitor()
       case 'd': cmdDump(p);      break;
       case 'e': cmdEnter(p);     break;
       case 'f': cmdFind(p);      break;
+      case 'p': cmdScreenshot(); break;
       case 'i': cmdInPort(p);    break;
       case 'o': cmdOutPort(p);   break;
       case '?': help();          break;
