@@ -73,6 +73,7 @@ private:
   void cmdRegisters();
   void cmdDump(char const * args);
   void cmdEnter(char const * args);
+  void cmdFind(char const * args);
   void cmdInPort(char const * args);
   void cmdOutPort(char const * args);
   void help();

@@ -2392,7 +2392,7 @@ int10_video_subsystem_cfg:
   mov   bh, 0          ; colour mode in effect
   mov   bl, 1          ; 128 KB of video memory (four 32 KB planes, see src/ega.h)
   mov   ch, 0          ; feature bits
-  mov   cl, 0x09       ; switch settings: EGA with a colour display
+  mov   cl, 0x09       ; switch settings: EGA with an enhanced colour display
 int10_video_subsystem_cfg_done:
   iret
 
@@ -2421,16 +2421,27 @@ int10_vid_combination:
   ;   0A  MCGA with digital color display
   ;   0B  MCGA with analog monochrome display
   ;   0C  MCGA with analog color display
-  cmp   al, 0
-  jne   int10_vid_combination_done
+  ; PCEmulator: AH=1Ah is a VGA/PS2 era call. A real EGA BIOS does not implement it, and
+  ; answering it actively prevents EGA from being detected by at least one well known caller.
+  ;
+  ; QBasic's adapter probe (disassembled from the running guest, since QBASIC.EXE is PKLITE
+  ; compressed on disk) reads:
+  ;
+  ;     mov ax,1a00 / int 10 / cmp al,1a / jnz fallback
+  ;     cmp bl,7 / cmp bl,8   -> VGA
+  ;     cmp bl,0b / cmp bl,0c -> MCGA
+  ;     xor ax,ax             -> anything else, including EGA, means no capability
+  ;
+  ; There is no EGA display combination code in that branch at all, so answering AH=1Ah with an
+  ; EGA code lands in "xor ax,ax". Leaving AL alone makes the cmp fail, and the fallback at
+  ; label a661 is the real EGA test: AH=12h BL=10h, then INT 11h, then the switch settings in CL.
+  ;
+  ; So: report the call as unsupported, exactly as an EGA does.
+  jmp   int10_vid_combination_done
 
   ;mov  bl, 0x0C  ; MCGA with colour display
   ;mov  bl, 0x02 ; CGA with color display
-  ; PCEmulator: the emulator has an EGA now (src/ega.h and the mode hook in int10_set_vm), and
-  ; this is the call most software uses to decide what it may ask for -- QBasic will not even
-  ; try SCREEN 7..10 while this says CGA.
   mov   bl, 0x04 ; EGA with color display
-
   mov   bh, 0  ; no inactive display
   mov   al, 0x1a
 

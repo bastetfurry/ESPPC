@@ -382,6 +382,7 @@ void SerialDebug::help()
   write("  r                 registers\r\n");
   write("  d [addr] [len]    dump memory, addr is seg:off or linear hex\r\n");
   write("  e addr bb bb ..   write bytes\r\n");
+  write("  f bb bb ..        search conventional memory for a byte sequence\r\n");
   write("  i port            read an I/O port\r\n");
   write("  o port val        write an I/O port\r\n");
   write("  s [n]             single step n instructions, then show registers\r\n");
@@ -485,6 +486,64 @@ void SerialDebug::cmdEnter(char const * args)
 }
 
 
+// f bb bb bb ...   search conventional memory for a byte sequence
+//
+// Needed because the interesting code in a DOS guest is often not on disk in any readable form
+// -- QBASIC.EXE is PKLITE compressed, so the only place its real instructions exist is in RAM
+// once DOS has unpacked it. Searching the live machine gets at them.
+void SerialDebug::cmdFind(char const * args)
+{
+  uint8_t pattern[16];
+  int patLen = 0;
+
+  char const * p = args;
+  while (*p && patLen < (int)sizeof(pattern)) {
+    while (*p == ' ')
+      ++p;
+    if (!*p)
+      break;
+    bool ok = false;
+    uint32_t b = parseHex(p, &ok);
+    if (!ok)
+      break;
+    pattern[patLen++] = (uint8_t) b;
+    char const * sp = strchr(p, ' ');
+    if (!sp)
+      break;
+    p = sp;
+  }
+
+  if (patLen == 0) {
+    write("usage: f bb bb bb ...\r\n");
+    return;
+  }
+
+  // conventional memory only: that is where a DOS program and its data live
+  constexpr uint32_t START = 0x00400;
+  constexpr uint32_t END   = 0xa0000;
+
+  auto mem = m_machine->memory();
+  int hits = 0;
+
+  for (uint32_t a = START; a + patLen <= END; ++a) {
+    if (mem[a] != pattern[0])
+      continue;
+    int i = 1;
+    while (i < patLen && mem[a + i] == pattern[i])
+      ++i;
+    if (i == patLen) {
+      writeFmt("  %05X  (%04X:%04X)\r\n", (unsigned)a, (unsigned)(a >> 4), (unsigned)(a & 0x0f));
+      if (++hits >= 24) {
+        write("  ... more hits, stopping\r\n");
+        break;
+      }
+    }
+  }
+
+  writeFmt("%d hit(s)\r\n", hits);
+}
+
+
 void SerialDebug::cmdInPort(char const * args)
 {
   bool ok = false;
@@ -540,6 +599,7 @@ void SerialDebug::runMonitor()
       case 'r': cmdRegisters();  break;
       case 'd': cmdDump(p);      break;
       case 'e': cmdEnter(p);     break;
+      case 'f': cmdFind(p);      break;
       case 'i': cmdInPort(p);    break;
       case 'o': cmdOutPort(p);   break;
       case '?': help();          break;
