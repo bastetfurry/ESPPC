@@ -154,6 +154,41 @@ Verify with `d f0dfa 20`; the sequence reads `80 FB 10 75 08 B7 00 B3 01 B5 00 B
 - **Always give a guest-side probe a positive control.**
 
 
+## What QBasic actually complains about
+
+Asked directly, with a program that traps the error and prints it:
+
+    ON ERROR GOTO H
+    FOR M = 7 TO 10 : X = M : SCREEN M : SCREEN 0 : PRINT "MODE"; X; "OK" : NEXT M
+    SYSTEM
+    H: SCREEN 0 : PRINT "MODE"; X; "ERR"; ERR : RESUME NEXT
+
+gives **`ERR 5`, "Illegal function call", for all four modes**. So this is QBasic's own mode
+validation rejecting the number outright. It is not a memory failure, not a BIOS call failing,
+and nothing reaches `INT 10h`.
+
+This should have been the first question asked; a lot of inference from silence could have been
+skipped.
+
+### Why the detection answer cannot be the whole story
+
+86Box with an EGA configured as "enhanced colour display, primary" presents switch settings 09.
+Running QBasic's routine by hand on that input gives capability 0x08 and display type 4 -- which
+is **exactly what we produce**, confirmed by breakpoint (`AX=0008` at the store). Yet QBasic
+allows SCREEN 7/8/9 there and refuses them here.
+
+Same detection inputs, same computed values, different outcome. So whatever gates the modes is
+downstream of the adapter detection entirely, and no amount of tuning the `AH=12h` answer can
+reach it. That is consistent with the sweep table above.
+
+### False lead, recorded so it is not chased again
+
+Searching for QBasic's SCREEN-to-BIOS-mode table via the byte sequence `0D 0E 0F 10` hits
+0x2EBA7, which looks promising because it sits right beside the mode-set code. It is not a mode
+table: it is part of a sequential `00..10` run followed by `2A 00 2A ... 3F ... 15`, the standard
+VGA DAC palette. QBasic carries a full VGA palette table near its video code.
+
+
 ## Using a real EGA BIOS instead
 
 86Box with a fully emulated EGA card runs QBasic's `SCREEN 7/8/9` correctly (and refuses 10, which
