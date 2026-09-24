@@ -53,6 +53,11 @@ public:
   void freeVRAM();
   bool hasVRAM()                                 { return m_bank[0] != nullptr; }
 
+  // bank table for the renderer in GraphicsAdapter
+  uint32_t * const * banks() const               { return m_bank; }
+
+  void clearVRAM();
+
   void reset();
 
   // validation hook: the benchmark compares write8() against write8Ref()

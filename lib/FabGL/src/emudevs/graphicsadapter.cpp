@@ -89,6 +89,16 @@ static const RGB222 CGAGraphics4ColorsPalette[4][4] = {
 };
 
 
+// Default EGA palette as the EGA BIOS programs it for modes 0Dh/0Eh/10h: the familiar 16 CGA
+// colours. Stored as FabGL RGB222 components already combined, one entry per attribute value.
+static const RGB222 EGADefaultPalette[16] = {
+  RGB222(0, 0, 0), RGB222(0, 0, 2), RGB222(0, 2, 0), RGB222(0, 2, 2),
+  RGB222(2, 0, 0), RGB222(2, 0, 2), RGB222(2, 1, 0), RGB222(2, 2, 2),
+  RGB222(1, 1, 1), RGB222(1, 1, 3), RGB222(1, 3, 1), RGB222(1, 3, 3),
+  RGB222(3, 1, 1), RGB222(3, 1, 3), RGB222(3, 3, 1), RGB222(3, 3, 3),
+};
+
+
 void GraphicsAdapter::setupEmulation(Emulation emulation)
 {
   static const struct {
@@ -117,6 +127,23 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
 
     // Emulation::PC_Graphics_HGC_720x348 (Hercules, Graphics Mode, 720x348x2)
     { false,    nullptr,  0,  0, 2,     drawScanline_PC_Graphics_HGC_720x348, VGA_720x350_70Hz,  -1,  -1 },
+
+    // --- PCEmulator local addition: EGA planar modes ---
+    // 640x350 is a real VGA timing, so modes 10h and 0Fh need no centering. 640x200 uses the
+    // doublescan 640x240 timing, which doubles the lines in hardware exactly as the CGA 640x200
+    // mode already does, and 320x200 uses the QVGA timing like CGA 320x200.
+
+    // Emulation::PC_Graphics_EGA_640x350_16Colors (EGA, Graphics Mode, 640x350x16, BIOS 10h)
+    { false,    nullptr,  0,  0, 1,           drawScanline_EGA_640_16Colors, VGA_640x350_70Hz, 640, 350 },
+
+    // Emulation::PC_Graphics_EGA_640x350_2Colors (EGA, Graphics Mode, 640x350x2, BIOS 0Fh)
+    { false,    nullptr,  0,  0, 1,           drawScanline_EGA_640_16Colors, VGA_640x350_70Hz, 640, 350 },
+
+    // Emulation::PC_Graphics_EGA_640x200_16Colors (EGA, Graphics Mode, 640x200x16, BIOS 0Eh)
+    { false,    nullptr,  0,  0, 1,           drawScanline_EGA_640_16Colors, VGA_640x240_60Hz, 640, 200 },
+
+    // Emulation::PC_Graphics_EGA_320x200_16Colors (EGA, Graphics Mode, 320x200x16, BIOS 0Dh)
+    { false,    nullptr,  0,  0, 1,           drawScanline_EGA_320_16Colors, QVGA_320x240_60Hz, 320, 200 },
 
   };
 
@@ -152,8 +179,16 @@ GraphicsAdapter::GraphicsAdapter()
     m_PCGraphicsBackgroundColorIndex(0),
     m_PCGraphicsForegroundColorIndex(15),
     m_PCGraphicsPaletteInUse(0),
-    m_videoEnabled(true)
+    m_videoEnabled(true),
+    m_egaBanks(nullptr),
+    m_egaStride(80),
+    m_egaStart(0),
+    m_egaPal2(nullptr)
 {
+  for (int i = 0; i < 4; ++i)
+    m_egaSpread[i] = nullptr;
+  for (int i = 0; i < 16; ++i)
+    m_egaPalette[i] = i;
   m_font.data = nullptr;
   m_VGADCtrl.begin();
 }
@@ -164,6 +199,7 @@ GraphicsAdapter::~GraphicsAdapter()
   enableVideo(false);
   cleanupFont();
   freeLUT();
+  freeEGALUT();
   if (m_cursorGlyph)
     heap_caps_free(m_cursorGlyph);
 }
@@ -267,7 +303,86 @@ void GraphicsAdapter::setupLUT()
       }
       break;
 
+    case Emulation::PC_Graphics_EGA_640x350_16Colors:
+    case Emulation::PC_Graphics_EGA_640x350_2Colors:
+    case Emulation::PC_Graphics_EGA_640x200_16Colors:
+    case Emulation::PC_Graphics_EGA_320x200_16Colors:
+      setupEGALUT();
+      break;
+
   }
+}
+
+
+// PCEmulator: build the tables the planar renderers use.
+//
+// A 16 colour planar pixel takes one bit from each of four planes, so it cannot be expanded with
+// a single table the way the CGA modes are. Two stages instead:
+//
+//   m_egaSpread[p][b]  scatters the eight bits of plane p's byte into the p-th bit of eight
+//                      nibbles, so ORing the four planes' entries gives eight 4 bit pixel
+//                      indices packed into one uint32_t
+//   m_egaPal2[b]       turns one byte of that word (two indices) into two raw VGA pixel bytes
+//
+// FabGL's scanline byte order is swizzled, and baking that into the spread tables keeps the
+// inner loop to plain sequential 16 bit stores.
+void GraphicsAdapter::setupEGALUT()
+{
+  for (int p = 0; p < 4; ++p) {
+    if (!m_egaSpread[p])
+      m_egaSpread[p] = (uint32_t*) heap_caps_malloc(256 * sizeof(uint32_t), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    for (int b = 0; b < 256; ++b) {
+      uint32_t v = 0;
+      for (int k = 0; k < 8; ++k)
+        if ((b >> (7 - k)) & 1)
+          v |= 1u << (4 * (k ^ 2) + p);
+      m_egaSpread[p][b] = v;
+    }
+  }
+
+  if (!m_egaPal2)
+    m_egaPal2 = (uint16_t*) heap_caps_malloc(256 * sizeof(uint16_t), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+
+  bool mono = (m_emulation == Emulation::PC_Graphics_EGA_640x350_2Colors);
+
+  uint8_t raw[16];
+  for (int i = 0; i < 16; ++i) {
+    RGB222 c = mono ? RGB222((i & 1) * 3, (i & 1) * 3, (i & 1) * 3)
+                    : EGADefaultPalette[m_egaPalette[i] & 0x0f];
+    raw[i] = m_VGADCtrl.createRawPixel(c);
+  }
+
+  for (int b = 0; b < 256; ++b)
+    m_egaPal2[b] = (uint16_t)raw[b & 0x0f] | ((uint16_t)raw[b >> 4] << 8);
+}
+
+
+void GraphicsAdapter::freeEGALUT()
+{
+  for (int p = 0; p < 4; ++p) {
+    if (m_egaSpread[p])
+      heap_caps_free(m_egaSpread[p]);
+    m_egaSpread[p] = nullptr;
+  }
+  if (m_egaPal2)
+    heap_caps_free(m_egaPal2);
+  m_egaPal2 = nullptr;
+}
+
+
+void GraphicsAdapter::setEGAVideoBuffer(uint32_t * const * banks, int stride)
+{
+  m_egaBanks  = banks;
+  m_egaStride = stride;
+}
+
+
+void GraphicsAdapter::setEGAPalette(uint8_t const * palette16)
+{
+  for (int i = 0; i < 16; ++i)
+    m_egaPalette[i] = palette16[i];
+  if (m_egaPal2)
+    setupEGALUT();
 }
 
 
@@ -621,6 +736,84 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Graphics_HGC_720x348(void * arg,
 }
 
 
+
+
+// PCEmulator: EGA planar renderers.
+//
+// One 32 bit load brings in all four planes of eight pixels, because the emulator stores the
+// planes interleaved (src/ega.h). Four table lookups and three ORs turn that into eight packed
+// 4 bit colour indices, and four more lookups turn those into eight raw VGA bytes.
+//
+// VRAM is banked so it can be allocated on a fragmented heap, so the byte-column offset is
+// resolved through the bank table on each iteration -- a shift, a load and a mask.
+
+#define EGA_RENDER_BANK(o)  (ga->m_egaBanks[((o) >> 13) & 3][(o) & 8191])
+
+
+void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_t * dest, int scanLine)
+{
+  constexpr int WIDTHINBYTES = 640 / 8;
+
+  auto ga = (GraphicsAdapter*) arg;
+
+  if (!ga->m_egaBanks || !ga->m_egaPal2)
+    return;
+
+  uint32_t const * L0 = ga->m_egaSpread[0];
+  uint32_t const * L1 = ga->m_egaSpread[1];
+  uint32_t const * L2 = ga->m_egaSpread[2];
+  uint32_t const * L3 = ga->m_egaSpread[3];
+  uint16_t const * P  = ga->m_egaPal2;
+
+  uint32_t off  = (ga->m_egaStart + scanLine * ga->m_egaStride) & 0x7fff;
+  auto     d16  = (uint16_t*) dest;
+
+  for (int col = 0; col < WIDTHINBYTES; ++col) {
+    uint32_t w = EGA_RENDER_BANK(off);
+    off = (off + 1) & 0x7fff;
+
+    uint32_t i = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
+
+    d16[0] = P[i & 0xff];
+    d16[1] = P[(i >> 8) & 0xff];
+    d16[2] = P[(i >> 16) & 0xff];
+    d16[3] = P[i >> 24];
+    d16 += 4;
+  }
+}
+
+
+void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_t * dest, int scanLine)
+{
+  constexpr int WIDTHINBYTES = 320 / 8;
+
+  auto ga = (GraphicsAdapter*) arg;
+
+  if (!ga->m_egaBanks || !ga->m_egaPal2)
+    return;
+
+  uint32_t const * L0 = ga->m_egaSpread[0];
+  uint32_t const * L1 = ga->m_egaSpread[1];
+  uint32_t const * L2 = ga->m_egaSpread[2];
+  uint32_t const * L3 = ga->m_egaSpread[3];
+  uint16_t const * P  = ga->m_egaPal2;
+
+  uint32_t off  = (ga->m_egaStart + scanLine * ga->m_egaStride) & 0x7fff;
+  auto     d16  = (uint16_t*) dest;
+
+  for (int col = 0; col < WIDTHINBYTES; ++col) {
+    uint32_t w = EGA_RENDER_BANK(off);
+    off = (off + 1) & 0x7fff;
+
+    uint32_t i = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
+
+    d16[0] = P[i & 0xff];
+    d16[1] = P[(i >> 8) & 0xff];
+    d16[2] = P[(i >> 16) & 0xff];
+    d16[3] = P[i >> 24];
+    d16 += 4;
+  }
+}
 
 
 

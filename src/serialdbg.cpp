@@ -384,6 +384,7 @@ void SerialDebug::help()
   write("  e addr bb bb ..   write bytes\r\n");
   write("  i port            read an I/O port\r\n");
   write("  o port val        write an I/O port\r\n");
+  write("  s [n]             single step n instructions, then show registers\r\n");
   write("  g                 resume, back to the screen\r\n");
   write("  q                 resume and detach completely\r\n");
   write("  ?                 this list\r\n");
@@ -397,6 +398,8 @@ void SerialDebug::cmdRegisters()
            i8086::SI(), i8086::DI(), i8086::BP(), i8086::SP());
   writeFmt("CS=%04X DS=%04X ES=%04X SS=%04X  IP=%04X\r\n",
            i8086::CS(), i8086::DS(), i8086::ES(), i8086::SS(), i8086::IP());
+  writeFmt("ticks=%u resetPending=%d\r\n",
+           (unsigned) m_machine->ticksCounter(), (int) m_machine->resetPending());
   writeFmt("flags: %c%c%c%c%c%c%c%c%c\r\n",
            i8086::flagOF() ? 'O' : '-', i8086::flagDF() ? 'D' : '-',
            i8086::flagIF() ? 'I' : '-', i8086::flagTF() ? 'T' : '-',
@@ -540,6 +543,22 @@ void SerialDebug::runMonitor()
       case 'i': cmdInPort(p);    break;
       case 'o': cmdOutPort(p);   break;
       case '?': help();          break;
+
+      case 's':
+      {
+        // single step: the surest way to tell "the CPU is stopped" from "the CPU is looping"
+        int n = 1;
+        if (*p) {
+          bool ok = false;
+          uint32_t v = parseHex(p, &ok);
+          if (ok && v > 0 && v <= 0x10000)
+            n = (int) v;
+        }
+        for (int i = 0; i < n; ++i)
+          m_machine->stepCPU();
+        cmdRegisters();
+        break;
+      }
 
       case 'g':
         write("--- resumed ---\r\n");

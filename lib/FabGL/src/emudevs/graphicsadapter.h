@@ -73,6 +73,24 @@ public:
     // Hercules 720x348 Graphics Black/White
     // Requires 720 / 8 * 348 = 31320 bytes
     PC_Graphics_HGC_720x348,
+
+    // --- PCEmulator local addition: EGA planar graphics modes ---
+    //
+    // These do not read a linear frame buffer. EGA pixels live in four bit planes, which the
+    // emulator keeps interleaved as one uint32_t per byte-column (see src/ega.h), so the video
+    // buffer for these modes is set with setEGAVideoBuffer() rather than setVideoBuffer().
+
+    // EGA 640x350, 16 Colors (PC BIOS 10h)
+    PC_Graphics_EGA_640x350_16Colors,
+
+    // EGA 640x350, 2 Colors (PC BIOS 0Fh) -- same planar layout, two entry palette
+    PC_Graphics_EGA_640x350_2Colors,
+
+    // EGA 640x200, 16 Colors (PC BIOS 0Eh)
+    PC_Graphics_EGA_640x200_16Colors,
+
+    // EGA 320x200, 16 Colors (PC BIOS 0Dh)
+    PC_Graphics_EGA_320x200_16Colors,
   };
 
 
@@ -85,6 +103,13 @@ public:
   bool enableVideo(bool value);
 
   void setVideoBuffer(void const * videoBuffer);
+
+  // PCEmulator: EGA planar modes. banks is the bank pointer array from the EGA engine, stride is
+  // the number of byte-columns per scanline, and palette is 16 entries of 6 bit EGA RGB (rgbRGB),
+  // which map one to one onto FabGL's RGB222.
+  void setEGAVideoBuffer(uint32_t * const * banks, int stride);
+  void setEGAPalette(uint8_t const * palette16);
+  void setEGAStartAddress(uint32_t byteOffset)             { m_egaStart = byteOffset; }
 
   // text modes methods
   void setCursorShape(int start, int end);
@@ -122,6 +147,11 @@ private:
   static void drawScanline_PC_Graphics_320x200_4Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_PC_Graphics_640x200_2Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_PC_Graphics_HGC_720x348(void * arg, uint8_t * dest, int scanLine);
+  static void drawScanline_EGA_640_16Colors(void * arg, uint8_t * dest, int scanLine);
+  static void drawScanline_EGA_320_16Colors(void * arg, uint8_t * dest, int scanLine);
+
+  void setupEGALUT();
+  void freeEGALUT();
 
 
   VGADirectController m_VGADCtrl;
@@ -150,6 +180,14 @@ private:
   int8_t              m_PCGraphicsPaletteInUse;         // 0 = palette 0 low intensity, 1 = palette 0 high intensity, 2 = palette 1 low intensity, 3 = palette 2 high intensity
 
   bool                m_videoEnabled;
+
+  // --- PCEmulator: EGA planar mode state ---
+  uint32_t * const *  m_egaBanks;      // four banks of EGA_BANK_ENTRIES uint32, planes interleaved
+  int32_t             m_egaStride;     // byte-columns per scanline
+  uint32_t            m_egaStart;      // first byte-column of the displayed page
+  uint8_t             m_egaPalette[16];
+  uint32_t *          m_egaSpread[4];  // plane byte -> eight packed 4 bit pixel indices
+  uint16_t *          m_egaPal2;       // two packed indices -> two raw VGA pixel bytes
 
 };
 

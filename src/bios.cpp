@@ -264,6 +264,47 @@ void BIOS::helpersEntry()
       i8086::setAL((m_machine->bootDrive() & 1) | (m_machine->bootDrive() > 1 ? 0x80 : 0x00));
       break;
 
+    // AH = 0x0B, video mode hook, called from int10_set_vm before it programs the CGA registers.
+    //   AL = requested BIOS video mode
+    //   returns AL = 1 when the emulator has set the mode up itself and the BIOS must skip its
+    //               own mode programming, AL = 0 to carry on with the CGA path
+    //
+    // The EGA modes are handled here rather than in bios.asm because the adapter they need is
+    // not a set of CRTC registers but a whole planar memory engine on the C++ side, and the
+    // BIOS data area is easier to fill in from here than from the mode tables in the assembler.
+    case 0x0b:
+    {
+      int mode = i8086::AL() & 0x7f;
+
+      if (mode >= 0x0d && mode <= 0x10 && m_machine->setEGAMode(mode)) {
+
+        int columns  = (mode == 0x0d) ? 40 : 80;
+        int charH    = (mode >= 0x0f) ? 14 : 8;
+        int pageSize = (mode == 0x0d) ? 0x2000 : (mode == 0x0e ? 0x4000 : 0x8000);
+
+        auto bda = m_memory + BIOS_DATAAREA_ADDR;
+
+        bda[0x49]                     = (uint8_t) mode;          // current video mode
+        *(uint16_t*)(bda + 0x4a)      = (uint16_t) columns;      // text columns
+        *(uint16_t*)(bda + 0x4c)      = (uint16_t) pageSize;     // page size in bytes
+        *(uint16_t*)(bda + 0x4e)      = 0;                       // page offset
+        memset(bda + 0x50, 0, 16);                               // cursor position, all pages
+        bda[0x62]                     = 0;                       // active display page
+        bda[0x84]                     = 24;                      // text rows - 1
+        bda[0x85]                     = (uint8_t) charH;         // scan lines per character
+
+        i8086::setAL(1);
+        break;
+      }
+
+      // Not an EGA mode, or the planar memory could not be allocated. Either way the CGA path is
+      // about to run, so any EGA mode still up has to be torn down first -- that is what gives
+      // the CGA frame buffer its memory back.
+      m_machine->leaveEGAMode();
+      i8086::setAL(0);
+      break;
+    }
+
     default:
       break;
 

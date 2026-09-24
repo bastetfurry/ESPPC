@@ -64,6 +64,15 @@ void EGA::freeVRAM()
 }
 
 
+void EGA::clearVRAM()
+{
+  for (int i = 0; i < EGA_BANK_COUNT; ++i)
+    if (m_bank[i])
+      memset(m_bank[i], 0, EGA_BANK_ENTRIES * sizeof(uint32_t));
+  m_latch = 0;
+}
+
+
 void EGA::reset()
 {
   m_latch    = 0;

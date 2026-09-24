@@ -107,6 +107,10 @@ Machine::Machine() :
     m_sysReqCallback(nullptr),
     m_baseDir(nullptr),
     m_ramSizeKB(640),
+    m_EGAActive(false),
+    m_EGAACIndex(0),
+    m_EGAACFlipFlop(false),
+    m_EGAMiscOutput(0),
     m_debugConsoleRequested(false)
 {
 }
@@ -309,7 +313,11 @@ void Machine::reset()
   //m_PIT8253.setGate(1, true); // @TODO: timer 1 used for DRAM refresh, required to run?
 
   m_MC146818.reset();
-  
+
+  // a warm boot (Ctrl+Alt+Del jumps to the reset vector) has to come back on the CGA adapter,
+  // otherwise POST runs with the EGA planes still allocated and no CGA frame buffer
+  leaveEGAMode();
+
   m_COM1.reset();
   m_COM2.reset();
 
@@ -352,6 +360,13 @@ void Machine::runTask(void * pvParameters)
 		m->tick();
 
 	}
+}
+
+
+void Machine::stepCPU()
+{
+  i8086::step();
+  tick();
 }
 
 
@@ -425,6 +440,14 @@ void Machine::setCGA6845Register(uint8_t value)
 
 void Machine::setCGAMode()
 {
+  // While an EGA mode is up the CGA frame buffer has been released to make room for the planar
+  // planes, so every branch below would build m_frameBuffer out of a null pointer and hand it to
+  // the scanline ISR. Any stray write to 0x3d8/0x3d9 from the guest would then crash the board.
+  // Mode changes go through the BIOS hook, which tears EGA down first, so ignoring these here is
+  // safe as well as necessary.
+  if (m_EGAActive || !s_videoMemory)
+    return;
+
   if ((m_CGAModeReg & CGA_MODECONTROLREG_ENABLED) == 0) {
 
     // video disabled
@@ -477,6 +500,114 @@ void Machine::setCGAMode()
 }
 
 
+// --- EGA ---------------------------------------------------------------------------------------
+//
+// The EGA's 128 KB of planar video memory and the 64 KB CGA/Hercules buffer cannot both be held
+// in internal RAM on this board, so entering an EGA mode releases the CGA buffer and leaving one
+// puts it back. The video memory callbacks tolerate s_videoMemory being null meanwhile: a guest
+// write to 0xB8000 while an EGA graphics mode is up is discarded, which is also what a real EGA
+// does, since that window is not mapped in modes 0Dh-10h.
+
+bool Machine::setEGAMode(int biosMode)
+{
+  GraphicsAdapter::Emulation em;
+  int stride;
+
+  switch (biosMode) {
+    case 0x0d: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_320x200_16Colors; stride = 40; break;
+    case 0x0e: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x200_16Colors; stride = 80; break;
+    case 0x0f: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x350_2Colors;  stride = 80; break;
+    case 0x10: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x350_16Colors; stride = 80; break;
+    default:   return false;
+  }
+
+  // stop the scanline ISR before anything it reads is freed or reallocated
+  m_graphicsAdapter.enableVideo(false);
+
+  printf("EGA: mode %02X, internal heap free %d (largest %d)\n", biosMode,
+         heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
+  if (!m_EGAActive) {
+    if (s_videoMemory) {
+      heap_caps_free(s_videoMemory);
+      s_videoMemory = nullptr;
+    }
+    if (!m_EGA.allocVRAM()) {
+      // out of internal memory: put the CGA buffer back and let the caller use the CGA path
+      printf("EGA: cannot allocate planar video memory, staying on CGA\n");
+      s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+      m_frameBuffer = s_videoMemory;
+      m_graphicsAdapter.enableVideo(true);
+      return false;
+    }
+    m_EGAActive = true;
+  }
+
+  m_EGA.reset();
+  m_EGA.clearVRAM();
+
+  // default EGA palette: attribute N selects colour N
+  for (int i = 0; i < 16; ++i)
+    m_EGAACPalette[i] = i;
+
+  m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), stride);
+  m_graphicsAdapter.setEGAStartAddress(0);
+  m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
+  printf("EGA: planes allocated, internal heap free %d (largest %d)\n",
+         heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
+  m_graphicsAdapter.setEmulation(em);
+  m_graphicsAdapter.enableVideo(true);
+
+  printf("EGA: video up, internal heap free %d (largest %d)\n",
+         heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
+  return true;
+}
+
+
+void Machine::leaveEGAMode()
+{
+  if (!m_EGAActive)
+    return;
+
+  m_graphicsAdapter.enableVideo(false);
+
+  m_EGA.freeVRAM();
+  m_EGAActive = false;
+
+  if (!s_videoMemory)
+    s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+  if (s_videoMemory)
+    memset(s_videoMemory, 0, VIDEOMEMSIZE);
+
+  m_frameBuffer = s_videoMemory;
+
+  // the caller (the BIOS mode set) programs the CGA registers next, which picks the mode back up
+}
+
+
+// Attribute Controller, port 0x3c0. One port carries both the index and the data, alternating,
+// and reading the status register at 0x3da resets it to expecting an index.
+void Machine::setEGAAttributeReg(uint8_t value)
+{
+  if (!m_EGAACFlipFlop) {
+    m_EGAACIndex    = value & 0x1f;
+    m_EGAACFlipFlop = true;
+  } else {
+    m_EGAACFlipFlop = false;
+    if (m_EGAACIndex < 16) {
+      m_EGAACPalette[m_EGAACIndex] = value & 0x3f;
+      if (m_EGAActive)
+        m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
+    }
+  }
+}
+
+
 void Machine::setHGC6845Register(uint8_t value)
 {
   m_HGC6845[m_HGC6845SelectRegister] = value;
@@ -512,6 +643,10 @@ void Machine::setHGC6845Register(uint8_t value)
 
 void Machine::setHGCMode()
 {
+  // same reasoning as setCGAMode()
+  if (m_EGAActive || !s_videoMemory)
+    return;
+
   constexpr int HGC_OFFSET_PAGE0 = 0x0000;
   constexpr int HGC_OFFSET_PAGE1 = 0x8000;
 
@@ -603,6 +738,32 @@ void Machine::writePort(void * context, int address, uint8_t value)
     case 0x2f8 ... 0x2ff:
       if (m->m_COM2.assigned())
         m->m_COM2.write(address, value);
+      break;
+
+    // EGA - Attribute Controller (index and data share the port)
+    case 0x3c0:
+      m->setEGAAttributeReg(value);
+      break;
+
+    // EGA - Miscellaneous Output Register
+    case 0x3c2:
+      m->m_EGAMiscOutput = value;
+      break;
+
+    // EGA - Sequencer
+    case 0x3c4:
+      m->m_EGA.selectSequencer(value);
+      break;
+    case 0x3c5:
+      m->m_EGA.writeSequencer(value);
+      break;
+
+    // EGA - Graphics Controller
+    case 0x3ce:
+      m->m_EGA.selectGraphics(value);
+      break;
+    case 0x3cf:
+      m->m_EGA.writeGraphics(value);
       break;
 
     // CGA - CRT 6845 - register selection register
@@ -762,6 +923,22 @@ uint8_t Machine::readPort(void * context, int address)
     case 0x3d5:
       return m->m_CGA6845SelectRegister >= 14 && m->m_CGA6845SelectRegister < 16 ? m->m_CGA6845[m->m_CGA6845SelectRegister] : 0x00;
 
+    // EGA - Attribute Controller readback
+    case 0x3c1:
+      return m->m_EGAACIndex < 16 ? m->m_EGAACPalette[m->m_EGAACIndex] : 0x00;
+
+    // EGA - Miscellaneous Output Register (readable at 0x3cc)
+    case 0x3cc:
+      return m->m_EGAMiscOutput;
+
+    // EGA - Sequencer
+    case 0x3c5:
+      return m->m_EGA.readSequencer();
+
+    // EGA - Graphics Controller
+    case 0x3cf:
+      return m->m_EGA.readGraphics();
+
     // CGA - Color Select register
     // note: this register should be write-only, but some games do not work if it isn't readable
     case 0x3d9:
@@ -771,6 +948,9 @@ uint8_t Machine::readPort(void * context, int address)
     // real vertical sync is too fast for our slowly emulated 8086, so
     // here it is just a fake, just to allow programs that check it to keep going anyway.
     case 0x3da:
+      // on an EGA this read also puts the attribute controller back to expecting an index,
+      // which is how every EGA mode set routine starts
+      m->m_EGAACFlipFlop = false;
       m->m_CGAVSyncQuery += 1;
       return (m->m_CGAVSyncQuery & 0x7) != 0 ? 0x09 : 0x00; // "not VSync" (0x00) every 7 queries
 
@@ -895,37 +1075,49 @@ bool Machine::COM2Interrupt(PC8250 * source, void * context)
 }
 
 
+// The 0xA0000-0xAFFFF window belongs to the EGA when an EGA mode is up, and goes through the
+// planar engine. 0xB0000 upwards is the CGA/Hercules buffer, which is released while EGA is
+// active -- hence the null checks, which also make a stray write during a mode change harmless.
+
 void Machine::writeVideoMemory8(void * context, int address, uint8_t value)
 {
-  //printf("WVMEM %05X <= %02X\n", address, value);
-  if (address >= 0xb0000)
+  auto m = (Machine*)context;
+  if (address < 0xb0000) {
+    if (m->m_EGAActive)
+      m->m_EGA.write8(address - 0xa0000, value);
+  } else if (s_videoMemory) {
     s_videoMemory[address - 0xb0000] = value;
+  }
 }
 
 
 void Machine::writeVideoMemory16(void * context, int address, uint16_t value)
 {
-  //printf("WVMEM %05X <= %04X\n", address, value);
-  if (address >= 0xb0000)
+  auto m = (Machine*)context;
+  if (address < 0xb0000) {
+    if (m->m_EGAActive)
+      m->m_EGA.write16(address - 0xa0000, value);
+  } else if (s_videoMemory) {
     *(uint16_t*)(s_videoMemory + address - 0xb0000) = value;
+  }
 }
 
 
 uint8_t Machine::readVideoMemory8(void * context, int address)
 {
-  if (address >= 0xb0000)
-    return s_videoMemory[address - 0xb0000];
-  else
-    return 0xff;
+  auto m = (Machine*)context;
+  if (address < 0xb0000)
+    return m->m_EGAActive ? m->m_EGA.read8(address - 0xa0000) : 0xff;
+  return s_videoMemory ? s_videoMemory[address - 0xb0000] : 0xff;
 }
 
 
 uint16_t Machine::readVideoMemory16(void * context, int address)
 {
-  if (address >= 0xb0000)
-    return *(uint16_t*)(s_videoMemory + address - 0xb0000);
-  else
-    return 0xffff;
+  auto m = (Machine*)context;
+  if (address < 0xb0000)
+    return m->m_EGAActive ? m->m_EGA.read16(address - 0xa0000) : 0xffff;
+  return s_videoMemory ? *(uint16_t*)(s_videoMemory + address - 0xb0000) : 0xffff;
 }
 
 

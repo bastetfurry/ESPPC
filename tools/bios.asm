@@ -695,6 +695,18 @@ int10_set_vm:
   ; Store the video mode. This if fixed later for invalid modes.
   mov   byte [vid_mode-bios_data], al
 
+  ; PCEmulator: offer the mode to the emulator before doing anything CGA specific. The EGA modes
+  ; 0Dh..10h are implemented on the C++ side (a planar memory engine, not a few CRTC registers),
+  ; and that helper fills in the BIOS data area itself. AL = 1 back means it took the mode, so
+  ; everything below -- the sequencer writes, the CGA mode tables and the text mode clear -- has
+  ; to be skipped. AL = 0 means carry on, and any EGA mode that was up has been torn down.
+  push  ax
+  mov   ah, 0x0b
+  emu_helper
+  cmp   al, 1
+  pop   ax
+  je    int10_set_vm_emu
+
   ; Check MCGA only video modes
   cmp   al, 0x11
   je    int10_set_vm_11
@@ -1092,6 +1104,14 @@ int10_set_vm_cls:
 
   mov   bh, 7            ; Black background, white foreground
   call  clear_screen
+  jmp   int10_set_vm_nocls
+
+int10_set_vm_emu:
+  ; The emulator set the mode up and filled in the BIOS data area, so there is nothing left to
+  ; program and nothing to clear. Drop the mode word pushed at the top and fall into the common
+  ; exit. Note the explicit jump above: without it the normal path falls out of clear_screen
+  ; straight into this pop, unbalancing the stack on every mode set that clears the screen.
+  pop   ax
 
 int10_set_vm_nocls:
   pop   ax
@@ -2363,6 +2383,17 @@ int10_video_subsystem_cfg:
   ;   CL = switch settings
   ;
   ;   BL = other = unsupported
+  ;
+  ; PCEmulator: this used to be a bare iret, which left BL holding the 0x10 it came in with --
+  ; the canonical "no EGA installed" answer, and the reason software never tried EGA modes here.
+  ; The emulator now has an EGA, so report one.
+  cmp   bl, 0x10
+  jne   int10_video_subsystem_cfg_done
+  mov   bh, 0          ; colour mode in effect
+  mov   bl, 1          ; 128 KB of video memory (four 32 KB planes, see src/ega.h)
+  mov   ch, 0          ; feature bits
+  mov   cl, 0x09       ; switch settings: EGA with a colour display
+int10_video_subsystem_cfg_done:
   iret
 
 int10_vid_combination:
@@ -2394,7 +2425,11 @@ int10_vid_combination:
   jne   int10_vid_combination_done
 
   ;mov  bl, 0x0C  ; MCGA with colour display
-  mov   bl, 0x02 ; CGA with color display
+  ;mov  bl, 0x02 ; CGA with color display
+  ; PCEmulator: the emulator has an EGA now (src/ega.h and the mode hook in int10_set_vm), and
+  ; this is the call most software uses to decide what it may ask for -- QBasic will not even
+  ; try SCREEN 7..10 while this says CGA.
+  mov   bl, 0x04 ; EGA with color display
 
   mov   bh, 0  ; no inactive display
   mov   al, 0x1a

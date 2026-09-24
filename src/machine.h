@@ -39,6 +39,7 @@
 
 #include "bios.h"
 #include "serialdbg.h"
+#include "ega.h"
 
 
 // Disk images may live on the SD card (paths relative to the base directory) or in the
@@ -119,6 +120,19 @@ public:
 
   BIOS * bios()                        { return &m_BIOS; }
 
+  // debug monitor introspection
+  uint32_t ticksCounter() const        { return m_ticksCounter; }
+  bool     resetPending() const        { return m_reset; }
+  void     stepCPU();
+
+  // --- EGA ---
+  // setEGAMode() takes a BIOS mode number (0x0d, 0x0e, 0x0f, 0x10) and returns false if it is
+  // not an EGA mode or the planar video memory could not be allocated, in which case the caller
+  // must fall back to the CGA path.
+  bool setEGAMode(int biosMode);
+  void leaveEGAMode();
+  bool EGAActive() const               { return m_EGAActive; }
+
   // Enables the serial debug console (see serialdbg.h). Must be called before run(), and only
   // when COM1 is left unattached -- they share the same pins.
   void enableDebugConsole()            { m_debugConsoleRequested = true; }
@@ -173,6 +187,7 @@ private:
   void tick();
 
   void setCGAMode();
+  void setEGAAttributeReg(uint8_t value);
   void setCGA6845Register(uint8_t value);
 
   void setHGCMode();
@@ -288,6 +303,13 @@ private:
   char const *             m_baseDir;
   
   // serial ports
+  EGA                      m_EGA;
+  bool                     m_EGAActive;
+  uint8_t                  m_EGAACIndex;      // attribute controller index
+  bool                     m_EGAACFlipFlop;   // false = next 0x3c0 write is an index
+  uint8_t                  m_EGAACPalette[16];
+  uint8_t                  m_EGAMiscOutput;
+
   SerialDebug              m_serialDebug;
   bool                     m_debugConsoleRequested;
 
