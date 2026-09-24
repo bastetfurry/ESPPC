@@ -54,6 +54,9 @@ public:
   // called from Machine::tick(); cheap when detached, blocks while the monitor has the CPU
   void poll();
 
+  // called from the emulator loop when a breakpoint matches; opens the monitor on the spot
+  void breakNow();
+
 
 private:
 
@@ -75,6 +78,7 @@ private:
   void cmdEnter(char const * args);
   void cmdFind(char const * args);
   void cmdScreenshot();
+  void cmdExport(char const * args);
   void cmdInPort(char const * args);
   void cmdOutPort(char const * args);
   void help();

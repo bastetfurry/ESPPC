@@ -111,7 +111,8 @@ Machine::Machine() :
     m_EGAACIndex(0),
     m_EGAACFlipFlop(false),
     m_EGAMiscOutput(0),
-    m_debugConsoleRequested(false)
+    m_debugConsoleRequested(false),
+    m_breakAddr(0)
 {
 }
 
@@ -375,6 +376,12 @@ void Machine::runTask(void * pvParameters)
 
     if (m->m_reset)
       m->reset();
+
+    if (m->m_breakAddr &&
+        (((uint32_t)i8086::CS() << 4) + i8086::IP()) == m->m_breakAddr) {
+      m->m_breakAddr = 0;                 // one shot, so resuming does not trip instantly
+      m->m_serialDebug.breakNow();
+    }
 
     #ifdef FABGL_EMULATED
     taskEmuCheck();

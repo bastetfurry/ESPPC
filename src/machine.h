@@ -125,6 +125,11 @@ public:
   bool     resetPending() const        { return m_reset; }
   void     stepCPU();
 
+  // One-shot breakpoint on a linear address, for the debug monitor. Disarmed costs one compare
+  // against zero per instruction; armed, the monitor takes over the moment CS:IP matches.
+  void     setBreakpoint(uint32_t linear)  { m_breakAddr = linear; }
+  uint32_t breakpoint() const              { return m_breakAddr; }
+
   // --- EGA ---
   // setEGAMode() takes a BIOS mode number (0x0d, 0x0e, 0x0f, 0x10) and returns false if it is
   // not an EGA mode or the planar video memory could not be allocated, in which case the caller
@@ -314,6 +319,7 @@ private:
 
   SerialDebug              m_serialDebug;
   bool                     m_debugConsoleRequested;
+  uint32_t                 m_breakAddr;
 
   PC8250                   m_COM1;
   PC8250                   m_COM2;

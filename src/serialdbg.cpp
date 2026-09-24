@@ -148,6 +148,16 @@ void SerialDebug::poll()
 }
 
 
+void SerialDebug::breakNow()
+{
+  if (!m_machine)
+    return;
+  write("\r\n--- breakpoint ---\r\n");
+  m_state = State::Monitor;
+  runMonitor();
+}
+
+
 // ---------------------------------------------------------------------------------------------
 // screen mirroring
 // ---------------------------------------------------------------------------------------------
@@ -384,6 +394,8 @@ void SerialDebug::help()
   write("  e addr bb bb ..   write bytes\r\n");
   write("  f bb bb ..        search conventional memory for a byte sequence\r\n");
   write("  p                 dump the framebuffer as a binary stream\r\n");
+  write("  b [addr]          one-shot breakpoint on a linear address (no addr clears)\r\n");
+  write("  x addr len        stream guest memory as raw binary\r\n");
   write("  i port            read an I/O port\r\n");
   write("  o port val        write an I/O port\r\n");
   write("  s [n]             single step n instructions, then show registers\r\n");
@@ -612,6 +624,44 @@ void SerialDebug::cmdScreenshot()
 }
 
 
+// x addr len -- stream a region of guest memory as raw binary.
+//
+// The hex dump is fine for a few lines but hopeless for reading a whole program: a DOS binary is
+// hundreds of KB, and at three characters per byte the hex form is slower than the serial line
+// deserves. This writes a header and then the bytes, so the host can pull a segment in seconds
+// and disassemble it properly.
+void SerialDebug::cmdExport(char const * args)
+{
+  uint32_t addr;
+  if (!parseAddress(args, &addr)) {
+    write("usage: x addr len\r\n");
+    return;
+  }
+
+  char const * sp = strchr(args, ' ');
+  bool ok = false;
+  uint32_t len = sp ? parseHex(sp, &ok) : 0;
+  if (!ok || len == 0) {
+    write("usage: x addr len\r\n");
+    return;
+  }
+  if (addr + len > RAM_SIZE)
+    len = RAM_SIZE - addr;
+
+  writeFmt("EXPORT addr=%05X bytes=%u\r\n", (unsigned)addr, (unsigned)len);
+
+  auto mem = m_machine->memory();
+  for (uint32_t i = 0; i < len; i += 256) {
+    uint32_t n = (len - i < 256) ? (len - i) : 256;
+    Serial.write(mem + addr + i, n);
+    Serial.flush();
+    vTaskDelay(1);
+  }
+
+  write("\r\nEXPORTEND\r\n");
+}
+
+
 void SerialDebug::cmdInPort(char const * args)
 {
   bool ok = false;
@@ -669,6 +719,20 @@ void SerialDebug::runMonitor()
       case 'e': cmdEnter(p);     break;
       case 'f': cmdFind(p);      break;
       case 'p': cmdScreenshot(); break;
+      case 'x': cmdExport(p);    break;
+
+      case 'b':
+      {
+        uint32_t a;
+        if (*p && parseAddress(p, &a)) {
+          m_machine->setBreakpoint(a);
+          writeFmt("breakpoint armed at %05X\r\n", (unsigned)a);
+        } else {
+          m_machine->setBreakpoint(0);
+          write("breakpoint cleared\r\n");
+        }
+        break;
+      }
       case 'i': cmdInPort(p);    break;
       case 'o': cmdOutPort(p);   break;
       case '?': help();          break;
