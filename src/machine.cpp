@@ -106,7 +106,8 @@ Machine::Machine() :
     m_bootDrive(0),
     m_sysReqCallback(nullptr),
     m_baseDir(nullptr),
-    m_ramSizeKB(640)
+    m_ramSizeKB(640),
+    m_debugConsoleRequested(false)
 {
 }
 
@@ -159,6 +160,11 @@ void Machine::init()
 
   i8086::setCallbacks(this, readPort, writePort, writeVideoMemory8, writeVideoMemory16, readVideoMemory8, readVideoMemory16, interrupt);
   i8086::setMemory(s_memory);
+
+  // Started from init(), which runs in the emulator task: the monitor reads guest RAM, and that
+  // is PSRAM which only this core may touch (see the s_memory assignment above).
+  if (m_debugConsoleRequested)
+    m_serialDebug.begin(this);
 
   m_reset = true;
 }
@@ -365,7 +371,13 @@ void Machine::tick()
       // run keyboard controller every PIT tick (just to not overload CPU with continous checks)
       m_i8042.tick();
     }
-    
+
+    // Far rarer than the devices above: the console only has to notice bytes arriving on a
+    // 115200 baud line, and while the monitor is open this call does not return until the user
+    // resumes, which is what freezes the guest.
+    if ((m_ticksCounter & 0x3fff) == 0x3fff && m_serialDebug.enabled())
+      m_serialDebug.poll();
+
   }
   
   if (m_PIC8259A.pendingInterrupt() && i8086::IRQ(m_PIC8259A.pendingInterruptNum()))

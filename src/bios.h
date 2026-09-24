@@ -127,6 +127,11 @@ public:
 
   void setDriveMediaType(int drive, MediaType media);
 
+  // Push a key into the BIOS keyboard buffer as if it had been typed: the high byte is the
+  // scancode, the low byte the character. Used by the serial debug console (serialdbg.cpp),
+  // which has no physical keyboard to drive the 8042 with.
+  bool injectKey(uint16_t syscode)     { return storeKeyInKbdBuffer(syscode); }
+
 private:
 
   void getKeyFromKeyboard();

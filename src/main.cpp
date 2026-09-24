@@ -568,12 +568,17 @@ void setup()
 
   machine->setRamSize(conf->ramSizeKB);
   
-  // Note: COM1 uses pins 3/1, the same pins as the USB serial console. Attaching it makes
-  // UART2 take those pins over, so printf() debug output stops reaching the host from here on.
-  // Comment this out if you need serial diagnostics from a running machine.
-  auto serial1 = new SerialPort;
-  serial1->setSignals(UART_URX, UART_UTX);
-  machine->setCOM1(serial1);
+  // COM1 uses pins 3/1, the same pins as the USB serial console: attaching it makes UART2 take
+  // those pins over, so printf() output stops reaching the host from here on. The serial debug
+  // console needs those pins too, so the machine gets one or the other, never both.
+  if (conf->debugConsole) {
+    printf("Serial debug console enabled for this machine, COM1 not attached.\n");
+    machine->enableDebugConsole();
+  } else {
+    auto serial1 = new SerialPort;
+    serial1->setSignals(UART_URX, UART_UTX);
+    machine->setCOM1(serial1);
+  }
 
   /*
   printf("MALLOC_CAP_32BIT : %d bytes (largest %d bytes)\r\n", heap_caps_get_free_size(MALLOC_CAP_32BIT), heap_caps_get_largest_free_block(MALLOC_CAP_32BIT));

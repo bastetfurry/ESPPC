@@ -38,6 +38,7 @@
 #include "devdrivers/MCP23S17.h"
 
 #include "bios.h"
+#include "serialdbg.h"
 
 
 // Disk images may live on the SD card (paths relative to the base directory) or in the
@@ -115,6 +116,16 @@ public:
   uint8_t * frameBuffer()              { return m_frameBuffer; }
 
   GraphicsAdapter * graphicsAdapter()  { return &m_graphicsAdapter; }
+
+  BIOS * bios()                        { return &m_BIOS; }
+
+  // Enables the serial debug console (see serialdbg.h). Must be called before run(), and only
+  // when COM1 is left unattached -- they share the same pins.
+  void enableDebugConsole()            { m_debugConsoleRequested = true; }
+
+  // I/O port access for the debug monitor, routed through the same handlers the CPU uses
+  uint8_t readPortDebug(int address)            { return readPort(this, address); }
+  void    writePortDebug(int address, uint8_t v) { writePort(this, address, v); }
 
   FILE * disk(int index)               { return m_disk[index]; }
   char const * diskFilename(int index) { return m_diskFilename[index]; }
@@ -256,6 +267,9 @@ private:
   char const *             m_baseDir;
   
   // serial ports
+  SerialDebug              m_serialDebug;
+  bool                     m_debugConsoleRequested;
+
   PC8250                   m_COM1;
   PC8250                   m_COM2;
 

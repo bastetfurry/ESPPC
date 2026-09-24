@@ -122,6 +122,7 @@ struct MachineConfItem {
   uint16_t          sectors[DISKCOUNT];
   uint8_t           bootDrive;
   uint16_t          ramSizeKB;                // conventional memory in KB (64..704, step 64)
+  bool              debugConsole;             // "enabledebug": serial debug console instead of COM1
 
   MachineConfItem()
     : next(nullptr),
@@ -131,7 +132,8 @@ struct MachineConfItem {
       heads(),
       sectors(),
       bootDrive(0),
-      ramSizeKB(640)
+      ramSizeKB(640),
+      debugConsole(false)
   {
   }
 
@@ -147,6 +149,13 @@ struct MachineConfItem {
   void setDesc(char const * value)              { free(desc); desc = strdup(value); }
   void setDisk(int index, char const * value)   { free(disk[index]); disk[index] = strdup(value); }
   void setCHS(int index, char const * value)    { sscanf(value, "%hu,%hu,%hu", &cylinders[index], &heads[index], &sectors[index]); }
+
+  // "enabledebug 1" turns the serial debug console on. It is off unless asked for, because it
+  // takes over the USB serial pins that COM1 would otherwise use (see setup() in main.cpp).
+  void setDebugConsole(char const * value)      {
+    debugConsole = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
+                             value[0] == 't' || value[0] == 'T');
+  }
 
   void setRamSize(char const * value)           {
     int kb = atoi(value);

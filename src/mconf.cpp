@@ -187,6 +187,8 @@ void MachineConf::loadFromFile(FILE * file)
       item->setBootDrive(value);
     else if (strcmp("ram", tag) == 0)
       item->setRamSize(value);
+    else if (strcmp("enabledebug", tag) == 0)
+      item->setDebugConsole(value);
   }
   addItem(item);
 }
@@ -212,6 +214,9 @@ void MachineConf::saveToFile(FILE * file)
       fprintf(file, "boot %s ", MachineConfItem::driveIndexToStr(item->bootDrive));
     if (item->ramSizeKB != 640)
       fprintf(file, "ram %hu ", item->ramSizeKB);
+    // only written when on, so machines that never asked for it keep the file they had
+    if (item->debugConsole)
+      fputs("enabledebug 1 ", file);
     fputs("\r\n", file);
   }
 }
@@ -245,6 +250,7 @@ struct ConfigDialog : public uiApp {
   uiButton        * browseHD1Button;
   uiComboBox      * bootDriveComboBox;
   uiComboBox      * ramSizeComboBox;
+  uiCheckBox      * debugConsoleCheckBox;
 
 
   void init() {
@@ -252,7 +258,7 @@ struct ConfigDialog : public uiApp {
 
     rootWindow()->onPaint = [&]() { drawInfo(canvas()); };
 
-    mainFrame = new uiFrame(rootWindow(), "Machine Configuration", UIWINDOW_PARENTCENTER, Size(460, 250));
+    mainFrame = new uiFrame(rootWindow(), "Machine Configuration", UIWINDOW_PARENTCENTER, Size(460, 280));
     mainFrame->frameProps().resizeable        = false;
     mainFrame->frameProps().hasMaximizeButton = false;
     mainFrame->frameProps().hasMinimizeButton = false;
@@ -341,6 +347,13 @@ struct ConfigDialog : public uiApp {
       ramSizeComboBox->items().appendFmt("%d KB", kb);
     ramSizeComboBox->selectItem(item->ramSizeKB / 64 - 1);
 
+    // Serial debug console. Off unless asked for: it is mutually exclusive with COM1, which takes
+    // the same USB serial pins (see setup() in main.cpp), so turning it on silently would take
+    // COM1 away from machines that have always had it.
+    debugConsoleCheckBox = new uiCheckBox(mainFrame, Point(60, y + dy), Size(hh, hh), uiCheckBoxKind::CheckBox);
+    debugConsoleCheckBox->setChecked(item->debugConsole);
+    new uiStaticLabel(mainFrame, "Serial debug console (takes over COM1)", Point(80, y + dy + oy));
+
     // bottom buttons
 
     y = mainFrame->clientSize().height - 8;
@@ -417,6 +430,7 @@ struct ConfigDialog : public uiApp {
     item->sectors[3]   = atoi(HD1SecEdit->text());
     item->bootDrive    = bootDriveComboBox->selectedItem();
     item->ramSizeKB    = (ramSizeComboBox->selectedItem() + 1) * 64;
+    item->debugConsole = debugConsoleCheckBox->checked();
 
     // Warn when the selected boot drive has no image assigned. The boot drive defaults to Floppy 0,
     // so filling in just a hard disk and pressing Save silently builds a machine that cannot boot:
