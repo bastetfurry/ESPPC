@@ -281,11 +281,16 @@ void BIOS::helpersEntry()
     {
       int mode = i8086::AL() & 0x7f;
 
-      if (mode >= 0x0d && mode <= 0x10 && m_machine->setEGAMode(mode)) {
+      // On the EGA path the text modes belong to the EGA too: the glyphs live in plane 2 so the
+      // guest can redefine them, which the CGA text path cannot do.
+      bool egaText = m_machine->egaBiosInstalled() && (mode == 0x02 || mode == 0x03);
+
+      if ((egaText || (mode >= 0x0d && mode <= 0x10)) && m_machine->setEGAMode(mode)) {
 
         int columns  = (mode == 0x0d) ? 40 : 80;
-        int charH    = (mode >= 0x0f) ? 14 : 8;
-        int pageSize = (mode == 0x0d) ? 0x2000 : (mode == 0x0e ? 0x4000 : 0x8000);
+        int charH    = egaText ? 14 : ((mode >= 0x0f) ? 14 : 8);
+        int pageSize = egaText ? 0x1000
+                               : ((mode == 0x0d) ? 0x2000 : (mode == 0x0e ? 0x4000 : 0x8000));
 
         auto bda = m_memory + BIOS_DATAAREA_ADDR;
 

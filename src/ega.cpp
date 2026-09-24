@@ -28,6 +28,9 @@ EGA::EGA()
   memset(m_bank, 0, sizeof(m_bank));
   m_bankMask   = EGA_BANK_COUNT - 1;
   m_offsetMask = EGA_OFFSET_MASK;
+  m_oddEven    = false;
+  m_mapBase    = 0xa0000;
+  m_mapEnd     = 0xb0000;
   reset();
 }
 
@@ -222,6 +225,18 @@ void EGA::recomputeMasks()
   if (m_writeMode == 3) {
     m_srMask  = 0xffffffffu;
     m_srBlend = 0;
+  }
+
+  // Odd/even addressing is on when the Graphics Controller says so and the Sequencer has not
+  // disabled it. This is what the BIOS selects for text modes.
+  m_oddEven = ((m_gcReg[5] & 0x10) != 0) && ((m_seqReg[4] & 0x04) == 0);
+
+  // Graphics Controller Miscellaneous register, bits 3-2: which CPU window the card answers.
+  switch ((m_gcReg[6] >> 2) & 0x03) {
+    case 0:  m_mapBase = 0xa0000; m_mapEnd = 0xc0000; break;   // 128K
+    case 1:  m_mapBase = 0xa0000; m_mapEnd = 0xb0000; break;   // 64K, graphics modes
+    case 2:  m_mapBase = 0xb0000; m_mapEnd = 0xb8000; break;   // 32K, monochrome text
+    default: m_mapBase = 0xb8000; m_mapEnd = 0xc0000; break;   // 32K, colour text
   }
 
   // an unmasked, unmodified write mode 0 is just a splat across the four planes

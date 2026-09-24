@@ -145,6 +145,11 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     // Emulation::PC_Graphics_EGA_320x200_16Colors (EGA, Graphics Mode, 320x200x16, BIOS 0Dh)
     { false,    nullptr,  0,  0, 1,           drawScanline_EGA_320_16Colors, QVGA_320x240_60Hz, 320, 200 },
 
+    // Emulation::PC_Text_EGA_80x25_16Colors (EGA, Text Mode, 80x25, 8x14 glyphs from plane 2).
+    // 25 rows of 14 scanlines is 350, which is a real timing, so no scaling is needed. This is
+    // marked as a graphics mode in the table because the font does not come from FontInfo.
+    { false,    nullptr,  0,  0, 1,             drawScanline_EGA_Text_80x25, VGA_640x350_70Hz, 640, 350 },
+
   };
 
   if (emulation != Emulation::None) {
@@ -159,6 +164,11 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
       setCursorShape(info->cursorStart, info->cursorEnd);
       m_columns = m_VGADCtrl.getViewPortWidth() / m_font.width;
       m_rows    = m_VGADCtrl.getViewPortHeight() / m_font.height;
+    } else if (emulation == Emulation::PC_Text_EGA_80x25_16Colors) {
+      // A text mode that does not use FontInfo: the glyphs come from plane 2. The geometry still
+      // has to be published, because the cursor position is computed against getTextColumns().
+      m_columns = 80;
+      m_rows    = m_VGADCtrl.getViewPortHeight() / m_egaCharHeight;
     }
   }
 }
@@ -185,6 +195,7 @@ GraphicsAdapter::GraphicsAdapter()
     m_egaBankMask(3),
     m_egaOffsetMask(0x7fff),
     m_egaStart(0),
+    m_egaCharHeight(14),
     m_egaPal2(nullptr)
 {
   for (int i = 0; i < 4; ++i)
@@ -309,6 +320,7 @@ void GraphicsAdapter::setupLUT()
     case Emulation::PC_Graphics_EGA_640x350_2Colors:
     case Emulation::PC_Graphics_EGA_640x200_16Colors:
     case Emulation::PC_Graphics_EGA_320x200_16Colors:
+    case Emulation::PC_Text_EGA_80x25_16Colors:
       setupEGALUT();
       break;
 
@@ -819,6 +831,73 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_
   }
 }
 
+
+// PCEmulator: EGA text.
+//
+// Characters come from plane 0, attributes from plane 1, and the glyph bitmap from plane 2 --
+// which is the whole point: a program that rewrites plane 2 changes the font, and this renderer
+// picks it up with no further work. Plane 2 holds 32 bytes per character, of which the first
+// m_egaCharHeight are used.
+void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t * dest, int scanLine)
+{
+  constexpr int COLUMNS = 80;
+
+  auto ga = (GraphicsAdapter*) arg;
+
+  if (!ga->m_egaBanks || !ga->m_egaPal2)
+    return;
+
+  int charHeight = ga->m_egaCharHeight;
+  int textRow    = scanLine / charHeight;
+  int glyphRow   = scanLine % charHeight;
+
+  if (scanLine == 0)
+    ++ga->m_frameCounter;
+
+  bool showCursor = ga->m_cursorVisible && ga->m_cursorRow == textRow &&
+                    ((ga->m_frameCounter & 0x1f) < 0xf);
+  int  cursorCol  = ga->m_cursorCol;
+
+  bool bit7blink = ga->m_bit7blink;
+  bool blinktime = bit7blink && !((ga->m_frameCounter & 0x3f) < 0x1f);
+
+  // the palette table maps two 4 bit indices to two raw pixels; for text the two halves of the
+  // byte are the same index, so index it with 0x11 * colour to get a solid pair
+  uint16_t const * P = ga->m_egaPal2;
+
+  uint32_t rowBase = (ga->m_egaStart + (uint32_t)textRow * COLUMNS) & ga->m_egaOffsetMask;
+
+  for (int col = 0; col < COLUMNS; ++col) {
+
+    uint32_t o = (rowBase + col) & ga->m_egaOffsetMask;
+    uint32_t w = ga->m_egaBanks[(o >> 13) & ga->m_egaBankMask][o & 8191];
+
+    uint8_t ch   = (uint8_t) w;             // plane 0
+    uint8_t attr = (uint8_t)(w >> 8);       // plane 1
+
+    bool blink = false;
+    if (bit7blink) {
+      blink = blinktime && (attr & 0x80);
+      attr &= 0x7f;
+    }
+
+    // glyph row out of plane 2, 32 bytes per character
+    uint32_t go = ((uint32_t)ch * 32 + glyphRow) & ga->m_egaOffsetMask;
+    uint8_t  bits = (uint8_t)(ga->m_egaBanks[(go >> 13) & ga->m_egaBankMask][go & 8191] >> 16);
+
+    if (showCursor && col == cursorCol && glyphRow >= charHeight - 2)
+      bits = 0xff;
+
+    uint16_t fg = P[(attr & 0x0f) * 0x11];
+    uint16_t bg = P[(attr >> 4) * 0x11];
+    if (blink)
+      fg = bg;
+
+    // FabGL's scanline byte order is swizzled in pairs, which the ^2 in the pixel index handles
+    for (int k = 0; k < 8; ++k)
+      dest[col * 8 + (k ^ 2)] = (uint8_t)(((bits >> (7 - k)) & 1) ? fg : bg);
+  }
+}
 
 
 };  // fabgl namespace

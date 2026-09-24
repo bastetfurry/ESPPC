@@ -91,6 +91,14 @@ public:
 
     // EGA 320x200, 16 Colors (PC BIOS 0Dh)
     PC_Graphics_EGA_320x200_16Colors,
+
+    // EGA 80x25 Color Text (PC BIOS 02h/03h on an EGA).
+    //
+    // Unlike the CGA text modes this does not read a linear character/attribute buffer and a
+    // fixed ROM font. The EGA keeps characters in plane 0, attributes in plane 1 and the font
+    // itself in plane 2, which is why software can redefine the character set: the renderer
+    // simply draws whatever glyphs are in plane 2 at the time.
+    PC_Text_EGA_80x25_16Colors,
   };
 
 
@@ -110,6 +118,9 @@ public:
   void setEGAVideoBuffer(uint32_t * const * banks, int stride, uint32_t bankMask, uint32_t offsetMask);
   void setEGAPalette(uint8_t const * palette16);
   void setEGAStartAddress(uint32_t byteOffset)             { m_egaStart = byteOffset; }
+
+  // EGA text: character height in scanlines (14 for mode 3 on an EGA, 8 for 43 line mode)
+  void setEGACharHeight(int h)                             { m_egaCharHeight = h; }
 
   // text modes methods
   void setCursorShape(int start, int end);
@@ -149,6 +160,7 @@ private:
   static void drawScanline_PC_Graphics_HGC_720x348(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_640_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_320_16Colors(void * arg, uint8_t * dest, int scanLine);
+  static void drawScanline_EGA_Text_80x25(void * arg, uint8_t * dest, int scanLine);
 
   void setupEGALUT();
   void freeEGALUT();
@@ -187,6 +199,7 @@ private:
   uint32_t            m_egaBankMask;   // banks - 1; video memory is sized to the mode
   uint32_t            m_egaOffsetMask; // banks * EGA_BANK_ENTRIES - 1
   uint32_t            m_egaStart;      // first byte-column of the displayed page
+  int16_t             m_egaCharHeight; // scanlines per character in EGA text
   uint8_t             m_egaPalette[16];
   uint32_t *          m_egaSpread[4];  // plane byte -> eight packed 4 bit pixel indices
   uint16_t *          m_egaPal2;       // two packed indices -> two raw VGA pixel bytes

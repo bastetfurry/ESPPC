@@ -204,6 +204,7 @@ private:
   void tick();
 
   bool loadEGABios();
+  void loadEGAFont(int charHeight);
   void setCGAMode();
   void setEGAAttributeReg(uint8_t value);
   void setCGA6845Register(uint8_t value);

@@ -64,7 +64,7 @@ private:
 
   // --- screen mirroring ---
   void refreshScreen(bool force);
-  bool textMode(uint8_t const * * buffer, int * columns, int * rows);
+  bool textMode(uint8_t const * * buffer, int * columns, int * rows, bool * ega);
   static char cp437ToASCII(uint8_t c);
 
   // --- key injection ---

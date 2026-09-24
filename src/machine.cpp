@@ -577,9 +577,17 @@ void Machine::setCGA6845Register(uint8_t value)
     // video memory start offset (0x0c = H, 0x0d = L)
     case 0x0c:
     case 0x0d:
-      // NOTE: the EGA start address, which is how software page flips, is not wired up here.
-      // Planet X3 runs correctly without it, so this is a known gap rather than a bug to fix
-      // speculatively -- it needs a program that actually page flips to test against.
+      // In EGA text the start address is how the BIOS scrolls: it points the CRTC at a later
+      // character cell rather than moving the screen contents. One address is one character,
+      // which is also one plane offset, so the value is used as it stands.
+      //
+      // For the EGA graphics modes this is also how software page flips, but nothing has
+      // exercised that yet, so it is left following the same path rather than special cased.
+      if (m_EGAActive) {
+        m_graphicsAdapter.setEGAStartAddress((((uint32_t)m_CGA6845[0xc] << 8) | m_CGA6845[0xd])
+                                             & m_EGA.offsetMask());
+        break;
+      }
       m_CGAMemoryOffset = ((m_CGA6845[0xc] << 8) | m_CGA6845[0xd]) << 1;
       setCGAMode();
       break;
@@ -667,8 +675,69 @@ void Machine::setCGAMode()
 // write to 0xB8000 while an EGA graphics mode is up is discarded, which is also what a real EGA
 // does, since that window is not mapped in modes 0Dh-10h.
 
+// The EGA keeps its font in plane 2, which is why software can redefine the character set. The
+// BIOS would normally load it there during a mode set; we do the same, from FabGL's 8x14 ROM
+// font, 32 bytes per character as the hardware expects. Anything that later rewrites plane 2 --
+// INT 10h AH=11h, or a program poking it directly -- changes what the renderer draws.
+void Machine::loadEGAFont(int charHeight)
+{
+  auto const & f = fabgl::FONT_8x14;
+
+  for (int ch = 0; ch < 256; ++ch) {
+    for (int row = 0; row < 32; ++row) {
+      uint8_t bits = (row < charHeight && row < f.height) ? f.data[ch * f.height + row] : 0x00;
+      m_EGA.writePlaneByte(2, (uint32_t)ch * 32 + row, bits);
+    }
+  }
+}
+
+
 bool Machine::setEGAMode(int biosMode)
 {
+  // Text modes on the EGA path. These are not the CGA text modes: characters live in plane 0,
+  // attributes in plane 1 and the glyphs in plane 2, so the renderer draws whatever font the
+  // guest has loaded rather than a fixed one out of ROM.
+  if (m_egaBiosLoaded && (biosMode == 0x02 || biosMode == 0x03)) {
+
+    m_graphicsAdapter.enableVideo(false);
+
+    if (s_videoMemory) {
+      heap_caps_free(s_videoMemory);
+      s_videoMemory = nullptr;
+    }
+    if (!m_EGA.allocVRAM(EGA_BANK_COUNT))
+      return false;
+
+    m_EGAActive = true;
+    m_EGA.reset();
+    m_EGA.clearVRAM();
+
+    // Program the card the way an EGA BIOS does for an alphanumeric mode. Without this the
+    // registers are still at their power-on planar defaults and the guest's character writes go
+    // down the four-plane path instead of being split into characters and attributes.
+    m_EGA.selectSequencer(2); m_EGA.writeSequencer(0x03);   // map mask: planes 0 and 1
+    m_EGA.selectSequencer(4); m_EGA.writeSequencer(0x03);   // memory mode: odd/even addressing
+    m_EGA.selectGraphics(5);  m_EGA.writeGraphics(0x10);    // odd/even
+    m_EGA.selectGraphics(6);  m_EGA.writeGraphics(0x0e);    // window at B8000, alphanumeric
+
+    // after the registers, so the direct plane writes land where the renderer looks
+    loadEGAFont(14);
+
+    for (int i = 0; i < 16; ++i)
+      m_EGAACPalette[i] = i;
+
+    m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), 80, m_EGA.bankMask(), m_EGA.offsetMask());
+    m_graphicsAdapter.setEGAStartAddress(0);
+    m_graphicsAdapter.setEGACharHeight(14);
+    m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
+    m_graphicsAdapter.setBit7Blink(true);
+    m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_EGA_80x25_16Colors);
+    m_graphicsAdapter.enableVideo(true);
+
+    printf("EGA: text mode %02X, 80x25 with the font in plane 2\n", biosMode);
+    return true;
+  }
+
   GraphicsAdapter::Emulation em;
   int stride;
 
@@ -1268,45 +1337,52 @@ bool Machine::COM2Interrupt(PC8250 * source, void * context)
 // planar engine. 0xB0000 upwards is the CGA/Hercules buffer, which is released while EGA is
 // active -- hence the null checks, which also make a stray write during a mode change harmless.
 
+// When the EGA is live it answers whichever CPU window its Graphics Controller claims -- A0000
+// for the graphics modes, B8000 for text -- so the routing follows the card rather than a fixed
+// split. Outside that window the CGA/Hercules buffer still applies, when it exists.
 void Machine::writeVideoMemory8(void * context, int address, uint8_t value)
 {
   auto m = (Machine*)context;
-  if (address < 0xb0000) {
-    if (m->m_EGAActive)
-      m->m_EGA.write8(address - 0xa0000, value);
-  } else if (s_videoMemory) {
-    s_videoMemory[address - 0xb0000] = value;
+  if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd()) {
+    m->m_EGA.write8(address - m->m_EGA.mapBase(), value);
+    return;
   }
+  if (address >= 0xb0000 && s_videoMemory)
+    s_videoMemory[address - 0xb0000] = value;
 }
 
 
 void Machine::writeVideoMemory16(void * context, int address, uint16_t value)
 {
   auto m = (Machine*)context;
-  if (address < 0xb0000) {
-    if (m->m_EGAActive)
-      m->m_EGA.write16(address - 0xa0000, value);
-  } else if (s_videoMemory) {
-    *(uint16_t*)(s_videoMemory + address - 0xb0000) = value;
+  if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd()) {
+    m->m_EGA.write16(address - m->m_EGA.mapBase(), value);
+    return;
   }
+  if (address >= 0xb0000 && s_videoMemory)
+    *(uint16_t*)(s_videoMemory + address - 0xb0000) = value;
 }
 
 
 uint8_t Machine::readVideoMemory8(void * context, int address)
 {
   auto m = (Machine*)context;
-  if (address < 0xb0000)
-    return m->m_EGAActive ? m->m_EGA.read8(address - 0xa0000) : 0xff;
-  return s_videoMemory ? s_videoMemory[address - 0xb0000] : 0xff;
+  if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd())
+    return m->m_EGA.read8(address - m->m_EGA.mapBase());
+  if (address >= 0xb0000 && s_videoMemory)
+    return s_videoMemory[address - 0xb0000];
+  return 0xff;
 }
 
 
 uint16_t Machine::readVideoMemory16(void * context, int address)
 {
   auto m = (Machine*)context;
-  if (address < 0xb0000)
-    return m->m_EGAActive ? m->m_EGA.read16(address - 0xa0000) : 0xffff;
-  return s_videoMemory ? *(uint16_t*)(s_videoMemory + address - 0xb0000) : 0xffff;
+  if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd())
+    return m->m_EGA.read16(address - m->m_EGA.mapBase());
+  if (address >= 0xb0000 && s_videoMemory)
+    return *(uint16_t*)(s_videoMemory + address - 0xb0000);
+  return 0xffff;
 }
 
 

@@ -162,10 +162,22 @@ void SerialDebug::breakNow()
 // screen mirroring
 // ---------------------------------------------------------------------------------------------
 
-bool SerialDebug::textMode(uint8_t const * * buffer, int * columns, int * rows)
+// Reports the text geometry, and whether the characters live in a linear CGA buffer or in the
+// EGA's plane 0. buffer is only meaningful for the CGA case.
+bool SerialDebug::textMode(uint8_t const * * buffer, int * columns, int * rows, bool * ega)
 {
   auto ga = m_machine->graphicsAdapter();
   auto em = ga->emulation();
+
+  *ega = false;
+
+  if (em == GraphicsAdapter::Emulation::PC_Text_EGA_80x25_16Colors && m_machine->EGAActive()) {
+    *ega     = true;
+    *buffer  = nullptr;
+    *columns = ga->getTextColumns();
+    *rows    = ga->getTextRows();
+    return *columns > 0 && *rows > 0;
+  }
 
   if (em != GraphicsAdapter::Emulation::PC_Text_80x25_16Colors &&
       em != GraphicsAdapter::Emulation::PC_Text_40x25_16Colors)
@@ -221,8 +233,9 @@ void SerialDebug::refreshScreen(bool force)
 
   uint8_t const * fb;
   int columns, rows;
+  bool ega;
 
-  if (!textMode(&fb, &columns, &rows)) {
+  if (!textMode(&fb, &columns, &rows, &ega)) {
     // A graphics mode has nothing to mirror. Say so once rather than every refresh.
     uint32_t h = 0x9e3779b9;
     if (h != m_lastHash) {
@@ -236,11 +249,17 @@ void SerialDebug::refreshScreen(bool force)
   // FNV-1a over the character cells and the cursor, so an unchanged screen costs one pass and
   // no serial traffic. At 115200 baud a full repaint is about 190 ms of line time, which is why
   // this matters rather than just repainting on a timer.
+  // one place to fetch a character cell, whichever kind of text mode this is
+  auto charAt = [&](int r, int c) -> uint8_t {
+    if (ega)
+      return m_machine->ega()->planeByte(0, (uint32_t)r * columns + c);
+    return fb[(r * columns + c) * 2];
+  };
+
   uint32_t hash = 2166136261u;
-  for (int i = 0; i < columns * rows * 2; i += 2) {
-    hash = (hash ^ fb[i]) * 16777619u;
-    hash = (hash ^ fb[i + 1]) * 16777619u;
-  }
+  for (int r = 0; r < rows; ++r)
+    for (int c = 0; c < columns; ++c)
+      hash = (hash ^ charAt(r, c)) * 16777619u;
 
   if (hash == m_lastHash && !force)
     return;
@@ -252,7 +271,7 @@ void SerialDebug::refreshScreen(bool force)
   for (int r = 0; r < rows; ++r) {
     int n = 0;
     for (int c = 0; c < columns && n < (int)sizeof(line) - 1; ++c)
-      line[n++] = cp437ToASCII(fb[(r * columns + c) * 2]);
+      line[n++] = cp437ToASCII(charAt(r, c));
     // trailing blanks carry no information and cost line time
     while (n > 0 && line[n - 1] == ' ')
       --n;

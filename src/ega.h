@@ -87,6 +87,26 @@ public:
   uint8_t seqReg(int i) const                    { return m_seqReg[i & 0x07]; }
   uint8_t gcReg(int i) const                     { return m_gcReg[i & 0x0f]; }
 
+  // Where the card answers the CPU, from the Graphics Controller's Miscellaneous register.
+  // Text modes select B8000..BFFFF; the graphics modes select A0000..AFFFF.
+  uint32_t mapBase() const                       { return m_mapBase; }
+  uint32_t mapEnd() const                        { return m_mapEnd; }
+
+  // Odd/even addressing, which is how the EGA presents text memory: address bit 0 picks the
+  // plane (characters in 0, attributes in 1) and the rest of the address indexes the plane.
+  bool oddEven() const                           { return m_oddEven; }
+
+  // direct plane access, for loading fonts into plane 2 and for the text renderer
+  inline __attribute__((always_inline)) uint8_t planeByte(int plane, uint32_t off)
+  {
+    return ((uint8_t*) bankPtr(off))[plane & 3];
+  }
+
+  void writePlaneByte(int plane, uint32_t off, uint8_t value)
+  {
+    ((uint8_t*) bankPtr(off))[plane & 3] = value;
+  }
+
   // --- planar memory access ---------------------------------------------------------------
   // off is relative to 0xA0000
 
@@ -98,6 +118,13 @@ public:
 
   inline __attribute__((always_inline)) uint8_t read8(uint32_t off)
   {
+    // Odd/even: the CPU sees two interleaved planes rather than four stacked ones.
+    if (m_oddEven) {
+      uint32_t * p = bankPtr(off >> 1);
+      m_latch = *p;
+      return ((uint8_t*) p)[off & 1];
+    }
+
     uint32_t v = *bankPtr(off);
 
     // every CPU read loads the four latches, whatever the read mode
@@ -120,6 +147,14 @@ public:
   // kept and the benchmark cross-checks them over random register states.
   inline __attribute__((always_inline)) void write8(uint32_t off, uint8_t value)
   {
+    if (m_oddEven) {
+      // The map mask still decides, but it is read as a pair: plane 0 with 2, plane 1 with 3.
+      int lane = off & 1;
+      if (m_mapMask32 & (0xffu << (lane * 8)))
+        ((uint8_t*) bankPtr(off >> 1))[lane] = value;
+      return;
+    }
+
     uint32_t * p = bankPtr(off);
 
     // Fast path for the configuration an ordinary fill leaves behind: write mode 0, no rotate,
@@ -234,6 +269,9 @@ private:
   uint32_t   m_aluA, m_aluB, m_aluC;   // branchless Graphics Controller ALU function
 
   bool       m_simpleWrite;       // true when the Graphics Controller is doing nothing at all
+  bool       m_oddEven;           // text style addressing: address bit 0 selects the plane
+  uint32_t   m_mapBase;           // CPU window the card answers, from Graphics Controller reg 6
+  uint32_t   m_mapEnd;
 
   uint8_t    m_writeMode;
   uint8_t    m_readMode;
