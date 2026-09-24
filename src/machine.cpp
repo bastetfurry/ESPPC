@@ -128,6 +128,30 @@ Machine::~Machine()
 }
 
 
+// A real EGA carries its own BIOS ROM at C000:0000, and a good deal of software decides whether
+// an EGA is fitted by looking for the 0x55AA option ROM signature there rather than by asking
+// INT 10h. This emulator implements INT 10h inside the system BIOS, so there is no video BIOS
+// code to put at C000 -- but the signature has to be there for that test to pass. The entry
+// point is a far return, so anything that does call into it gets control straight back, and the
+// block is checksummed the way a real option ROM is in case something verifies it.
+static void installVideoROMStub(uint8_t * memory)
+{
+  constexpr uint32_t ADDR = 0xc0000;
+  constexpr int      SIZE = 512;          // one block, the smallest a real option ROM can be
+
+  memset(memory + ADDR, 0, SIZE);
+  memory[ADDR + 0] = 0x55;
+  memory[ADDR + 1] = 0xaa;
+  memory[ADDR + 2] = SIZE / 512;
+  memory[ADDR + 3] = 0xcb;                // retf
+
+  uint8_t sum = 0;
+  for (int i = 0; i < SIZE - 1; ++i)
+    sum += memory[ADDR + i];
+  memory[ADDR + SIZE - 1] = (uint8_t)(0u - sum);
+}
+
+
 void Machine::init()
 {
   srand((uint32_t)time(NULL));
@@ -144,6 +168,8 @@ void Machine::init()
   i8086::setVideoMemStart(m_ramSizeKB > 640 ? 0xB0000 : 0xA0000);
 
   memset(s_memory, 0, RAM_SIZE);
+
+  installVideoROMStub(s_memory);
 
   m_soundGen.play(true);
   m_soundGen.attach(&m_sinWaveGen);

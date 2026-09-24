@@ -6244,8 +6244,10 @@ lpt4addr         dw  0                   ; 40:0e
 ; bit 7-6   : number of disk drivers (00 = 1, 01 = 2)
 ; bit 9-11  : number of serial ports (010 = 2)
 ; bit 14-15 : number of printer adapters
-equip            dw  0b0001010001100101  ; 40:10h
+equip            dw  0b0001010001000101  ; 40:10h
 ;                      5432109876543210
+; bits 5-4 = 00: EGA or later, the display type comes from the video BIOS rather than from here.
+; It was 10 (80x25 colour), which is how a CGA machine answers INT 11h.
 
                  db  0
 memsize          dw  MEMSIZE
@@ -6304,10 +6306,13 @@ kbbuf_end_ptr    dw  0x003e     ; 40:82
 vid_rows         db  24         ; 40:84
                  db  8          ; 40:85 scan lines per character
                  db  0          ; 40:86
-vidmode_opt      db  0x96       ; 40:87    0x70
+vidmode_opt      db  0x92       ; 40:87  bit 3 = 0 EGA active, bits 2-1 = 01 -> 128 KB
+                                 ; (four 32 KB planes, see src/ega.h). Was 0x96, which claimed
+                                 ; the full 256 KB an emulated EGA cannot have here.
                  db  0x09       ; 40:88    0x89
                  db  0x81       ; 40:89    0x51
-video_card       db  0x0c       ; 40:8a    0x0c
+video_card       db  0x04       ; 40:8a  display combination code: EGA with colour display,
+                                 ; matching what int10_vid_combination returns for AH=1Ah
                  db  0          ; 40:8b
                  db  0          ; 40:8c
                  db  0          ; 40:8d
