@@ -127,6 +127,27 @@ public:
   uint8_t readPortDebug(int address)            { return readPort(this, address); }
   void    writePortDebug(int address, uint8_t v) { writePort(this, address, v); }
 
+  // Memory access for the debug monitor. Video memory is not part of s_memory -- the CPU routes
+  // the video window to separate callbacks -- so reading s_memory directly there shows zeros
+  // instead of the screen. Mirror what i8086::RMEM8/WMEM8 do so the monitor sees what the CPU
+  // would see. videoMemStart follows setRamSize(), same as in init().
+  int videoMemStartDebug() const                { return m_ramSizeKB > 640 ? 0xB0000 : 0xA0000; }
+
+  uint8_t readMemDebug(int address)
+  {
+    if (address >= videoMemStartDebug() && address < 0xC0000)
+      return readVideoMemory8(this, address);
+    return s_memory[address];
+  }
+
+  void writeMemDebug(int address, uint8_t value)
+  {
+    if (address >= videoMemStartDebug() && address < 0xC0000)
+      writeVideoMemory8(this, address, value);
+    else
+      s_memory[address] = value;
+  }
+
   FILE * disk(int index)               { return m_disk[index]; }
   char const * diskFilename(int index) { return m_diskFilename[index]; }
   uint64_t diskSize(int index)         { return m_diskSize[index]; }

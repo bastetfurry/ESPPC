@@ -45,7 +45,10 @@ using fabgl::imin;
 // MachineConf
 
 
-#define MAXTAGLENGTH     6
+// Long enough for the longest tag plus room to grow. Tags longer than this are silently
+// truncated and then match nothing, which is invisible from the outside: "enabledebug" is 11
+// characters and was being cut to "enable", so the option simply did nothing.
+#define MAXTAGLENGTH    16
 #define MAXVALUELENGTH 256
 
 
@@ -189,6 +192,10 @@ void MachineConf::loadFromFile(FILE * file)
       item->setRamSize(value);
     else if (strcmp("enabledebug", tag) == 0)
       item->setDebugConsole(value);
+    else if (tag[0])
+      // Say so rather than ignoring it. A mistyped or over-long tag otherwise looks exactly
+      // like a feature that does not work.
+      printf("mconfs.txt: ignoring unknown tag \"%s\"\n", tag);
   }
   addItem(item);
 }

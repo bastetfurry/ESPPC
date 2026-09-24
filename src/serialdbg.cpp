@@ -428,8 +428,6 @@ void SerialDebug::cmdDump(char const * args)
   if (len > 1024)
     len = 1024;
 
-  auto mem = m_machine->memory();
-
   for (uint32_t i = 0; i < len; i += 16) {
     uint32_t a = addr + i;
     if (a >= RAM_SIZE)
@@ -437,7 +435,7 @@ void SerialDebug::cmdDump(char const * args)
     writeFmt("%05X  ", (unsigned)a);
     char asc[17];
     for (int j = 0; j < 16; ++j) {
-      uint8_t b = (a + j < RAM_SIZE) ? mem[a + j] : 0;
+      uint8_t b = (a + j < RAM_SIZE) ? m_machine->readMemDebug(a + j) : 0;
       writeFmt("%02X ", b);
       asc[j] = (b >= 0x20 && b < 0x7f) ? (char)b : '.';
     }
@@ -463,7 +461,6 @@ void SerialDebug::cmdEnter(char const * args)
     return;
   }
 
-  auto mem = m_machine->memory();
   int written = 0;
 
   while (p && *p) {
@@ -476,7 +473,7 @@ void SerialDebug::cmdEnter(char const * args)
     if (!ok)
       break;
     if (addr + written < RAM_SIZE)
-      mem[addr + written] = (uint8_t)b;
+      m_machine->writeMemDebug(addr + written, (uint8_t)b);
     ++written;
     p = strchr(p, ' ');
   }
