@@ -107,7 +107,7 @@ public:
   // PCEmulator: EGA planar modes. banks is the bank pointer array from the EGA engine, stride is
   // the number of byte-columns per scanline, and palette is 16 entries of 6 bit EGA RGB (rgbRGB),
   // which map one to one onto FabGL's RGB222.
-  void setEGAVideoBuffer(uint32_t * const * banks, int stride);
+  void setEGAVideoBuffer(uint32_t * const * banks, int stride, uint32_t bankMask, uint32_t offsetMask);
   void setEGAPalette(uint8_t const * palette16);
   void setEGAStartAddress(uint32_t byteOffset)             { m_egaStart = byteOffset; }
 
@@ -184,6 +184,8 @@ private:
   // --- PCEmulator: EGA planar mode state ---
   uint32_t * const *  m_egaBanks;      // four banks of EGA_BANK_ENTRIES uint32, planes interleaved
   int32_t             m_egaStride;     // byte-columns per scanline
+  uint32_t            m_egaBankMask;   // banks - 1; video memory is sized to the mode
+  uint32_t            m_egaOffsetMask; // banks * EGA_BANK_ENTRIES - 1
   uint32_t            m_egaStart;      // first byte-column of the displayed page
   uint8_t             m_egaPalette[16];
   uint32_t *          m_egaSpread[4];  // plane byte -> eight packed 4 bit pixel indices

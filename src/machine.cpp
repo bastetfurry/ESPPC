@@ -538,12 +538,13 @@ bool Machine::setEGAMode(int biosMode)
 {
   GraphicsAdapter::Emulation em;
   int stride;
+  int banks;    // only what the mode addresses: 8000, 16000 or 28000 byte-columns
 
   switch (biosMode) {
-    case 0x0d: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_320x200_16Colors; stride = 40; break;
-    case 0x0e: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x200_16Colors; stride = 80; break;
-    case 0x0f: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x350_2Colors;  stride = 80; break;
-    case 0x10: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x350_16Colors; stride = 80; break;
+    case 0x0d: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_320x200_16Colors; stride = 40; banks = 1; break;
+    case 0x0e: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x200_16Colors; stride = 80; banks = 2; break;
+    case 0x0f: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x350_2Colors;  stride = 80; banks = 4; break;
+    case 0x10: em = GraphicsAdapter::Emulation::PC_Graphics_EGA_640x350_16Colors; stride = 80; banks = 4; break;
     default:   return false;
   }
 
@@ -554,21 +555,21 @@ bool Machine::setEGAMode(int biosMode)
          heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
          heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
-  if (!m_EGAActive) {
-    if (s_videoMemory) {
-      heap_caps_free(s_videoMemory);
-      s_videoMemory = nullptr;
-    }
-    if (!m_EGA.allocVRAM()) {
-      // out of internal memory: put the CGA buffer back and let the caller use the CGA path
-      printf("EGA: cannot allocate planar video memory, staying on CGA\n");
-      s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
-      m_frameBuffer = s_videoMemory;
-      m_graphicsAdapter.enableVideo(true);
-      return false;
-    }
-    m_EGAActive = true;
+  if (s_videoMemory) {
+    heap_caps_free(s_videoMemory);
+    s_videoMemory = nullptr;
   }
+
+  if (!m_EGA.allocVRAM(banks)) {
+    // out of internal memory: put the CGA buffer back and let the caller use the CGA path
+    printf("EGA: cannot allocate planar video memory, staying on CGA\n");
+    s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    m_frameBuffer = s_videoMemory;
+    m_graphicsAdapter.enableVideo(true);
+    return false;
+  }
+
+  m_EGAActive = true;
 
   m_EGA.reset();
   m_EGA.clearVRAM();
@@ -577,7 +578,7 @@ bool Machine::setEGAMode(int biosMode)
   for (int i = 0; i < 16; ++i)
     m_EGAACPalette[i] = i;
 
-  m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), stride);
+  m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), stride, m_EGA.bankMask(), m_EGA.offsetMask());
   m_graphicsAdapter.setEGAStartAddress(0);
   m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
   printf("EGA: planes allocated, internal heap free %d (largest %d)\n",

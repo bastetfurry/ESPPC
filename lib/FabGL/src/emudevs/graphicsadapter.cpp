@@ -182,6 +182,8 @@ GraphicsAdapter::GraphicsAdapter()
     m_videoEnabled(true),
     m_egaBanks(nullptr),
     m_egaStride(80),
+    m_egaBankMask(3),
+    m_egaOffsetMask(0x7fff),
     m_egaStart(0),
     m_egaPal2(nullptr)
 {
@@ -370,10 +372,12 @@ void GraphicsAdapter::freeEGALUT()
 }
 
 
-void GraphicsAdapter::setEGAVideoBuffer(uint32_t * const * banks, int stride)
+void GraphicsAdapter::setEGAVideoBuffer(uint32_t * const * banks, int stride, uint32_t bankMask, uint32_t offsetMask)
 {
-  m_egaBanks  = banks;
-  m_egaStride = stride;
+  m_egaBanks      = banks;
+  m_egaStride     = stride;
+  m_egaBankMask   = bankMask;
+  m_egaOffsetMask = offsetMask;
 }
 
 
@@ -747,7 +751,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Graphics_HGC_720x348(void * arg,
 // VRAM is banked so it can be allocated on a fragmented heap, so the byte-column offset is
 // resolved through the bank table on each iteration -- a shift, a load and a mask.
 
-#define EGA_RENDER_BANK(o)  (ga->m_egaBanks[((o) >> 13) & 3][(o) & 8191])
+#define EGA_RENDER_BANK(o)  (ga->m_egaBanks[((o) >> 13) & ga->m_egaBankMask][(o) & 8191])
 
 
 void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_t * dest, int scanLine)
@@ -765,12 +769,12 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_
   uint32_t const * L3 = ga->m_egaSpread[3];
   uint16_t const * P  = ga->m_egaPal2;
 
-  uint32_t off  = (ga->m_egaStart + scanLine * ga->m_egaStride) & 0x7fff;
+  uint32_t off  = (ga->m_egaStart + scanLine * ga->m_egaStride) & ga->m_egaOffsetMask;
   auto     d16  = (uint16_t*) dest;
 
   for (int col = 0; col < WIDTHINBYTES; ++col) {
     uint32_t w = EGA_RENDER_BANK(off);
-    off = (off + 1) & 0x7fff;
+    off = (off + 1) & ga->m_egaOffsetMask;
 
     uint32_t i = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
 
@@ -798,12 +802,12 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_
   uint32_t const * L3 = ga->m_egaSpread[3];
   uint16_t const * P  = ga->m_egaPal2;
 
-  uint32_t off  = (ga->m_egaStart + scanLine * ga->m_egaStride) & 0x7fff;
+  uint32_t off  = (ga->m_egaStart + scanLine * ga->m_egaStride) & ga->m_egaOffsetMask;
   auto     d16  = (uint16_t*) dest;
 
   for (int col = 0; col < WIDTHINBYTES; ++col) {
     uint32_t w = EGA_RENDER_BANK(off);
-    off = (off + 1) & 0x7fff;
+    off = (off + 1) & ga->m_egaOffsetMask;
 
     uint32_t i = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
 

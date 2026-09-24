@@ -48,13 +48,20 @@ public:
   EGA();
   ~EGA();
 
-  // allocates the four banks in internal RAM, returns false if any allocation fails
-  bool allocVRAM();
+  // Allocates video memory in internal RAM, returns false if any allocation fails.
+  //
+  // banks must be 1, 2 or 4 so that the bank index can be masked rather than compared, and is
+  // chosen from what the mode actually needs: mode 0Dh addresses 8000 byte-columns, 0Eh 16000,
+  // and 0Fh/10h 28000. Allocating the worst case for every mode wasted 64 KB of internal RAM in
+  // 640x200, which is the mode a lot of EGA software actually uses.
+  bool allocVRAM(int banks);
   void freeVRAM();
   bool hasVRAM()                                 { return m_bank[0] != nullptr; }
 
-  // bank table for the renderer in GraphicsAdapter
+  // bank table for the renderer in GraphicsAdapter, with the masks it needs to index it
   uint32_t * const * banks() const               { return m_bank; }
+  uint32_t           bankMask() const            { return m_bankMask; }
+  uint32_t           offsetMask() const          { return m_offsetMask; }
 
   void clearVRAM();
 
@@ -85,8 +92,8 @@ public:
 
   inline __attribute__((always_inline)) uint32_t * bankPtr(uint32_t off)
   {
-    off &= EGA_OFFSET_MASK;
-    return m_bank[off >> EGA_BANK_SHIFT] + (off & (EGA_BANK_ENTRIES - 1));
+    off &= m_offsetMask;
+    return m_bank[(off >> EGA_BANK_SHIFT) & m_bankMask] + (off & (EGA_BANK_ENTRIES - 1));
   }
 
   inline __attribute__((always_inline)) uint8_t read8(uint32_t off)
@@ -206,6 +213,8 @@ private:
   static const uint32_t s_expand[16];
 
   uint32_t * m_bank[EGA_BANK_COUNT];
+  uint32_t   m_bankMask;          // banks - 1, so the bank index is a mask not a compare
+  uint32_t   m_offsetMask;        // banks * EGA_BANK_ENTRIES - 1
 
   uint32_t   m_latch;             // the four plane latches, one per byte lane
 

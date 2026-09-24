@@ -26,6 +26,8 @@ const uint32_t EGA::s_expand[16] = {
 EGA::EGA()
 {
   memset(m_bank, 0, sizeof(m_bank));
+  m_bankMask   = EGA_BANK_COUNT - 1;
+  m_offsetMask = EGA_OFFSET_MASK;
   reset();
 }
 
@@ -36,9 +38,23 @@ EGA::~EGA()
 }
 
 
-bool EGA::allocVRAM()
+bool EGA::allocVRAM(int banks)
 {
-  for (int i = 0; i < EGA_BANK_COUNT; ++i) {
+  if (banks != 1 && banks != 2 && banks != 4)
+    banks = EGA_BANK_COUNT;
+
+  // release anything above what this mode needs
+  for (int i = banks; i < EGA_BANK_COUNT; ++i) {
+    if (m_bank[i]) {
+      heap_caps_free(m_bank[i]);
+      m_bank[i] = nullptr;
+    }
+  }
+
+  m_bankMask   = (uint32_t)banks - 1;
+  m_offsetMask = (uint32_t)banks * EGA_BANK_ENTRIES - 1;
+
+  for (int i = 0; i < banks; ++i) {
     if (!m_bank[i]) {
       m_bank[i] = (uint32_t*) heap_caps_malloc(EGA_BANK_ENTRIES * sizeof(uint32_t),
                                                MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);

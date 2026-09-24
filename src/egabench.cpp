@@ -366,7 +366,7 @@ void setup()
   printf("\n\n===== EGA planar path benchmark =====\n\n");
 
   ega = new EGA;
-  if (!ega->allocVRAM()) {
+  if (!ega->allocVRAM(4)) {   // worst case, as mode 10h needs
     printf("  FAILED to allocate EGA VRAM (4 banks of 32 KB internal)\n");
     return;
   }
