@@ -111,8 +111,11 @@ Machine::Machine() :
     m_EGAACIndex(0),
     m_EGAACFlipFlop(false),
     m_EGAMiscOutput(0),
+    m_EGASwitches(0x09),
     m_debugConsoleRequested(false),
-    m_breakAddr(0)
+    m_breakAddr(0),
+    m_egaRomPath(nullptr),
+    m_egaBiosLoaded(false)
 {
 }
 
@@ -170,7 +173,32 @@ void Machine::init()
 
   memset(s_memory, 0, RAM_SIZE);
 
-  installVideoROMStub(s_memory);
+  // A real EGA BIOS, if one is configured, replaces the stub entirely: it carries its own
+  // signature and provides the INT 10h implementation the stub only pretends to stand for.
+  m_egaBiosLoaded = loadEGABios();
+  if (m_egaBiosLoaded) {
+    // The ROM programs and tests the hardware during its own initialisation, so the planes have
+    // to be there before POST calls it. The CGA buffer is released the same way an EGA mode set
+    // would do it, and setCGAMode()/setHGCMode() stand down for as long as this is true.
+    if (s_videoMemory) {
+      heap_caps_free(s_videoMemory);
+      s_videoMemory = nullptr;
+    }
+    if (m_EGA.allocVRAM(EGA_BANK_COUNT)) {
+      m_EGA.reset();
+      m_EGA.clearVRAM();
+      m_EGAActive = true;
+      printf("EGA BIOS: planar memory ready, internal heap free %d\n",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    } else {
+      printf("EGA BIOS: no room for planar memory, falling back to CGA\n");
+      s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+      m_frameBuffer = s_videoMemory;
+      m_egaBiosLoaded = false;
+    }
+  }
+  if (!m_egaBiosLoaded)
+    installVideoROMStub(s_memory);
 
   m_soundGen.play(true);
   m_soundGen.attach(&m_sinWaveGen);
@@ -393,6 +421,60 @@ void Machine::runTask(void * pvParameters)
 		m->tick();
 
 	}
+}
+
+
+void Machine::setEGABios(char const * romPath)
+{
+  free(m_egaRomPath);
+  m_egaRomPath = (romPath && romPath[0]) ? strdup(romPath) : nullptr;
+}
+
+
+// Loads the EGA BIOS option ROM into the guest's upper memory at C000:0000. Nothing is executed
+// here: POST scans for the 0x55AA signature and far-calls the init entry, which is what lets the
+// ROM hook INT 10h and set itself up, exactly as on real hardware.
+bool Machine::loadEGABios()
+{
+  if (!m_egaRomPath)
+    return false;
+
+  FILE * f = fopen(m_egaRomPath, "rb");
+  if (!f) {
+    printf("EGA BIOS: cannot open %s\n", m_egaRomPath);
+    return false;
+  }
+
+  fseek(f, 0, SEEK_END);
+  long size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+
+  // C0000..C7FFF is the video ROM window; anything larger is not a video option ROM
+  if (size < 512 || size > 32768) {
+    printf("EGA BIOS: %s has a bad size (%ld)\n", m_egaRomPath, size);
+    fclose(f);
+    return false;
+  }
+
+  size_t got = fread(s_memory + 0xc0000, 1, size, f);
+  fclose(f);
+
+  uint8_t * rom = s_memory + 0xc0000;
+  if (got != (size_t)size || rom[0] != 0x55 || rom[1] != 0xaa) {
+    printf("EGA BIOS: %s is not an option ROM (read %u of %ld, sig %02X%02X)\n",
+           m_egaRomPath, (unsigned)got, size, rom[0], rom[1]);
+    memset(rom, 0, size > 0 ? size : 512);
+    return false;
+  }
+
+  uint8_t sum = 0;
+  for (int i = 0; i < rom[2] * 512; ++i)
+    sum += rom[i];
+
+  printf("EGA BIOS: loaded %s, %d blocks (%d bytes), checksum %s\n",
+         m_egaRomPath, rom[2], rom[2] * 512, sum == 0 ? "ok" : "BAD");
+
+  return true;
 }
 
 
@@ -979,6 +1061,23 @@ uint8_t Machine::readPort(void * context, int address)
     // EGA - Miscellaneous Output Register (readable at 0x3cc)
     case 0x3cc:
       return m->m_EGAMiscOutput;
+
+    // EGA - Input Status Register 0.
+    //
+    // Bit 4 is the configuration switch sense: the BIOS picks a switch with bits 3-2 of the value
+    // it last wrote to the Misc Output register and reads the answer back here. It assembles the
+    // four answers into the switch block it then reports through INT 10h AH=12h, and dispatches
+    // its own configuration through a jump table indexed by that value.
+    //
+    // The sense is NOT inverted relative to the value we want reported: feeding back the
+    // complement made the BIOS read 0x06 out of a 0x09 switch block and take the wrong table
+    // entry. m_EGASwitches is a card set up as "enhanced colour display, primary".
+    case 0x3c2:
+    {
+      int sw = (m->m_EGAMiscOutput >> 2) & 0x03;
+      bool on = (m->m_EGASwitches >> sw) & 1;
+      return (on ? 0x10 : 0x00) | 0x0f;
+    }
 
     // EGA - Sequencer
     case 0x3c5:

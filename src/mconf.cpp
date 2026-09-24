@@ -192,6 +192,10 @@ void MachineConf::loadFromFile(FILE * file)
       item->setRamSize(value);
     else if (strcmp("enabledebug", tag) == 0)
       item->setDebugConsole(value);
+    else if (strcmp("video", tag) == 0)
+      item->setVideoAdapter(value);
+    else if (strcmp("egarom", tag) == 0)
+      item->setEgaRom(value);
     else if (tag[0])
       // Say so rather than ignoring it. A mistyped or over-long tag otherwise looks exactly
       // like a feature that does not work.
@@ -224,6 +228,14 @@ void MachineConf::saveToFile(FILE * file)
     // only written when on, so machines that never asked for it keep the file they had
     if (item->debugConsole)
       fputs("enabledebug 1 ", file);
+    if (item->videoAdapter == 1) {
+      fputs("video ega ", file);
+      if (item->egaRom && item->egaRom[0]) {
+        fputs("egarom \"", file);
+        fputs(item->egaRom, file);
+        fputs("\" ", file);
+      }
+    }
     fputs("\r\n", file);
   }
 }
@@ -258,6 +270,7 @@ struct ConfigDialog : public uiApp {
   uiComboBox      * bootDriveComboBox;
   uiComboBox      * ramSizeComboBox;
   uiCheckBox      * debugConsoleCheckBox;
+  uiComboBox      * videoAdapterComboBox;
 
 
   void init() {
@@ -354,6 +367,14 @@ struct ConfigDialog : public uiApp {
       ramSizeComboBox->items().appendFmt("%d KB", kb);
     ramSizeComboBox->selectItem(item->ramSizeKB / 64 - 1);
 
+    // Video adapter. The CGA/Hercules path is the original one and stays the default; EGA is a
+    // separate path that needs a real EGA BIOS option ROM to drive it.
+    new uiStaticLabel(mainFrame, "Video", Point(290, y + oy));
+    videoAdapterComboBox = new uiComboBox(mainFrame, Point(330, y), Size(120, hh), 60);
+    videoAdapterComboBox->items().append("CGA / Hercules");
+    videoAdapterComboBox->items().append("EGA (BIOS ROM)");
+    videoAdapterComboBox->selectItem(item->videoAdapter ? 1 : 0);
+
     // Serial debug console. Off unless asked for: it is mutually exclusive with COM1, which takes
     // the same USB serial pins (see setup() in main.cpp), so turning it on silently would take
     // COM1 away from machines that have always had it.
@@ -438,6 +459,7 @@ struct ConfigDialog : public uiApp {
     item->bootDrive    = bootDriveComboBox->selectedItem();
     item->ramSizeKB    = (ramSizeComboBox->selectedItem() + 1) * 64;
     item->debugConsole = debugConsoleCheckBox->checked();
+    item->videoAdapter = videoAdapterComboBox->selectedItem() > 0 ? 1 : 0;
 
     // Warn when the selected boot drive has no image assigned. The boot drive defaults to Floppy 0,
     // so filling in just a hard disk and pressing Save silently builds a machine that cannot boot:

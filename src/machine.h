@@ -92,6 +92,12 @@ public:
   // conventional memory in KB (64..704, in 64KB steps). Above 640KB the video window moves
   // from 0xA0000 to 0xB0000 so that 0xA0000-0xAFFFF becomes ordinary RAM.
   void setRamSize(int kb)                      { m_ramSizeKB = kb; }
+
+  // Selects the EGA path: a real EGA BIOS option ROM is loaded at C000:0000 and POST lets it
+  // initialise itself, instead of the CGA/Hercules adapter with EGA modes bolted onto the system
+  // BIOS. romPath is copied. Must be called before run().
+  void setEGABios(char const * romPath);
+  bool egaBiosInstalled() const                { return m_egaBiosLoaded; }
   int ramSizeKB()                              { return m_ramSizeKB; }
 
   void setSysReqCallback(SysReqCallback value) { m_sysReqCallback = value; }
@@ -193,6 +199,7 @@ private:
 
   void tick();
 
+  bool loadEGABios();
   void setCGAMode();
   void setEGAAttributeReg(uint8_t value);
   void setCGA6845Register(uint8_t value);
@@ -316,10 +323,13 @@ private:
   bool                     m_EGAACFlipFlop;   // false = next 0x3c0 write is an index
   uint8_t                  m_EGAACPalette[16];
   uint8_t                  m_EGAMiscOutput;
+  uint8_t                  m_EGASwitches;     // EGA configuration DIP block, read via 0x3c2
 
   SerialDebug              m_serialDebug;
   bool                     m_debugConsoleRequested;
   uint32_t                 m_breakAddr;
+  char *                   m_egaRomPath;
+  bool                     m_egaBiosLoaded;
 
   PC8250                   m_COM1;
   PC8250                   m_COM2;

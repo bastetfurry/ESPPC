@@ -275,6 +275,81 @@ boot:
   mov  cx, 0x100
   rep  movsb
 
+; ---------------------------------------------------------------------------------------------
+; Scan for video option ROMs at C000:0000 .. C780:0000, in 2 KB steps.
+;
+; A real EGA carries its BIOS there. If one is present it hooks INT 10h itself and programs the
+; hardware, replacing everything this BIOS would otherwise do for video. This runs after the BIOS
+; data area is in place, because the option ROM expects to find it, and before boot.
+;
+; The markers printed either side of the call go to the emulator console, so a ROM that hangs
+; during its own initialisation can be told apart from one that never ran.
+
+  push ds
+  push es
+
+  mov  ax, 0xc000
+
+optrom_scan:
+  mov  es, ax
+  cmp  word [es:0], 0xaa55
+  jne  optrom_next
+
+  ; A real BIOS checksums the image here. This one does not: summing 16 KB of emulated byte
+  ; reads takes minutes on this machine, and the emulator has already verified the checksum in
+  ; C++ before placing the ROM in memory (see Machine::loadEGABios), so the guest would only be
+  ; re-deriving a result it was handed. The signature check above is enough at this point.
+
+  ; far call the initialisation entry at offset 3
+  push ax
+  mov  al, 'R'
+  emu_putchar_al
+  mov  al, 'O'
+  emu_putchar_al
+  mov  al, 'M'
+  emu_putchar_al
+  mov  al, '<'
+  emu_putchar_al
+  pop  ax
+
+  push ax
+  mov  word [cs:optrom_ptr], 3
+  mov  [cs:optrom_ptr + 2], ax
+
+  push bx
+  push cx
+  push dx
+  push si
+  push di
+  push bp
+  push ds
+  push es
+  call far [cs:optrom_ptr]
+  pop  es
+  pop  ds
+  pop  bp
+  pop  di
+  pop  si
+  pop  dx
+  pop  cx
+  pop  bx
+  pop  ax
+
+  push ax
+  mov  al, '>'
+  emu_putchar_al
+  mov  al, 0x0a
+  emu_putchar_al
+  pop  ax
+
+optrom_next:
+  add  ax, 0x80
+  cmp  ax, 0xc800
+  jb   optrom_scan
+
+  pop  es
+  pop  ds
+
 ; Clear video memory
 
   mov  ax, 0xb800
@@ -6351,6 +6426,9 @@ boot_device      db  0
 
 ; Runtime EBDA segment. Defaults to the top 1KB of 640KB and is overwritten by POST with the
 ; value the emulator reports for the configured memory size (helper AH=0x09).
+; target for the indirect far call into a video option ROM's init entry (see the POST scan)
+optrom_ptr       dd  0
+
 ebda_seg         dw  EBDA_SEG
 crt_curpos_x     db  0
 crt_curpos_y     db  0

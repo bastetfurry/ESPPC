@@ -123,6 +123,8 @@ struct MachineConfItem {
   uint8_t           bootDrive;
   uint16_t          ramSizeKB;                // conventional memory in KB (64..704, step 64)
   bool              debugConsole;             // "enabledebug": serial debug console instead of COM1
+  uint8_t           videoAdapter;             // "video": 0 = CGA/Hercules (default), 1 = EGA
+  char            * egaRom;                   // "egarom": path to the EGA BIOS option ROM
 
   MachineConfItem()
     : next(nullptr),
@@ -133,12 +135,15 @@ struct MachineConfItem {
       sectors(),
       bootDrive(0),
       ramSizeKB(640),
-      debugConsole(false)
+      debugConsole(false),
+      videoAdapter(0),
+      egaRom(nullptr)
   {
   }
 
   ~MachineConfItem()
   {
+    free(egaRom);
     free(desc);
     for (int i = 0; i < DISKCOUNT; ++i)
       free(disk[i]);
@@ -149,6 +154,18 @@ struct MachineConfItem {
   void setDesc(char const * value)              { free(desc); desc = strdup(value); }
   void setDisk(int index, char const * value)   { free(disk[index]); disk[index] = strdup(value); }
   void setCHS(int index, char const * value)    { sscanf(value, "%hu,%hu,%hu", &cylinders[index], &heads[index], &sectors[index]); }
+
+  // "video ega" selects the EGA path, which needs a real EGA BIOS option ROM. Anything else,
+  // including the tag being absent, leaves the machine on the original CGA/Hercules adapter.
+  void setVideoAdapter(char const * value)      {
+    videoAdapter = (value && (value[0] == 'e' || value[0] == 'E')) ? 1 : 0;
+  }
+
+  void setEgaRom(char const * value)            {
+    if (egaRom)
+      free(egaRom);
+    egaRom = value && value[0] ? strdup(value) : nullptr;
+  }
 
   // "enabledebug 1" turns the serial debug console on. It is off unless asked for, because it
   // takes over the USB serial pins that COM1 would otherwise use (see setup() in main.cpp).

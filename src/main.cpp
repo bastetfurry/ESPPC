@@ -567,6 +567,15 @@ void setup()
   machine->setBootDrive(conf->bootDrive);
 
   machine->setRamSize(conf->ramSizeKB);
+
+  // EGA path: hand the machine a real EGA BIOS option ROM and let POST initialise it. Without
+  // this the machine keeps the original CGA/Hercules adapter, which is the default.
+  if (conf->videoAdapter == 1) {
+    char const * rom = (conf->egaRom && conf->egaRom[0]) ? conf->egaRom
+                                                         : SPIFFS_MOUNT_PATH "/ega.bin";
+    printf("Video adapter: EGA, BIOS ROM \"%s\"\n", rom);
+    machine->setEGABios(rom);
+  }
   
   // COM1 uses pins 3/1, the same pins as the USB serial console: attaching it makes UART2 take
   // those pins over, so printf() output stops reaching the host from here on. The serial debug
