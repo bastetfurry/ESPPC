@@ -803,9 +803,15 @@ int Machine::egaReadPixel(int x, int y)
 // pixels live in four bit planes and a character has to be merged into every one of them, so the
 // BIOS calls this instead of open coding it in assembler.
 //
-// The font is whatever the guest has installed, read through the same vectors a real BIOS uses:
-// INT 43h for characters 0..127 and INT 1Fh above that. Background pixels go to colour 0, which is
-// what the BIOS does for characters in graphics modes; the XOR flag in bit 7 is not implemented.
+// The font is picked to match the cell height of the mode. It deliberately does NOT come from the
+// guest's INT 43h vector: nothing re-points that vector when an EGA mode is set, so in the 350 line
+// modes, whose cells are 14 rows, it still addressed an 8 row table. Reading 14 bytes per character
+// out of an 8 row font is what made SCREEN 9's text garbage while SCREEN 7 and 8 looked fine.
+// The cost is that a font the guest installs itself is not honoured here; the text modes, which
+// render from plane 2, still are.
+//
+// Background pixels go to colour 0, which is what the BIOS does for characters in graphics modes;
+// the XOR flag in bit 7 is not implemented.
 void Machine::egaDrawChar(uint8_t ch, uint8_t colour)
 {
   if (!m_EGAActive)
@@ -824,15 +830,15 @@ void Machine::egaDrawChar(uint8_t ch, uint8_t colour)
   if (stride <= 0)
     return;
 
-  uint32_t vec   = (ch < 0x80 ? 0x43 : 0x1f) * 4;
-  uint32_t font  = *(uint16_t*)(s_memory + vec + 2) * 16 + *(uint16_t*)(s_memory + vec);
-  uint32_t glyph = font + (uint32_t)(ch & 0x7f) * charH;
+  auto const & f = (charH >= 16) ? fabgl::FONT_8x16
+                 : (charH >= 14) ? fabgl::FONT_8x14
+                                 : fabgl::FONT_8x8;
 
   colour &= 0x0f;
 
   uint32_t base = (uint32_t)row * charH * stride + col;
   for (int y = 0; y < charH; ++y) {
-    uint8_t bits = s_memory[(glyph + y) & 0xfffff];
+    uint8_t bits = (y < f.height) ? f.data[(uint32_t)ch * f.height + y] : 0x00;
     uint32_t off = base + (uint32_t)y * stride;
     for (int p = 0; p < 4; ++p)
       m_EGA.writePlaneByte(p, off, ((colour >> p) & 1) ? bits : 0x00);
