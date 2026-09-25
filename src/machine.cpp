@@ -681,7 +681,7 @@ void Machine::setCGAMode()
 // INT 10h AH=11h, or a program poking it directly -- changes what the renderer draws.
 void Machine::loadEGAFont(int charHeight)
 {
-  auto const & f = fabgl::FONT_8x14;
+  auto const & f = (charHeight >= 16) ? fabgl::FONT_8x16 : fabgl::FONT_8x14;
 
   for (int ch = 0; ch < 256; ++ch) {
     for (int row = 0; row < 32; ++row) {
@@ -724,14 +724,14 @@ bool Machine::setEGAMode(int biosMode)
     m_EGA.selectGraphics(6);  m_EGA.writeGraphics(0x0e);    // window at B8000, alphanumeric
 
     // after the registers, so the direct plane writes land where the renderer looks
-    loadEGAFont(14);
+    loadEGAFont(16);
 
     for (int i = 0; i < 16; ++i)
       m_EGAACPalette[i] = i;
 
     m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), textColumns, m_EGA.bankMask(), m_EGA.offsetMask());
     m_graphicsAdapter.setEGAStartAddress(0);
-    m_graphicsAdapter.setEGACharHeight(14);
+    m_graphicsAdapter.setEGACharHeight(16);
     m_graphicsAdapter.setEGATextColumns(textColumns);
     m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
     m_graphicsAdapter.setBit7Blink(true);

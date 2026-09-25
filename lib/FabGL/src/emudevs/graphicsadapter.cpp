@@ -148,12 +148,17 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     // Emulation::PC_Text_EGA_80x25_16Colors (EGA, Text Mode, 80x25, 8x14 glyphs from plane 2).
     // 25 rows of 14 scanlines is 350, which is a real timing, so no scaling is needed. This is
     // marked as a graphics mode in the table because the font does not come from FontInfo.
-    // 2 scanlines per callback. This value MUST be a power of two: VGADirectController::ISRHandler
-    // picks the line buffer with "scanLine & (linesCount - 1)", so anything else aliases onto
-    // indices past the end of the buffer array and corrupts the heap. 2 also divides the 14 line
-    // character cell, so a call never spans two character rows, which is what lets the character,
-    // attribute and colours be fetched once and reused.
-    { false,    nullptr,  0,  0, 2,             drawScanline_EGA_Text_80x25, VGA_640x350_70Hz, 640, 350 },
+    // Emulation::PC_Text_EGA_80x25_16Colors -- deliberately the same shape as the CGA 80x25 entry
+    // above: 640x400 on the 640x480 timing with a 16 line cell. A real EGA text mode is 8x14 on
+    // 350 lines, but that timing looks poor on the panels this runs on, which is exactly why the
+    // CGA text mode already makes the same trade.
+    //
+    // 8 scanlines per callback. This value MUST be a power of two: VGADirectController::ISRHandler
+    // selects the line buffer with "scanLine & (linesCount - 1)", so anything else aliases onto
+    // indices past the end of the buffer array and corrupts the heap. 8 also divides the 16 line
+    // cell, so a call never spans two character rows, which is what lets the character, attribute
+    // and colours be fetched once and reused across all eight scanlines.
+    { false,    nullptr,  0,  0, 8,             drawScanline_EGA_Text_80x25, VGA_640x480_60Hz, 640, 400 },
 
   };
 
@@ -200,7 +205,7 @@ GraphicsAdapter::GraphicsAdapter()
     m_egaBankMask(3),
     m_egaOffsetMask(0x7fff),
     m_egaStart(0),
-    m_egaCharHeight(14),
+    m_egaCharHeight(16),
     m_egaTextColumns(80),
     m_egaPal2(nullptr)
 {
@@ -847,7 +852,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_
 void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t * dest, int scanLine)
 {
   constexpr int SCREENWIDTH = 640;
-  constexpr int LINES       = 2;          // scanlines rendered per call, see the mode table
+  constexpr int LINES       = 8;          // scanlines rendered per call, see the mode table
 
   auto ga = (GraphicsAdapter*) arg;
 

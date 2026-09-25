@@ -288,7 +288,7 @@ void BIOS::helpersEntry()
       if ((egaText || (mode >= 0x0d && mode <= 0x10)) && m_machine->setEGAMode(mode)) {
 
         int columns  = (mode == 0x0d || (egaText && mode <= 0x01)) ? 40 : 80;
-        int charH    = egaText ? 14 : ((mode >= 0x0f) ? 14 : 8);
+        int charH    = egaText ? 16 : ((mode >= 0x0f) ? 14 : 8);
         int pageSize = egaText ? 0x1000
                                : ((mode == 0x0d) ? 0x2000 : (mode == 0x0e ? 0x4000 : 0x8000));
 
