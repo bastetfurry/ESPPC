@@ -129,18 +129,25 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     { false,    nullptr,  0,  0, 2,     drawScanline_PC_Graphics_HGC_720x348, VGA_720x350_70Hz,  -1,  -1 },
 
     // --- PCEmulator local addition: EGA planar modes ---
-    // 640x350 is a real VGA timing, so modes 10h and 0Fh need no centering. 640x200 uses the
-    // doublescan 640x240 timing, which doubles the lines in hardware exactly as the CGA 640x200
-    // mode already does, and 320x200 uses the QVGA timing like CGA 320x200.
+    // The 350 line modes are driven on the 640x480 60Hz timing with the image centred, the same
+    // trade the CGA 80x25 text mode above already makes. 640x350 is a real timing and was used
+    // here at first, but it shares its 31.5kHz/70Hz sync rates with the 720x400 text mode, so
+    // panels label it that, and 70Hz flickers visibly on them. 640x200 uses the doublescan 640x240
+    // timing, which doubles the lines in hardware exactly as the CGA 640x200 mode already does,
+    // and 320x200 uses the QVGA timing like CGA 320x200.
+    //
+    // Two scanlines per callback, not one: at one the scanline interrupt fires 24500 times a
+    // second for these modes, which is a lot of overhead for the renderer to work against. Two is
+    // a power of two, which VGADirectController::ISRHandler requires, and divides 350 and 200.
 
     // Emulation::PC_Graphics_EGA_640x350_16Colors (EGA, Graphics Mode, 640x350x16, BIOS 10h)
-    { false,    nullptr,  0,  0, 1,           drawScanline_EGA_640_16Colors, VGA_640x350_70Hz, 640, 350 },
+    { false,    nullptr,  0,  0, 2,           drawScanline_EGA_640_16Colors, VGA_640x480_60Hz, 640, 350 },
 
     // Emulation::PC_Graphics_EGA_640x350_2Colors (EGA, Graphics Mode, 640x350x2, BIOS 0Fh)
-    { false,    nullptr,  0,  0, 1,           drawScanline_EGA_640_16Colors, VGA_640x350_70Hz, 640, 350 },
+    { false,    nullptr,  0,  0, 2,           drawScanline_EGA_640_16Colors, VGA_640x480_60Hz, 640, 350 },
 
     // Emulation::PC_Graphics_EGA_640x200_16Colors (EGA, Graphics Mode, 640x200x16, BIOS 0Eh)
-    { false,    nullptr,  0,  0, 1,           drawScanline_EGA_640_16Colors, VGA_640x240_60Hz, 640, 200 },
+    { false,    nullptr,  0,  0, 2,           drawScanline_EGA_640_16Colors, VGA_640x240_60Hz, 640, 200 },
 
     // Emulation::PC_Graphics_EGA_320x200_16Colors (EGA, Graphics Mode, 320x200x16, BIOS 0Dh)
     { false,    nullptr,  0,  0, 1,           drawScanline_EGA_320_16Colors, QVGA_320x240_60Hz, 320, 200 },
@@ -780,6 +787,8 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Graphics_HGC_720x348(void * arg,
 void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_t * dest, int scanLine)
 {
   constexpr int WIDTHINBYTES = 640 / 8;
+  constexpr int SCREENWIDTH  = 640;
+  constexpr int LINES        = 2;         // scanlines per call, see the mode table
 
   auto ga = (GraphicsAdapter*) arg;
 
@@ -792,20 +801,24 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_
   uint32_t const * L3 = ga->m_egaSpread[3];
   uint16_t const * P  = ga->m_egaPal2;
 
-  uint32_t off  = (ga->m_egaStart + scanLine * ga->m_egaStride) & ga->m_egaOffsetMask;
-  auto     d16  = (uint16_t*) dest;
+  // FabGL's line buffers are contiguous, so the next scanline is one viewport width along
+  for (int line = 0; line < LINES; ++line) {
 
-  for (int col = 0; col < WIDTHINBYTES; ++col) {
-    uint32_t w = EGA_RENDER_BANK(off);
-    off = (off + 1) & ga->m_egaOffsetMask;
+    uint32_t off = (ga->m_egaStart + (scanLine + line) * ga->m_egaStride) & ga->m_egaOffsetMask;
+    auto     d16 = (uint16_t*) (dest + line * SCREENWIDTH);
 
-    uint32_t i = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
+    for (int col = 0; col < WIDTHINBYTES; ++col) {
+      uint32_t w = EGA_RENDER_BANK(off);
+      off = (off + 1) & ga->m_egaOffsetMask;
 
-    d16[0] = P[i & 0xff];
-    d16[1] = P[(i >> 8) & 0xff];
-    d16[2] = P[(i >> 16) & 0xff];
-    d16[3] = P[i >> 24];
-    d16 += 4;
+      uint32_t i = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
+
+      d16[0] = P[i & 0xff];
+      d16[1] = P[(i >> 8) & 0xff];
+      d16[2] = P[(i >> 16) & 0xff];
+      d16[3] = P[i >> 24];
+      d16 += 4;
+    }
   }
 }
 
