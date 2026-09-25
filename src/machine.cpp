@@ -737,6 +737,19 @@ bool Machine::setEGAMode(int biosMode)
     // after the registers, so the direct plane writes land where the renderer looks
     loadEGAFont(16);
 
+    // Clear the text screen the way a BIOS mode set does: spaces on light grey over black.
+    //
+    // clearVRAM() above zeroes every plane, which leaves attribute 0 -- black on black. That is
+    // invisible, and it is not obvious from the outside: the characters really are in plane 0,
+    // so the serial screen mirror looks perfect while the monitor shows nothing at all. At boot
+    // it was masked by POST's own "clear video memory", which writes 0x0700 through the CPU and
+    // so sets the attributes; that runs once, so the first mode set after a graphics mode left
+    // the screen permanently dark.
+    for (uint32_t i = 0; i < (uint32_t)textColumns * 25; ++i) {
+      m_EGA.writePlaneByte(0, i, 0x20);      // space
+      m_EGA.writePlaneByte(1, i, 0x07);      // light grey on black
+    }
+
     for (int i = 0; i < 16; ++i)
       m_EGAACPalette[i] = i;
 

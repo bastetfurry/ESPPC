@@ -149,6 +149,9 @@ public:
   int  viewPortHeight()                                    { return m_VGADCtrl.getViewPortHeight(); }
   int  egaCharHeight() const                               { return m_egaCharHeight; }
   int  egaTextColumns() const                              { return m_egaTextColumns; }
+  uint8_t egaPaletteEntry(int i) const                     { return m_egaPalette[i & 15]; }
+  // raw VGA byte the renderer would emit for attribute colour i, 0 if the table is missing
+  uint16_t egaRawPair(int i) const                         { return m_egaPal2 ? m_egaPal2[(i & 15) * 0x11] : 0; }
 
 
 private:

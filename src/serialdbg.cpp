@@ -697,6 +697,44 @@ void SerialDebug::cmdVideoState()
            (int) m_machine->EGAActive(), (unsigned) m_machine->ega()->mapBase(),
            (unsigned) m_machine->ega()->mapEnd(), (int) m_machine->ega()->oddEven());
   writeFmt("free heap   %d internal\r\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
+  // Is the scanline interrupt still running? VSync is set inside it, so if the DMA has stopped
+  // this never changes no matter how long we watch. Sampled for about 100ms, several frames.
+  {
+    bool first = ga->VSync();
+    bool moved = false;
+    for (int i = 0; i < 2000 && !moved; ++i) {
+      if (ga->VSync() != first)
+        moved = true;
+      ets_delay_us(50);
+    }
+    writeFmt("scanline ISR %s\r\n", moved ? "running" : "STOPPED");
+  }
+
+  // A picture that is generated correctly but shows black is usually the colour table: every
+  // attribute resolving to the same raw value looks exactly like a dead screen.
+  write("AC palette  ");
+  for (int i = 0; i < 16; ++i)
+    writeFmt("%02x ", ga->egaPaletteEntry(i));
+  write("\r\n");
+
+  write("raw pixels  ");
+  for (int i = 0; i < 16; ++i)
+    writeFmt("%02x ", (unsigned)(ga->egaRawPair(i) & 0xff));
+  write("\r\n");
+
+  // The mirror reads plane 0, so it proves the characters are there but says nothing about the
+  // glyphs. If plane 2 is blank the monitor shows black while the mirror looks perfect.
+  if (m_machine->EGAActive()) {
+    write("glyph 'A'   ");
+    for (int r = 0; r < 16; ++r)
+      writeFmt("%02x ", m_machine->ega()->planeByte(2, 0x41 * 32 + r));
+    write("\r\n");
+    write("cell 0      ");
+    for (int i = 0; i < 4; ++i)
+      writeFmt("p%d=%02x ", i, m_machine->ega()->planeByte(i, 0));
+    write("\r\n");
+  }
 }
 
 
