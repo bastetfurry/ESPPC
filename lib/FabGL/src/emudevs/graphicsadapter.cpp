@@ -148,7 +148,12 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     // Emulation::PC_Text_EGA_80x25_16Colors (EGA, Text Mode, 80x25, 8x14 glyphs from plane 2).
     // 25 rows of 14 scanlines is 350, which is a real timing, so no scaling is needed. This is
     // marked as a graphics mode in the table because the font does not come from FontInfo.
-    { false,    nullptr,  0,  0, 1,             drawScanline_EGA_Text_80x25, VGA_640x350_70Hz, 640, 350 },
+    // 2 scanlines per callback. This value MUST be a power of two: VGADirectController::ISRHandler
+    // picks the line buffer with "scanLine & (linesCount - 1)", so anything else aliases onto
+    // indices past the end of the buffer array and corrupts the heap. 2 also divides the 14 line
+    // character cell, so a call never spans two character rows, which is what lets the character,
+    // attribute and colours be fetched once and reused.
+    { false,    nullptr,  0,  0, 2,             drawScanline_EGA_Text_80x25, VGA_640x350_70Hz, 640, 350 },
 
   };
 
@@ -841,16 +846,20 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_
 // m_egaCharHeight are used.
 void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t * dest, int scanLine)
 {
+  constexpr int SCREENWIDTH = 640;
+  constexpr int LINES       = 2;          // scanlines rendered per call, see the mode table
+
   auto ga = (GraphicsAdapter*) arg;
 
   if (!ga->m_egaBanks || !ga->m_egaPal2)
     return;
 
   int columns    = ga->m_egaTextColumns;
-  int charWidth  = (columns >= 80) ? 8 : 16;      // 40 column modes double every pixel
+  int charWidth  = (columns >= 80) ? 8 : 16;      // the 40 column modes double every pixel
   int charHeight = ga->m_egaCharHeight;
-  int textRow    = scanLine / charHeight;
-  int glyphRow   = scanLine % charHeight;
+
+  int textRow  = scanLine / charHeight;
+  int glyphRow = scanLine % charHeight;
 
   if (scanLine == 0)
     ++ga->m_frameCounter;
@@ -862,14 +871,18 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
   bool bit7blink = ga->m_bit7blink;
   bool blinktime = bit7blink && !((ga->m_frameCounter & 0x3f) < 0x1f);
 
-  uint16_t const * P = ga->m_egaPal2;
+  uint16_t const * P        = ga->m_egaPal2;
+  uint32_t const   omask    = ga->m_egaOffsetMask;
+  uint32_t const   bmask    = ga->m_egaBankMask;
+  uint32_t * const * banks  = ga->m_egaBanks;
 
-  uint32_t rowBase = (ga->m_egaStart + (uint32_t)textRow * columns) & ga->m_egaOffsetMask;
+  uint32_t rowBase = (ga->m_egaStart + (uint32_t)textRow * columns) & omask;
 
   for (int col = 0; col < columns; ++col) {
 
-    uint32_t o = (rowBase + col) & ga->m_egaOffsetMask;
-    uint32_t w = ga->m_egaBanks[(o >> 13) & ga->m_egaBankMask][o & 8191];
+    // fetched once per character, then used for every scanline in this call
+    uint32_t o = (rowBase + col) & omask;
+    uint32_t w = banks[(o >> 13) & bmask][o & 8191];
 
     uint8_t ch   = (uint8_t) w;             // plane 0: character
     uint8_t attr = (uint8_t)(w >> 8);       // plane 1: attribute
@@ -880,28 +893,46 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
       attr &= 0x7f;
     }
 
-    // plane 2 holds the glyphs, 32 bytes per character -- rewrite it and the font changes
-    uint32_t go   = ((uint32_t)ch * 32 + glyphRow) & ga->m_egaOffsetMask;
-    uint8_t  bits = (uint8_t)(ga->m_egaBanks[(go >> 13) & ga->m_egaBankMask][go & 8191] >> 16);
-
-    if (showCursor && col == cursorCol && glyphRow >= charHeight - 2)
-      bits = 0xff;
-
     uint8_t fg = (uint8_t) P[(attr & 0x0f) * 0x11];
     uint8_t bg = (uint8_t) P[(attr >> 4) * 0x11];
     if (blink)
       fg = bg;
 
-    int x0 = col * charWidth;
-    for (int k = 0; k < 8; ++k) {
-      uint8_t px = ((bits >> (7 - k)) & 1) ? fg : bg;
+    const uint8_t colors[2] = { bg, fg };
+
+    bool cursorHere = showCursor && col == cursorCol;
+    uint8_t * out = dest + col * charWidth;
+
+    for (int i = 0; i < LINES; ++i) {
+
+      int gr = glyphRow + i;
+
+      // plane 2 holds the glyphs, 32 bytes per character -- rewrite it and the font changes
+      uint32_t go   = ((uint32_t)ch * 32 + gr) & omask;
+      uint8_t  bits = (uint8_t)(banks[(go >> 13) & bmask][go & 8191] >> 16);
+
+      if (cursorHere && gr >= charHeight - 2)
+        bits = 0xff;
+
+      uint8_t * p = out + i * SCREENWIDTH;
+
+      // FabGL's scanline byte order is swizzled in pairs, hence the ^2 on the pixel index
       if (charWidth == 8) {
-        // FabGL's scanline byte order is swizzled in pairs
-        dest[(x0 + k) ^ 2] = px;
+        p[0 ^ 2] = colors[(bits >> 7) & 1];
+        p[1 ^ 2] = colors[(bits >> 6) & 1];
+        p[2 ^ 2] = colors[(bits >> 5) & 1];
+        p[3 ^ 2] = colors[(bits >> 4) & 1];
+        p[4 ^ 2] = colors[(bits >> 3) & 1];
+        p[5 ^ 2] = colors[(bits >> 2) & 1];
+        p[6 ^ 2] = colors[(bits >> 1) & 1];
+        p[7 ^ 2] = colors[bits & 1];
       } else {
-        int x = x0 + k * 2;
-        dest[x ^ 2]       = px;
-        dest[(x + 1) ^ 2] = px;
+        for (int k = 0; k < 8; ++k) {
+          uint8_t px = colors[(bits >> (7 - k)) & 1];
+          int x = k * 2;
+          p[x ^ 2]       = px;
+          p[(x + 1) ^ 2] = px;
+        }
       }
     }
   }

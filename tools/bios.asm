@@ -306,6 +306,8 @@ optrom_scan:
   ; C++ before placing the ROM in memory (see Machine::loadEGABios), so the guest would only be
   ; re-deriving a result it was handed. The signature check above is enough at this point.
 
+  mov  byte [cs:optrom_found], 1
+
   ; far call the initialisation entry at offset 3
   push ax
   mov  al, 'R'
@@ -355,6 +357,16 @@ optrom_next:
 
   pop  es
   pop  ds
+
+  ; A video option ROM chooses its own initial mode from the configuration switches, and the EGA
+  ; BIOS settles on 40 columns. A machine with a colour display should come up in 80x25, so set
+  ; that here once the ROM has had its turn. Only when a ROM actually ran, so the plain
+  ; CGA/Hercules machine is left exactly as it was.
+  cmp  byte [cs:optrom_found], 0
+  je   optrom_done
+  mov  ax, 0x0003
+  int  0x10
+optrom_done:
 
 ; Clear video memory
 
@@ -6434,6 +6446,7 @@ boot_device      db  0
 ; value the emulator reports for the configured memory size (helper AH=0x09).
 ; target for the indirect far call into a video option ROM's init entry (see the POST scan)
 optrom_ptr       dd  0
+optrom_found     db  0
 
 ebda_seg         dw  EBDA_SEG
 crt_curpos_x     db  0
