@@ -1866,6 +1866,15 @@ int10_write_char_tty_printable:
   cmp    byte [vid_mode-bios_data], 0x13
   je     int10_write_char_tty_mode13
 
+  ; The EGA graphics modes keep pixels in four bit planes, so the CGA plotters above
+  ; cannot draw into them; the emulator does it instead. See put_ega_char.
+  cmp    byte [vid_mode-bios_data], 0x0d
+  jb     int10_write_char_tty_text
+  cmp    byte [vid_mode-bios_data], 0x10
+  ja     int10_write_char_tty_text
+  call   put_ega_char
+  jmp    int10_write_char_tty_upd_cursor
+
   jmp    int10_write_char_tty_text
 
 int10_write_char_tty_cga320:
@@ -2008,6 +2017,15 @@ int10_write_char_attrib_repeat:
   cmp    byte [vid_mode-bios_data], 0x13
   je     int10_write_char_attrib_mode13
 
+  ; The EGA graphics modes keep pixels in four bit planes, so the CGA plotters above
+  ; cannot draw into them; the emulator does it instead. See put_ega_char.
+  cmp    byte [vid_mode-bios_data], 0x0d
+  jb     int10_write_char_attrib_text
+  cmp    byte [vid_mode-bios_data], 0x10
+  ja     int10_write_char_attrib_text
+  call   put_ega_char
+  jmp    int10_write_char_attrib_next
+
   jmp    int10_write_char_attrib_text
 
 int10_write_char_attrib_cga320:
@@ -2138,6 +2156,15 @@ int10_write_char_repeat:
   je     int10_write_char_mode11
   cmp    byte [vid_mode-bios_data], 0x13
   je     int10_write_char_mode13
+
+  ; The EGA graphics modes keep pixels in four bit planes, so the CGA plotters above
+  ; cannot draw into them; the emulator does it instead. See put_ega_char.
+  cmp    byte [vid_mode-bios_data], 0x0d
+  jb     int10_write_char_text
+  cmp    byte [vid_mode-bios_data], 0x10
+  ja     int10_write_char_text
+  call   put_ega_char
+  jmp    int10_write_char_next
 
   jmp    int10_write_char_text
 
@@ -2441,39 +2468,81 @@ int10_set_int43_8x8dd:
 
 int10_get_font_info:
   ; int 10, 1130
-  ; BH = information desired:
-  ;      = 0  INT 1F pointer
-  ;      = 1  INT 44h pointer
-  ;      = 2  ROM 8x14 pointer
-  ;      = 3  ROM 8x8 double dot pointer (base)
-  ;      = 4  ROM 8x8 double dot pointer (top)
-  ;      = 5  ROM 9x14 alpha alternate pointer
-  ;      = 6  ROM 8x16 character table pointer
-  ;      = 7  ROM 9x16 alternate character table pointer
-  ; NOTE: Currently only BH = 0 is supported
+  ; BH = which font is wanted:
+  ;      0 INT 1Fh pointer, 1 INT 44h pointer, 2 ROM 8x14, 3 ROM 8x8 (chars 0-127),
+  ;      4 ROM 8x8 (chars 128-255), 5 ROM 9x14 alternate, 6 ROM 8x16, 7 ROM 9x16 alternate
+  ; On exit:
+  ;   ES:BP = the font, CX = bytes per character, DL = screen rows - 1
+  ;
+  ; Only BH=0 used to be answered. Every other value fell straight through to the exit with ES:BP,
+  ; CX and DL left exactly as the caller had them, so the caller went and read "glyphs" from
+  ; whatever address happened to be in ES:BP. That is why text drawn by programs that fetch the
+  ; font themselves came out as noise -- QBasic does this in its EGA graphics modes, where it
+  ; renders characters into the planes rather than going through AH=09h/0Eh.
+  ;
+  ; There is no 8x14 or 9 dot font in this ROM, so those requests are answered with the 8x16 table
+  ; and a matching stride. A little too tall, but self consistent and legible, which beats noise.
 
   push  ax
   push  ds
 
-  cmp   bh, 0x00
-  je    int10_get_font_info_int1f_vector
+  mov   ax, 0x40
+  mov   ds, ax
+  mov   dl, [vid_rows-bios_data]        ; rows - 1, for every variant
 
+  cmp   bh, 0x00
+  je    int10_get_font_info_int1f
+  cmp   bh, 0x01
+  je    int10_get_font_info_int44
+  cmp   bh, 0x03
+  je    int10_get_font_info_8x8
+  cmp   bh, 0x04
+  je    int10_get_font_info_8x8_hi
+  jmp   int10_get_font_info_8x16
+
+int10_get_font_info_int1f:
+  xor   ax, ax
+  mov   ds, ax
+  mov   ax, [0x007e]
+  mov   es, ax
+  mov   bp, [0x007c]
+  mov   cx, 0x0008
   jmp   int10_get_font_info_done
 
-int10_get_font_info_int1f_vector:
-  mov   ax, 0x0000
+int10_get_font_info_int44:
+  xor   ax, ax
   mov   ds, ax
-  mov   ax, [ds:0x007e]
+  mov   ax, [0x0112]
   mov   es, ax
-  mov   bp, [ds:0x007c]
-
+  mov   bp, [0x0110]
   mov   cx, 0x0008
-  mov   dl, 24
+  jmp   int10_get_font_info_done
+
+int10_get_font_info_8x8:
+  push  cs
+  pop   es
+  mov   bp, cga_glyphs
+  mov   cx, 0x0008
+  jmp   int10_get_font_info_done
+
+int10_get_font_info_8x8_hi:
+  push  cs
+  pop   es
+  mov   bp, cga_glyphs + 128 * 8
+  mov   cx, 0x0008
+  jmp   int10_get_font_info_done
+
+int10_get_font_info_8x16:
+  push  cs
+  pop   es
+  mov   bp, vga_glyphs
+  mov   cx, 0x0010
 
 int10_get_font_info_done:
   pop   ds
   pop   ax
   iret
+
 
 int10_video_subsystem_cfg:
   ; int 10, 12
@@ -5564,6 +5633,22 @@ clear_done:
   pop  ax
 
   ret
+
+; Draw one character in an EGA graphics mode (0Dh, 0Eh, 0Fh, 10h).
+;
+; AL = character, AH = colour. Unlike the CGA modes there is no linear frame buffer to poke: the
+; pixels live in four bit planes and the glyph has to be merged into all of them. That is handed
+; to the emulator, which already owns the planar memory, rather than being open coded here.
+put_ega_char:
+  push ax
+  push bx
+  mov  bl, ah              ; colour, where the helper expects it
+  mov  ah, 0x0c
+  emu_helper
+  pop  bx
+  pop  ax
+  ret
+
 
 put_cga320_char:
   ; Character is in AL

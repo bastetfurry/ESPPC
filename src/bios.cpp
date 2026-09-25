@@ -315,6 +315,12 @@ void BIOS::helpersEntry()
       break;
     }
 
+    // Draw a character in an EGA graphics mode. AL = character, BL = colour. Those modes have no
+    // linear frame buffer, so the BIOS cannot plot a glyph the way it does for CGA.
+    case 0x0c:
+      m_machine->egaDrawChar(i8086::AL(), i8086::BL());
+      break;
+
     default:
       break;
 

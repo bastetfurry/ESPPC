@@ -735,6 +735,49 @@ void Machine::loadEGAFont(int charHeight)
 }
 
 
+// Draw one character into the planes for an EGA graphics mode, at the BIOS cursor position.
+//
+// The CGA modes have a linear frame buffer the BIOS can poke a glyph into; 0Dh..10h do not. The
+// pixels live in four bit planes and a character has to be merged into every one of them, so the
+// BIOS calls this instead of open coding it in assembler.
+//
+// The font is whatever the guest has installed, read through the same vectors a real BIOS uses:
+// INT 43h for characters 0..127 and INT 1Fh above that. Background pixels go to colour 0, which is
+// what the BIOS does for characters in graphics modes; the XOR flag in bit 7 is not implemented.
+void Machine::egaDrawChar(uint8_t ch, uint8_t colour)
+{
+  if (!m_EGAActive)
+    return;
+
+  auto bda = s_memory + 0x400;
+
+  int mode = bda[0x49];
+  if (mode < 0x0d || mode > 0x10)
+    return;
+
+  int charH  = bda[0x85] ? bda[0x85] : 8;
+  int stride = *(uint16_t*)(bda + 0x4a);        // 40 or 80 bytes per scan line
+  int col    = bda[0x50];                       // cursor column and row, page 0
+  int row    = bda[0x51];
+  if (stride <= 0)
+    return;
+
+  uint32_t vec   = (ch < 0x80 ? 0x43 : 0x1f) * 4;
+  uint32_t font  = *(uint16_t*)(s_memory + vec + 2) * 16 + *(uint16_t*)(s_memory + vec);
+  uint32_t glyph = font + (uint32_t)(ch & 0x7f) * charH;
+
+  colour &= 0x0f;
+
+  uint32_t base = (uint32_t)row * charH * stride + col;
+  for (int y = 0; y < charH; ++y) {
+    uint8_t bits = s_memory[(glyph + y) & 0xfffff];
+    uint32_t off = base + (uint32_t)y * stride;
+    for (int p = 0; p < 4; ++p)
+      m_EGA.writePlaneByte(p, off, ((colour >> p) & 1) ? bits : 0x00);
+  }
+}
+
+
 bool Machine::setEGAMode(int biosMode)
 {
   // Text modes on the EGA path. These are not the CGA text modes: characters live in plane 0,
@@ -858,6 +901,14 @@ bool Machine::setEGAMode(int biosMode)
 
   m_EGA.reset();
   m_EGA.clearVRAM();
+
+  // Claim the 64 KB window at A0000 that the graphics modes use. reset() leaves Graphics
+  // Controller register 6 at zero, which is the 128 KB window A0000..BFFFF, and that is not
+  // harmless: a stray write to B8000 -- which is exactly what the BIOS text path does when it does
+  // not recognise the mode -- then lands inside the planes and wraps onto the visible screen
+  // instead of going nowhere.
+  m_EGA.selectGraphics(6);
+  m_EGA.writeGraphics(0x05);        // 64 KB at A0000, graphics (not alphanumeric) addressing
 
   // default EGA palette: attribute N selects colour N
   for (int i = 0; i < 16; ++i)

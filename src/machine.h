@@ -219,6 +219,10 @@ public:
   // not an EGA mode or the planar video memory could not be allocated, in which case the caller
   // must fall back to the CGA path.
   bool setEGAMode(int biosMode);
+
+  // Draw one character into the planes for an EGA graphics mode, at the BIOS cursor.
+  // The BIOS asks for this because there is no linear frame buffer to poke in these modes.
+  void egaDrawChar(uint8_t ch, uint8_t colour);
   void leaveEGAMode();
   bool EGAActive() const               { return m_EGAActive; }
   EGA * ega()                          { return &m_EGA; }
