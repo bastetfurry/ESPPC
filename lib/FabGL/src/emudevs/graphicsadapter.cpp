@@ -792,7 +792,9 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_
 
   auto ga = (GraphicsAdapter*) arg;
 
-  if (!ga->m_egaBanks || !ga->m_egaPal2)
+  // bank 0 too: EGA::allocVRAM() nulls every bank when it runs out, and this runs from the
+  // scanline ISR, where following one of those is a panic rather than a glitch
+  if (!ga->m_egaBanks || !ga->m_egaBanks[0] || !ga->m_egaPal2)
     return;
 
   uint32_t const * L0 = ga->m_egaSpread[0];
@@ -829,7 +831,9 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_
 
   auto ga = (GraphicsAdapter*) arg;
 
-  if (!ga->m_egaBanks || !ga->m_egaPal2)
+  // bank 0 too: EGA::allocVRAM() nulls every bank when it runs out, and this runs from the
+  // scanline ISR, where following one of those is a panic rather than a glitch
+  if (!ga->m_egaBanks || !ga->m_egaBanks[0] || !ga->m_egaPal2)
     return;
 
   uint32_t const * L0 = ga->m_egaSpread[0];
@@ -869,7 +873,9 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
 
   auto ga = (GraphicsAdapter*) arg;
 
-  if (!ga->m_egaBanks || !ga->m_egaPal2)
+  // bank 0 too: EGA::allocVRAM() nulls every bank when it runs out, and this runs from the
+  // scanline ISR, where following one of those is a panic rather than a glitch
+  if (!ga->m_egaBanks || !ga->m_egaBanks[0] || !ga->m_egaPal2)
     return;
 
   int columns    = ga->m_egaTextColumns;

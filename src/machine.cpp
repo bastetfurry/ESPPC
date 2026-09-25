@@ -1033,12 +1033,37 @@ bool Machine::setEGAMode(int biosMode)
     s_videoMemory = nullptr;
   }
 
+  // Start from nothing. allocVRAM() keeps the banks that are already resident and tops up, so
+  // coming here from EGA text, which holds two, this mode had to find its other two 32 KB blocks
+  // alongside them -- and with the largest free block around 47 KB the first fits and the second
+  // does not. Releasing them first turns that into four allocations out of roughly 174 KB. The
+  // contents are not worth keeping: a mode set clears the screen anyway.
+  m_EGA.freeVRAM();
+
   if (!m_EGA.allocVRAM(banks)) {
-    // out of internal memory: put the CGA buffer back and let the caller use the CGA path
+    // Out of internal memory. allocVRAM() frees every bank on the way out, so by now the adapter
+    // is holding an array of null pointers while it is still in an EGA emulation -- and this used
+    // to re-enable video right here, which let the scanline ISR straight into the renderer and
+    // dereference one of them. That is a LoadProhibited panic with EXCVADDR 0, on core 1, in the
+    // middle of drawing, and it resets the board.
+    //
+    // So take the EGA down properly instead: clear the pointer the renderers guard on, drop out of
+    // EGA, and put the CGA buffer back. Video deliberately stays off -- the BIOS mode set carries
+    // on down the CGA path, and setCGAMode() enables it again once it knows what it is showing.
     printf("EGA: cannot allocate planar video memory, staying on CGA\n");
-    s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+
+    m_graphicsAdapter.enableVideo(false);
+    m_graphicsAdapter.setEGAVideoBuffer(nullptr, m_EGAStride, 0, 0);
+    m_EGAActive = false;
+
+    if (!s_videoMemory)
+      s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    if (s_videoMemory)
+      memset(s_videoMemory, 0, VIDEOMEMSIZE);
+    else
+      printf("EGA: and no room for a CGA frame buffer either, the screen stays blank\n");
     m_frameBuffer = s_videoMemory;
-    m_graphicsAdapter.enableVideo(true);
+
     return false;
   }
 
