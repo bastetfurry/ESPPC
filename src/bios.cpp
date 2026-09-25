@@ -1342,6 +1342,12 @@ void BIOS::videoHandlerEntry()
 
     // Write Pixel
     case 0x0c:
+      // The EGA graphics modes keep pixels in four bit planes, so they cannot go through the
+      // frame buffer cases below.
+      if (m_machine->egaWritePixel(i8086::CX(), i8086::DX(),
+                                   i8086::AL() & 0x0f, i8086::AL() & 0x80))
+        break;
+
       switch (ga->emulation()) {
 
         case GraphicsAdapter::Emulation::PC_Graphics_320x200_4Colors:
@@ -1374,6 +1380,18 @@ void BIOS::videoHandlerEntry()
 
       }
       break;
+
+    // Read Pixel
+    case 0x0d:
+    {
+      int colour = m_machine->egaReadPixel(i8086::CX(), i8086::DX());
+      if (colour >= 0) {
+        i8086::setAL((uint8_t) colour);
+        break;
+      }
+      printf("INT 10h, read pixel, unsupported resolution\n");
+      break;
+    }
 
     default:
       printf("unsupported INT 10h, AX = %04X\n", i8086::AX());

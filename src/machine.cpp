@@ -735,6 +735,68 @@ void Machine::loadEGAFont(int charHeight)
 }
 
 
+// The BIOS pixel services for the EGA graphics modes.
+//
+// These modes have no linear frame buffer, so the CGA path in BIOS::videoHandlerEntry() cannot
+// serve them: it fell through to an "unsupported resolution" printf, which meant nothing was drawn
+// and every single pixel cost a line of serial output.
+bool Machine::egaPixelOffset(int x, int y, uint32_t * off, uint8_t * mask)
+{
+  if (!m_EGAActive)
+    return false;
+
+  auto bda = s_memory + 0x400;
+  int  mode = bda[0x49];
+  if (mode < 0x0d || mode > 0x10)
+    return false;
+
+  int stride = *(uint16_t*)(bda + 0x4a);        // 40 or 80 bytes per scan line
+  if (stride <= 0 || x < 0 || y < 0 || x >= stride * 8)
+    return false;
+
+  *off  = (uint32_t) y * stride + (x >> 3);
+  *mask = 0x80 >> (x & 7);
+  return true;
+}
+
+
+bool Machine::egaWritePixel(int x, int y, uint8_t colour, bool xored)
+{
+  uint32_t off;
+  uint8_t  mask;
+  if (!egaPixelOffset(x, y, &off, &mask))
+    return false;
+
+  for (int p = 0; p < 4; ++p) {
+    uint8_t v   = m_EGA.planeByte(p, off);
+    bool    set = (colour >> p) & 1;
+    if (xored)
+      v ^= set ? mask : 0;
+    else if (set)
+      v |= mask;
+    else
+      v &= ~mask;
+    m_EGA.writePlaneByte(p, off, v);
+  }
+  return true;
+}
+
+
+int Machine::egaReadPixel(int x, int y)
+{
+  uint32_t off;
+  uint8_t  mask;
+  if (!egaPixelOffset(x, y, &off, &mask))
+    return -1;
+
+  int colour = 0;
+  for (int p = 0; p < 4; ++p)
+    if (m_EGA.planeByte(p, off) & mask)
+      colour |= 1 << p;
+  return colour;
+}
+
+
 // Draw one character into the planes for an EGA graphics mode, at the BIOS cursor position.
 //
 // The CGA modes have a linear frame buffer the BIOS can poke a glyph into; 0Dh..10h do not. The
@@ -1596,7 +1658,6 @@ uint16_t Machine::readVideoMemory16(void * context, int address)
 bool Machine::interrupt(void * context, int num)
 {
   auto m = (Machine*)context;
-
 
   // Postbox. Unlike everything below this is callable from guest code, which is the whole point:
   // it is how a program running on the emulated machine talks to the host. AX must carry the

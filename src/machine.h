@@ -223,6 +223,10 @@ public:
   // Draw one character into the planes for an EGA graphics mode, at the BIOS cursor.
   // The BIOS asks for this because there is no linear frame buffer to poke in these modes.
   void egaDrawChar(uint8_t ch, uint8_t colour);
+
+  // BIOS pixel services for the EGA graphics modes; false / -1 when the mode is not one.
+  bool egaWritePixel(int x, int y, uint8_t colour, bool xored);
+  int  egaReadPixel(int x, int y);
   void leaveEGAMode();
   bool EGAActive() const               { return m_EGAActive; }
   EGA * ega()                          { return &m_EGA; }
@@ -288,6 +292,7 @@ private:
 
   void tick();
 
+  bool egaPixelOffset(int x, int y, uint32_t * off, uint8_t * mask);
   bool loadEGABios();
   void loadEGAFont(int charHeight);
   void setCGAMode();
