@@ -734,8 +734,23 @@ int10:
   je   int10_video_subsystem_cfg
   cmp  ah, 0x1a ; Video combination
   je   int10_vid_combination
-  cmp  ah, 0x1b
-  je   int10_get_state_info
+  ; AH=1Bh, return functionality/state information, is deliberately NOT answered, for the same
+  ; reason AH=1Ah is not: it is a VGA era call that a real EGA BIOS does not implement, and
+  ; answering it makes callers treat this as VGA class hardware.
+  ;
+  ; QBasic is the worked example. Its video setup (disassembled from an unpacked image) calls
+  ; AH=1Bh first. If it is answered, it takes the VGA path, sets its internal adapter byte to 0x10
+  ; and only changes it to 0x08 when the static functionality table claims mode 12h -- the VGA
+  ; 640x480x16 mode, which an EGA cannot do. Every SCREEN mode is then gated on that byte having
+  ; bit 2 or 3 set, so 0x10 rejects SCREEN 7, 8, 9 and 10 with "illegal function call" before any
+  ; mode set is ever attempted. That is exactly what this machine did.
+  ;
+  ; Leaving 1Bh unanswered sends it down the EGA path instead, where it reads the switch settings
+  ; from AH=12h/BL=10h: CL=09h gives adapter byte 0x04, which SCREEN 7, 8 and 9 all accept, and
+  ; the 128 KB we report picks the 16 colour variant of SCREEN 9.
+  ;
+  ; int10_get_state_info below is kept, and kept correct, for anything that asks for it another
+  ; way, but nothing dispatches to it.
 
   emu_video_handler
   iret
