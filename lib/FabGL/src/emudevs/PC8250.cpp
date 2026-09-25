@@ -79,7 +79,9 @@ namespace fabgl {
 
 PC8250::PC8250(int freq)
   : m_freq(freq),
-    m_serialPort(nullptr)
+    m_serialPort(nullptr),
+    m_bridgeContext(nullptr),
+    m_bridgeTX(nullptr)
 {
 }
 
@@ -331,7 +333,10 @@ void PC8250::write(int reg, uint8_t value)
           m_trigs |= m_IER & PC8250_IER_RX_INT;    // set int triggered flag
         } else {
           // normal mode
-          m_serialPort->send(value);
+          if (m_bridgeTX)
+            m_bridgeTX(m_bridgeContext, value);
+          else if (m_serialPort)
+            m_serialPort->send(value);
         }
         
         #if PC8250_DEBUG
@@ -380,7 +385,8 @@ void PC8250::write(int reg, uint8_t value)
             m_THR    = 0;
           }
         } else {
-          m_serialPort->sendBreak(value & PC8250_LCR_SENDBREAK);
+          if (m_serialPort)
+            m_serialPort->sendBreak(value & PC8250_LCR_SENDBREAK);
         }
       }
       m_LCR = value;
@@ -402,8 +408,10 @@ void PC8250::write(int reg, uint8_t value)
         checkRIChangeLow();
         checkDCDChanged();
       } else {
-        m_serialPort->setDTRStatus(m_MCR & PC8250_MCR_DTR);
-        m_serialPort->setRTSStatus(m_MCR & PC8250_MCR_RTS);
+        if (m_serialPort) {
+          m_serialPort->setDTRStatus(m_MCR & PC8250_MCR_DTR);
+          m_serialPort->setRTSStatus(m_MCR & PC8250_MCR_RTS);
+        }
       }
       
       #if PC8250_DEBUG
@@ -447,7 +455,8 @@ void PC8250::setBaud()
 {
   int div  = m_DLL | ((int)m_DLM << 8);
   int baud = m_freq / 16 / (div ? div : 1);
-  m_serialPort->setBaud(baud);
+  if (m_serialPort)
+    m_serialPort->setBaud(baud);
   
   #if PC8250_DEBUG
   printf("BAUD = %d\n", baud);
@@ -460,7 +469,8 @@ void PC8250::setFrame()
   int dataLength = (m_LCR & 0b11) + 5;
   char parity    = m_LCR & PC8250_LCR_PARITYEN ? (m_LCR & PC8250_LCR_PARITYEVEN ? 'E' : 'O') : 'N';
   float stopBits = m_LCR & PC8250_LCR_MBITSTOP ? (dataLength == 5 ? 1.5 : 2) : 1;
-  m_serialPort->setFrame(dataLength, parity, stopBits);
+  if (m_serialPort)
+    m_serialPort->setFrame(dataLength, parity, stopBits);
 }
 
 
@@ -478,7 +488,7 @@ bool PC8250::getOut2()
 
 void PC8250::checkOverflowError()
 {
-  if (m_serialPort->overflowError() || m_overrun) {
+  if ((m_serialPort && m_serialPort->overflowError()) || m_overrun) {
     m_overrun  = false;
     m_LSR     |= PC8250_LSR_OE;                // set OE flag
     m_trigs   |= m_IER & PC8250_IER_LINE_INT;  // set int triggered flag
@@ -488,7 +498,7 @@ void PC8250::checkOverflowError()
 
 void PC8250::checkParityError()
 {
-  if (m_serialPort->parityError()) {
+  if (m_serialPort && m_serialPort->parityError()) {
     m_LSR   |= PC8250_LSR_PE;                // set PE flag
     m_trigs |= m_IER & PC8250_IER_LINE_INT;  // set int triggered flag
   }
@@ -497,7 +507,7 @@ void PC8250::checkParityError()
 
 void PC8250::checkFramingError()
 {
-  if (m_serialPort->framingError()) {
+  if (m_serialPort && m_serialPort->framingError()) {
     m_LSR   |= PC8250_LSR_FE;                // set FE flag
     m_trigs |= m_IER & PC8250_IER_LINE_INT;  // set int triggered flag
   }
@@ -506,7 +516,7 @@ void PC8250::checkFramingError()
 
 void PC8250::checkBreakDetected()
 {
-  if (m_serialPort->breakDetected()) {
+  if (m_serialPort && m_serialPort->breakDetected()) {
     m_LSR   |= PC8250_LSR_BI | PC8250_LSR_DR;
     m_trigs |= m_IER & PC8250_IER_LINE_INT;
     m_THR    = 0;
@@ -525,7 +535,7 @@ void PC8250::checkByteReceived()
 
 void PC8250::checkCTSChanged()
 {
-  bool value = m_MCR & PC8250_MCR_LOOPBACK ? m_MCR & PC8250_MCR_RTS : m_serialPort->CTSStatus();
+  bool value = m_MCR & PC8250_MCR_LOOPBACK ? m_MCR & PC8250_MCR_RTS : (m_serialPort ? m_serialPort->CTSStatus() : true);
   if ((bool)(m_MSR & PC8250_MSR_CTS) != value) {
     m_MSR   ^= PC8250_MSR_CTS;                // invert CTS
     m_MSR   |= PC8250_MSR_DCTS;               // set DCTS
@@ -536,7 +546,7 @@ void PC8250::checkCTSChanged()
 
 void PC8250::checkDSRChanged()
 {
-  bool value = m_MCR & PC8250_MCR_LOOPBACK ? m_MCR & PC8250_MCR_DTR : m_serialPort->DSRStatus();
+  bool value = m_MCR & PC8250_MCR_LOOPBACK ? m_MCR & PC8250_MCR_DTR : (m_serialPort ? m_serialPort->DSRStatus() : true);
   if ((bool)(m_MSR & PC8250_MSR_DSR) != value) {
     m_MSR   ^= PC8250_MSR_DSR;                // invert DSR
     m_MSR   |= PC8250_MSR_DDSR;               // set DDSR
@@ -547,7 +557,7 @@ void PC8250::checkDSRChanged()
 
 void PC8250::checkRIChangeLow()
 {
-  bool value = m_MCR & PC8250_MCR_LOOPBACK ? m_MCR & PC8250_MCR_OUT1 : m_serialPort->RIStatus();
+  bool value = m_MCR & PC8250_MCR_LOOPBACK ? m_MCR & PC8250_MCR_OUT1 : (m_serialPort ? m_serialPort->RIStatus() : false);
   if ((bool)(m_MSR & PC8250_MSR_RI) != value && !value) {
     m_MSR   &= ~PC8250_MSR_RI;                // reset RI
     m_MSR   |= PC8250_MSR_TERI;               // set TERI
@@ -559,7 +569,7 @@ void PC8250::checkRIChangeLow()
 
 void PC8250::checkDCDChanged()
 {
-  bool value = m_MCR & PC8250_MCR_LOOPBACK ? m_MCR & PC8250_MCR_OUT2 : m_serialPort->DCDStatus();
+  bool value = m_MCR & PC8250_MCR_LOOPBACK ? m_MCR & PC8250_MCR_OUT2 : (m_serialPort ? m_serialPort->DCDStatus() : true);
   if ((bool)(m_MSR & PC8250_MSR_DCD) != value) {
     m_MSR   ^= PC8250_MSR_DCD;                // invert DCD
     m_MSR   |= PC8250_MSR_DDCD;               // set DDCD

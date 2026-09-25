@@ -580,13 +580,26 @@ void setup()
   // COM1 uses pins 3/1, the same pins as the USB serial console: attaching it makes UART2 take
   // those pins over, so printf() output stops reaching the host from here on. The serial debug
   // console needs those pins too, so the machine gets one or the other, never both.
+  int usbSerial = conf->effectiveUsbSerial();   // 0 = none, 1 = COM1, 2 = COM2
+
   if (conf->debugConsole) {
-    printf("Serial debug console enabled for this machine, COM1 not attached.\n");
+    // The console owns the pins, so a COM port cannot have them. It is carried in software
+    // instead, which leaves the debugger usable at the same time.
     machine->enableDebugConsole();
-  } else {
-    auto serial1 = new SerialPort;
-    serial1->setSignals(UART_URX, UART_UTX);
-    machine->setCOM1(serial1);
+    machine->setUsbSerialRoute(usbSerial);
+    if (usbSerial)
+      printf("Serial debug console enabled, carrying COM%d over the USB serial.\n", usbSerial);
+    else
+      printf("Serial debug console enabled for this machine, no COM port on the USB serial.\n");
+  } else if (usbSerial) {
+    // No console, so the port takes pins 3/1 directly. printf() output stops reaching the host
+    // from here on, because UART2 has taken those pins over.
+    auto serial = new SerialPort;
+    serial->setSignals(UART_URX, UART_UTX);
+    if (usbSerial == 2)
+      machine->setCOM2(serial);
+    else
+      machine->setCOM1(serial);
   }
 
   /*

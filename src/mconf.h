@@ -123,6 +123,8 @@ struct MachineConfItem {
   uint8_t           bootDrive;
   uint16_t          ramSizeKB;                // conventional memory in KB (64..704, step 64)
   bool              debugConsole;             // "enabledebug": serial debug console instead of COM1
+  uint8_t           usbSerial;                // "usbserial": 0 = off, 1 = COM1, 2 = COM2
+  bool              usbSerialSet;             // whether the file said so, see applyUsbSerial()
   uint8_t           videoAdapter;             // "video": 0 = CGA/Hercules (default), 1 = EGA
   char            * egaRom;                   // "egarom": path to the EGA BIOS option ROM
 
@@ -136,6 +138,8 @@ struct MachineConfItem {
       bootDrive(0),
       ramSizeKB(640),
       debugConsole(false),
+      usbSerial(0),
+      usbSerialSet(false),
       videoAdapter(0),
       egaRom(nullptr)
   {
@@ -172,6 +176,25 @@ struct MachineConfItem {
   void setDebugConsole(char const * value)      {
     debugConsole = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
                              value[0] == 't' || value[0] == 'T');
+  }
+
+  // "usbserial com1" or "com2" puts that emulated port on the USB serial line; "off" leaves it
+  // alone. How it gets there depends on the debug console: with the console off the port takes the
+  // UART pins directly, and with it on the console carries the port in software instead, so both
+  // work at once. See SerialDebug::setUsbSerialRoute().
+  void setUsbSerial(char const * value)         {
+    usbSerialSet = true;
+    if      (value && (value[0] == '1' || !strncasecmp(value, "com1", 4))) usbSerial = 1;
+    else if (value && (value[0] == '2' || !strncasecmp(value, "com2", 4))) usbSerial = 2;
+    else                                                                  usbSerial = 0;
+  }
+
+  // What the machine should actually do when nothing was written down. A machine without the debug
+  // console has always had COM1 on the USB serial, so that stays the default; one with the console
+  // has always had no COM port at all, and silently bridging one would put guest output into the
+  // middle of the console stream.
+  uint8_t effectiveUsbSerial() const            {
+    return usbSerialSet ? usbSerial : (debugConsole ? 0 : 1);
   }
 
   void setRamSize(char const * value)           {

@@ -111,8 +111,12 @@ Machine::Machine() :
     m_EGAACIndex(0),
     m_EGAACFlipFlop(false),
     m_EGAMiscOutput(0),
+    m_EGAACColorPlaneEnable(0x0f),
+    m_EGAFramePos(0),
+    m_postboxHostOpen(false),
     m_EGASwitches(0x09),
     m_debugConsoleRequested(false),
+    m_usbSerialRoute(0),
     m_breakAddr(0),
     m_egaRomPath(nullptr),
     m_egaBiosLoaded(false)
@@ -222,8 +226,10 @@ void Machine::init()
 
   // Started from init(), which runs in the emulator task: the monitor reads guest RAM, and that
   // is PSRAM which only this core may touch (see the s_memory assignment above).
-  if (m_debugConsoleRequested)
+  if (m_debugConsoleRequested) {
     m_serialDebug.begin(this);
+    m_serialDebug.setUsbSerialRoute(m_usbSerialRoute);
+  }
 
   m_reset = true;
 }
@@ -326,6 +332,21 @@ void Machine::autoDetectDriveGeometry(int drive)
 }
 
 
+void Machine::bridgeCOM(int port, void * context, PC8250::TXCallback txCallback)
+{
+  m_COM1.clearBridge();
+  m_COM2.clearBridge();
+
+  if (port == 1) {
+    m_COM1.setCallbacks(this, COM1Interrupt);
+    m_COM1.setBridge(context, txCallback);
+  } else if (port == 2) {
+    m_COM2.setCallbacks(this, COM2Interrupt);
+    m_COM2.setBridge(context, txCallback);
+  }
+}
+
+
 void Machine::setCOM1(SerialPort * serialPort)
 {
   m_COM1.setCallbacks(this, COM1Interrupt);
@@ -369,9 +390,31 @@ void Machine::reset()
 
   m_MC146818.reset();
 
-  // a warm boot (Ctrl+Alt+Del jumps to the reset vector) has to come back on the CGA adapter,
-  // otherwise POST runs with the EGA planes still allocated and no CGA frame buffer
+  // A warm boot (Ctrl+Alt+Del jumps to the reset vector) tears down whatever mode was up, so the
+  // adapter starts from the same place a cold boot does.
   leaveEGAMode();
+
+  // On a machine with a real EGA BIOS that is not the CGA adapter: POST re-runs the video option
+  // ROM's initialisation, and the first thing the ROM does is test its own planar memory. The
+  // planes therefore have to be back before POST, exactly as Machine::init() arranges them for a
+  // cold start. Leaving the CGA buffer in place here meant the ROM probed a window nothing
+  // answered and failed its own POST on every warm boot.
+  if (m_egaBiosLoaded) {
+    if (s_videoMemory) {
+      heap_caps_free(s_videoMemory);
+      s_videoMemory = nullptr;
+    }
+    if (m_EGA.allocVRAM(EGA_BANK_COUNT)) {
+      m_EGA.reset();
+      m_EGA.clearVRAM();
+      m_EGAActive = true;
+    } else {
+      // no room: come back as a plain CGA machine rather than with no frame buffer at all
+      s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+      m_frameBuffer = s_videoMemory;
+      m_egaBiosLoaded = false;
+    }
+  }
 
   m_COM1.reset();
   m_COM2.reset();
@@ -861,6 +904,78 @@ void Machine::leaveEGAMode()
 
 // Attribute Controller, port 0x3c0. One port carries both the index and the data, alternating,
 // and reading the status register at 0x3da resets it to expecting an index.
+// Input Status Register 1. An EGA answers this at 0x3da when it is configured for a colour
+// display and at 0x3ba when it is configured for mono, and the BIOS reaches it through whichever
+// base sits in 40:63, so both ports have to behave the same way while the EGA is live.
+uint8_t Machine::egaInputStatus1()
+{
+  m_EGAACFlipFlop = false;
+
+  if (!m_EGAActive) {
+    // plain CGA machine: the old fake, left exactly as it was
+    m_CGAVSyncQuery += 1;
+    return (m_CGAVSyncQuery & 0x7) != 0 ? 0x09 : 0x00;
+  }
+
+  // Raster model. The EGA BIOS POST verifies CRT timing: it waits for vertical retrace to start,
+  // then for it to end, then counts display enable pulses until the next retrace and insists the
+  // total is exactly the number of scanlines the display is supposed to have (350 on the enhanced
+  // display we report, 200 on a CGA class one). A free running "every seven queries" fake cannot
+  // produce a specific count, so the position is modelled: each scanline is one read with display
+  // enable low followed by one read with it high, and a retrace block closes the frame. Because
+  // the BIOS syncs on retrace first, counting always starts at line 0 and lands on 350.
+  // A scanline is presented as several "display active" reads followed by one blanking read. The
+  // BIOS counts one line per active-to-blanking edge, so the number of active reads does not
+  // change the count, but it does change how long a frame takes. That matters: after counting the
+  // lines the BIOS reads PIT counter 0 and requires the frame to have taken between 15263 and
+  // 24403 ticks, roughly 49 to 78 Hz. Measured on this board: two reads per line gave 10089 ticks
+  // and four gave 14579, so a line costs about 16 ticks of loop overhead plus 6.4 per read. Six
+  // reads lands near 19000, comfortably in the middle of the window rather than against an edge,
+  // which leaves room for the emulator running a little faster or slower than it does today.
+  //
+  // The "+ 1" is the read that observes the end of retrace: the BIOS spends one query noticing
+  // retrace has finished before it starts counting, so without that slot the pairing shifts and
+  // it counts one line short (349 instead of 350, which is what it first complained about).
+  const uint32_t readsPerLine = 6;
+  const uint32_t activeReads  = EGA_POST_SCANLINES * readsPerLine + 1;
+  const uint32_t frameReads   = activeReads + 4;  // a retrace long enough to be seen
+
+  uint32_t pos  = m_EGAFramePos;
+  m_EGAFramePos = (pos + 1) % frameReads;
+
+  uint8_t status;
+  if (pos >= activeReads)
+    status = 0x09;                              // vertical retrace, display blanked
+  else if (pos == 0)
+    status = 0x01;                              // the sync slot, blanked
+  else
+    status = (((pos - 1) % readsPerLine) == readsPerLine - 1) ? 0x01 : 0x00;
+
+  // Bits 5-4 are the EGA diagnostic bits: two of the six attribute controller colour outputs,
+  // picked by the status mux in Colour Plane Enable. The BIOS POST sets palette entry 15 to 0x3f,
+  // walks the mux, and for each setting waits for these bits to go high and then low again. With
+  // them wired to zero it spun out and beeped 1 long 3 short.
+  //
+  // There is no per-pixel timing here to sample, so this reports the selected pair out of palette
+  // entry 15 and lets it fall away on the same query counter that fakes retrace. That satisfies
+  // anything waiting on the bits changing, which is all they are used for; it is not a real
+  // video sample.
+  if ((pos & 0x02) != 0) {
+    uint8_t pal = m_EGAACPalette[15];
+    uint8_t hi = 0, lo = 0;
+    switch ((m_EGAACColorPlaneEnable >> 4) & 0x03) {
+      case 0:  hi = pal & 0x04; lo = pal & 0x01; break;  // P2, P0
+      case 1:  hi = pal & 0x20; lo = pal & 0x10; break;  // P5, P4
+      case 2:  hi = pal & 0x08; lo = pal & 0x02; break;  // P3, P1
+      default: break;
+    }
+    status |= (hi ? 0x20 : 0x00) | (lo ? 0x10 : 0x00);
+  }
+
+  return status;
+}
+
+
 void Machine::setEGAAttributeReg(uint8_t value)
 {
   if (!m_EGAACFlipFlop) {
@@ -872,6 +987,11 @@ void Machine::setEGAAttributeReg(uint8_t value)
       m_EGAACPalette[m_EGAACIndex] = value & 0x3f;
       if (m_EGAActive)
         m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
+    } else if (m_EGAACIndex == 0x12) {
+      // Colour Plane Enable. Bits 5-4 are the video status mux, which selects the pair of
+      // attribute controller outputs the EGA reports in Input Status Register 1. The BIOS POST
+      // tests exactly that, so the value has to be kept.
+      m_EGAACColorPlaneEnable = value;
     }
   }
 }
@@ -952,6 +1072,7 @@ void Machine::setHGCMode()
 
 void Machine::writePort(void * context, int address, uint8_t value)
 {
+
   auto m = (Machine*)context;
 
   switch (address) {
@@ -1009,8 +1130,12 @@ void Machine::writePort(void * context, int address, uint8_t value)
         m->m_COM2.write(address, value);
       break;
 
-    // EGA - Attribute Controller (index and data share the port)
+    // EGA - Attribute Controller. Index and data share 0x3c0 through a flip flop, but the card
+    // decodes 0x3c1 for the data half too, and IBM's own EGA BIOS relies on it: its register
+    // write helper does "out dx,al / inc dx / out dx,al", so every attribute value it programs
+    // arrives at 0x3c1. Dropping those writes left the attribute controller unprogrammed.
     case 0x3c0:
+    case 0x3c1:
       m->setEGAAttributeReg(value);
       break;
 
@@ -1131,6 +1256,7 @@ void Machine::writePort(void * context, int address, uint8_t value)
 
 uint8_t Machine::readPort(void * context, int address)
 {
+
   auto m = (Machine*)context;
 
   switch (address) {
@@ -1208,8 +1334,10 @@ uint8_t Machine::readPort(void * context, int address)
     // its own configuration through a jump table indexed by that value.
     //
     // The sense is NOT inverted relative to the value we want reported: feeding back the
-    // complement made the BIOS read 0x06 out of a 0x09 switch block and take the wrong table
-    // entry. m_EGASwitches is a card set up as "enhanced colour display, primary".
+    // complement made the BIOS read 0x06 out of the switch block and take the wrong table
+    // entry. m_EGASwitches is a card set up as "primary" at 0x09, the value the EGA BIOS
+    // option ROM's POST accepts. It must agree with the CL that int10_video_subsystem_cfg
+    // reports; see the note there before changing either.
     case 0x3c2:
     {
       int sw = (m->m_EGAMiscOutput >> 2) & 0x03;
@@ -1236,9 +1364,7 @@ uint8_t Machine::readPort(void * context, int address)
     case 0x3da:
       // on an EGA this read also puts the attribute controller back to expecting an index,
       // which is how every EGA mode set routine starts
-      m->m_EGAACFlipFlop = false;
-      m->m_CGAVSyncQuery += 1;
-      return (m->m_CGAVSyncQuery & 0x7) != 0 ? 0x09 : 0x00; // "not VSync" (0x00) every 7 queries
+      return m->egaInputStatus1();
 
     // Hercules (HGC) - register selection register
     case 0x3b4:
@@ -1252,6 +1378,8 @@ uint8_t Machine::readPort(void * context, int address)
     // real vertical sync is too fast for our slowly emulated 8086, so
     // here it is just a fake, just to allow programs that check it to keep going anyway.
     case 0x3ba:
+      if (m->m_EGAActive)
+        return m->egaInputStatus1();
       m->m_HGCVSyncQuery += 1;
       return (m->m_HGCVSyncQuery & 0x7) != 0 ? 0x00 : 0x80; // "not VSync" (0x80) every 7 queries
 
@@ -1418,6 +1546,49 @@ bool Machine::interrupt(void * context, int num)
 {
   auto m = (Machine*)context;
 
+
+  // Postbox. Unlike everything below this is callable from guest code, which is the whole point:
+  // it is how a program running on the emulated machine talks to the host. AX must carry the
+  // signature or the interrupt is left alone, so software that uses INT 0xFF for its own purposes
+  // is unaffected. Returning true consumes the interrupt outright -- i8086::pc_interrupt() pushes
+  // no frame in that case -- so registers and flags are simply set here.
+  if (num == 0xff && i8086::AX() == POSTBOX_SIGNATURE) {
+    switch (i8086::BX()) {
+
+      // ReadyToAcceptConnection
+      case 0:
+        i8086::setAX(POSTBOX_SIGNATURE);
+        i8086::setBX(POSTBOX_VERSION);
+        i8086::setCX(m->m_postboxHostOpen ? 1 : 0);
+        i8086::setDX(m->m_postboxToGuest.count());
+        i8086::setFlagCF(false);
+        return true;
+
+      // SendByte, CL = the byte
+      case 1:
+        i8086::setAX(POSTBOX_SIGNATURE);
+        i8086::setFlagCF(!m->m_postboxToHost.push(i8086::CX() & 0xff));
+        return true;
+
+      // ReceiveByte
+      case 2:
+      {
+        uint8_t v = 0;
+        bool ok = m->m_postboxToGuest.pop(&v);
+        i8086::setAX(POSTBOX_SIGNATURE | 0);
+        if (ok)
+          i8086::setAX((POSTBOX_SIGNATURE & 0xff00) | v);  // AL = byte, AH keeps the signature half
+        i8086::setFlagCF(!ok);
+        return true;
+      }
+
+      default:
+        // an unknown function still answers, so a guest can probe for features
+        i8086::setAX(POSTBOX_SIGNATURE);
+        i8086::setFlagCF(true);
+        return true;
+    }
+  }
 
   // emu interrupts callable only inside the BIOS segment
   if (i8086::CS() == BIOS_SEG) {

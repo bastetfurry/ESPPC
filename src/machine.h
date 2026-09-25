@@ -73,6 +73,64 @@ typedef void (*SysReqCallback)();
 
 
 
+// Scanlines the EGA BIOS POST expects to count between vertical retraces. 350 is the enhanced
+// colour display; a CGA class display would be 200.
+#define EGA_POST_SCANLINES 350
+
+
+// Postbox: a private channel between guest software and whatever is on the host serial line.
+//
+// Guest side is INT 0xFF with AX = 0x55EE, which is deliberately not a real BIOS or DOS service,
+// so ordinary programs cannot collide with it. BX selects the function:
+//
+//   BX = 0  ReadyToAcceptConnection  -> AX = 0x55EE (proves a postbox is listening),
+//                                       BL = protocol version, CX != 0 if a host session is open,
+//                                       DX = bytes waiting to be received
+//   BX = 1  SendByte                 <- CL = byte to send. CF set if the buffer is full.
+//   BX = 2  ReceiveByte              -> AL = byte, CF clear. CF set if nothing is waiting.
+//
+// AX comes back as 0x55EE on every call, so a guest can tell a real postbox from an unhandled
+// interrupt. Both directions are small rings: the host is far faster than the guest, and a
+// transfer is expected to be flow controlled by the guest polling.
+#define POSTBOX_SIGNATURE 0x55ee
+#define POSTBOX_VERSION   1
+#define POSTBOX_BUFSIZE   1024
+
+
+class PostboxRing {
+public:
+  PostboxRing() : m_head(0), m_tail(0) { }
+
+  void  clear()            { m_head = m_tail = 0; }
+  bool  empty() const      { return m_head == m_tail; }
+  int   count() const      { return (m_head - m_tail + POSTBOX_BUFSIZE) % POSTBOX_BUFSIZE; }
+  bool  full() const       { return count() == POSTBOX_BUFSIZE - 1; }
+
+  bool push(uint8_t v)
+  {
+    if (full())
+      return false;
+    m_buf[m_head] = v;
+    m_head = (m_head + 1) % POSTBOX_BUFSIZE;
+    return true;
+  }
+
+  bool pop(uint8_t * v)
+  {
+    if (empty())
+      return false;
+    *v = m_buf[m_tail];
+    m_tail = (m_tail + 1) % POSTBOX_BUFSIZE;
+    return true;
+  }
+
+private:
+  uint8_t m_buf[POSTBOX_BUFSIZE];
+  int     m_head;
+  int     m_tail;
+};
+
+
 class Machine {
 
 public:
@@ -106,6 +164,15 @@ public:
 
   void setSysReqCallback(SysReqCallback value) { m_sysReqCallback = value; }
   
+  PC8250 * com1()                      { return &m_COM1; }
+  PC8250 * com2()                      { return &m_COM2; }
+
+  // Carry an emulated COM port in software instead of over real pins, or 0 to stop. This goes
+  // through the machine rather than straight to the chip because a port needs its interrupt
+  // callback registered as well, exactly as setCOM1() does it -- without that the chip is ticked
+  // but can never raise IRQ4, and nothing it transmits gets anywhere.
+  void bridgeCOM(int port, void * context, PC8250::TXCallback txCallback);
+
   void setCOM1(SerialPort * serialPort);
   
   void setCOM2(SerialPort * serialPort);
@@ -133,6 +200,13 @@ public:
   // debug monitor introspection
   uint32_t ticksCounter() const        { return m_ticksCounter; }
   bool     resetPending() const        { return m_reset; }
+
+  // --- postbox, see the note above the class ---
+  // toHost holds what the guest has sent; toGuest what the host has queued for it.
+  PostboxRing & postboxToHost()        { return m_postboxToHost; }
+  PostboxRing & postboxToGuest()       { return m_postboxToGuest; }
+  bool postboxHostOpen() const         { return m_postboxHostOpen; }
+  void setPostboxHostOpen(bool v)      { m_postboxHostOpen = v; }
   void     stepCPU();
 
   // One-shot breakpoint on a linear address, for the debug monitor. Disarmed costs one compare
@@ -153,6 +227,13 @@ public:
   // Enables the serial debug console (see serialdbg.h). Must be called before run(), and only
   // when COM1 is left unattached -- they share the same pins.
   void enableDebugConsole()            { m_debugConsoleRequested = true; }
+
+  // Which emulated COM port the USB serial carries. Only used when the debug console owns
+  // the UART: without it a port takes the pins directly. Also reachable at runtime from the
+  // monitor's "u" command.
+  // Recorded here rather than passed straight on, because the console is only started from
+  // init(), which runs later and in the emulator task.
+  void setUsbSerialRoute(int port)     { m_usbSerialRoute = port; }
 
   // I/O port access for the debug monitor, routed through the same handlers the CPU uses
   uint8_t readPortDebug(int address)            { return readPort(this, address); }
@@ -207,6 +288,7 @@ private:
   void loadEGAFont(int charHeight);
   void setCGAMode();
   void setEGAAttributeReg(uint8_t value);
+  uint8_t egaInputStatus1();
   void setCGA6845Register(uint8_t value);
 
   void setHGCMode();
@@ -245,6 +327,10 @@ private:
   #endif
 
   bool                     m_reset;
+
+  PostboxRing              m_postboxToHost;
+  PostboxRing              m_postboxToGuest;
+  bool                     m_postboxHostOpen;
 
   int                      m_ramSizeKB;
 
@@ -327,11 +413,14 @@ private:
   uint8_t                  m_EGAACIndex;      // attribute controller index
   bool                     m_EGAACFlipFlop;   // false = next 0x3c0 write is an index
   uint8_t                  m_EGAACPalette[16];
+  uint8_t                  m_EGAACColorPlaneEnable;  // AC register 0x12, incl. the status mux
+  uint32_t                 m_EGAFramePos;            // raster position, in status register reads
   uint8_t                  m_EGAMiscOutput;
   uint8_t                  m_EGASwitches;     // EGA configuration DIP block, read via 0x3c2
 
   SerialDebug              m_serialDebug;
   bool                     m_debugConsoleRequested;
+  int                      m_usbSerialRoute;
   uint32_t                 m_breakAddr;
   char *                   m_egaRomPath;
   bool                     m_egaBiosLoaded;

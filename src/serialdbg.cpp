@@ -82,9 +82,15 @@ void SerialDebug::begin(Machine * machine)
   write("  ESC ESC ESC   attach to the text screen\r\n");
   write("  Ctrl+C Ctrl+D once attached, drop into the monitor\r\n");
   write("\r\n");
-  write("COM1 is not attached on this machine, because the debug\r\n");
-  write("console needs the same pins. Clear \"enabledebug\" in the\r\n");
-  write("machine configuration to get COM1 back.\r\n");
+  if (m_usbSerialRoute) {
+    writeFmt("COM%d is carried over this serial line. Typing goes to that\r\n", m_usbSerialRoute);
+    write("port instead of the keyboard; use 'k' from the monitor to\r\n");
+    write("type at the guest, or 'u off' to stop.\r\n");
+  } else {
+    write("No COM port is on this serial line. \"usbserial com1\" in the\r\n");
+    write("machine configuration, or 'u com1' from the monitor, puts one\r\n");
+    write("here without taking the debug console away.\r\n");
+  }
   write("\r\n");
 }
 
@@ -92,6 +98,126 @@ void SerialDebug::begin(Machine * machine)
 // ---------------------------------------------------------------------------------------------
 // state machine
 // ---------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------
+// postbox transport
+// ---------------------------------------------------------------------------------------------
+//
+// Host frames are   0x10 'P' <cmd> <len> <payload...>
+// and are answered  0x10 'p' <cmd> <len> <payload...>
+//
+// 0x10 is DLE, which no key on the emulated keyboard produces, so this can be parsed before the
+// byte would otherwise reach the guest or the monitor. That is what lets a file transfer run
+// while the guest is running -- the monitor stops the CPU, which would stop the program doing the
+// transfer -- and it also means the debugger stays usable during a transfer.
+//
+// Commands:
+//   'O' open a host session      'C' close it
+//   'S' payload -> guest         'R' payload[0] = max bytes wanted back from the guest
+//   'Q' query: replies with host-open, bytes waiting for the guest, bytes waiting for the host
+#define PB_DLE 0x10
+
+bool SerialDebug::postboxFeed(uint8_t ch)
+{
+  switch (m_pbState) {
+
+    case PbState::Idle:
+      if (ch == PB_DLE) {
+        m_pbState = PbState::Intro;
+        return true;
+      }
+      return false;
+
+    case PbState::Intro:
+      // only 'P' makes this a frame; anything else means the DLE was not ours after all
+      m_pbState = (ch == 'P') ? PbState::Cmd : PbState::Idle;
+      return true;
+
+    case PbState::Cmd:
+      m_pbCmd   = ch;
+      m_pbState = PbState::Len;
+      return true;
+
+    case PbState::Len:
+      m_pbLen  = ch;
+      m_pbFill = 0;
+      if (m_pbLen == 0) {
+        m_pbState = PbState::Idle;
+        postboxHandleFrame();
+      } else {
+        m_pbState = PbState::Payload;
+      }
+      return true;
+
+    case PbState::Payload:
+      m_pbBuf[m_pbFill++] = ch;
+      if (m_pbFill >= m_pbLen) {
+        m_pbState = PbState::Idle;
+        postboxHandleFrame();
+      }
+      return true;
+  }
+  return false;
+}
+
+
+void SerialDebug::postboxHandleFrame()
+{
+  uint8_t out[256];
+  uint8_t n = 0;
+
+  switch (m_pbCmd) {
+
+    case 'O':
+      m_machine->postboxToHost().clear();
+      m_machine->postboxToGuest().clear();
+      m_machine->setPostboxHostOpen(true);
+      break;
+
+    case 'C':
+      m_machine->setPostboxHostOpen(false);
+      break;
+
+    // host -> guest. The reply says how many were taken, so the host can throttle.
+    case 'S':
+      for (uint8_t i = 0; i < m_pbLen; ++i)
+        if (m_machine->postboxToGuest().push(m_pbBuf[i]))
+          ++n;
+      out[0] = n;
+      n = 1;
+      break;
+
+    // guest -> host
+    case 'R':
+    {
+      uint8_t want = m_pbLen ? m_pbBuf[0] : 0;
+      if (want > sizeof(out))
+        want = sizeof(out);
+      uint8_t v;
+      while (n < want && m_machine->postboxToHost().pop(&v))
+        out[n++] = v;
+      break;
+    }
+
+    case 'Q':
+      out[0] = m_machine->postboxHostOpen() ? 1 : 0;
+      out[1] = (uint8_t) m_machine->postboxToGuest().count();
+      out[2] = (uint8_t) m_machine->postboxToHost().count();
+      n = 3;
+      break;
+
+    default:
+      m_pbCmd = '?';
+      break;
+  }
+
+  uint8_t hdr[4] = { PB_DLE, 'p', m_pbCmd, n };
+  Serial.write(hdr, 4);
+  if (n)
+    Serial.write(out, n);
+  Serial.flush();
+}
+
 
 void SerialDebug::poll()
 {
@@ -101,6 +227,10 @@ void SerialDebug::poll()
   while (Serial.available()) {
 
     uint8_t ch = (uint8_t) Serial.read();
+
+    // postbox frames are claimed before anything else can consume the byte
+    if (postboxFeed(ch))
+      continue;
 
     switch (m_state) {
 
@@ -131,10 +261,15 @@ void SerialDebug::poll()
           // it was an ordinary Ctrl+C after all, so let the guest have it, then this byte
           sendKeyToGuest(0x03);
         }
-        if (ch == 0x03)
+        if (ch == 0x03) {
           m_pendingCtrlC = true;      // hold it back until we know what follows
-        else
+        } else if (m_usbSerialRoute == 1) {
+          m_machine->com1()->injectRx(ch);
+        } else if (m_usbSerialRoute == 2) {
+          m_machine->com2()->injectRx(ch);
+        } else {
           sendKeyToGuest(ch);
+        }
         break;
 
       case State::Monitor:
@@ -143,7 +278,7 @@ void SerialDebug::poll()
     }
   }
 
-  if (m_state == State::Screen)
+  if (m_state == State::Screen && !m_machine->postboxHostOpen() && m_usbSerialRoute == 0)
     refreshScreen(false);
 }
 
@@ -411,6 +546,12 @@ void SerialDebug::help()
   write("  r                 registers\r\n");
   write("  d [addr] [len]    dump memory, addr is seg:off or linear hex\r\n");
   write("  e addr bb bb ..   write bytes\r\n");
+  write("  w reg value       set a CPU register\r\n");
+  write("  k word [word ..]  inject raw BIOS key words (scancode<<8 | ascii)\r\n");
+  write("  z                 reboot the guest, as Ctrl+Alt+Del does\r\n");
+  write("  l addr len        load raw bytes straight into guest memory\r\n");
+  write("  j seg:off         point CS:IP at an address, then 'g' to run it\r\n");
+  write("  u [off|com1|com2] carry an emulated COM port over this USB serial\r\n");
   write("  f bb bb ..        search conventional memory for a byte sequence\r\n");
   write("  p                 dump the framebuffer as a binary stream\r\n");
   write("  v                 report what the video side is driving\r\n");
@@ -738,6 +879,201 @@ void SerialDebug::cmdVideoState()
 }
 
 
+// w reg value -- set a CPU register.
+//
+// Needed because patching memory is not always enough: a routine that returns a computed value
+// in a register hands the caller that register, not whatever the value was also written to. The
+// only way to change what the caller sees is to change the register at the point it is produced.
+// The screen mirror can only send characters that appear in ASCII_TO_SCANCODE, which leaves out
+// exactly the keys a full screen application is driven by: function keys, ALT combinations, the
+// cursor pad. This injects a raw BIOS keyboard buffer word instead, so anything reachable from the
+// keyboard is reachable from here. Useful words: 3b00..4400 = F1..F10, 5400..5d00 = shift+F1..F10,
+// 1e00 = ALT+A, 2000 = ALT+D, 4800/5000/4b00/4d00 = cursor up/down/left/right, 1c0d = Enter.
+void SerialDebug::cmdInjectKey(char const * args)
+{
+  int sent = 0;
+  while (true) {
+    while (*args == ' ')
+      ++args;
+    if (!*args)
+      break;
+    bool ok = false;
+    uint32_t v = parseHex(args, &ok);
+    if (!ok)
+      break;
+    m_machine->bios()->injectKey((uint16_t) v);
+    ++sent;
+    while (*args && *args != ' ')
+      ++args;
+  }
+
+  if (sent == 0) {
+    write("usage: k word [word ..]   e.g. 'k 5400' for shift+F1\r\n");
+    return;
+  }
+  writeFmt("injected %d key word(s)\r\n", sent);
+}
+
+
+// Drop a blob straight into guest memory. "l addr len", then exactly len raw bytes on the wire.
+// Nothing is echoed while the bytes are arriving, so the host can push a whole COM file in one go
+// and then start it with "j", which together replace typing a program in through COPY CON.
+void SerialDebug::cmdLoad(char const * args)
+{
+  uint32_t addr = 0;
+  if (!parseAddress(args, &addr)) {
+    write("usage: l addr len   then send exactly len raw bytes\r\n");
+    return;
+  }
+  while (*args && *args != ' ')
+    ++args;
+
+  bool ok = false;
+  uint32_t len = parseHex(args, &ok);
+  if (!ok || len == 0 || len > 0x10000) {
+    write("usage: l addr len   (len is hex, 1..10000)\r\n");
+    return;
+  }
+
+  writeFmt("send %u bytes now\r\n", (unsigned) len);
+
+  uint32_t got  = 0;
+  uint32_t idle = millis();
+  while (got < len) {
+    if (Serial.available()) {
+      m_machine->writeMemDebug(addr + got, (uint8_t) Serial.read());
+      ++got;
+      idle = millis();
+    } else if (millis() - idle > 4000) {
+      break;      // the host went away; report what arrived rather than hang the console
+    }
+  }
+
+  writeFmt("%u of %u byte(s) loaded at %05X\r\n", (unsigned) got, (unsigned) len, (unsigned) addr);
+}
+
+
+// Point the CPU at an address and let it run. Takes seg:off, because anything worth starting this
+// way cares which segment it runs in.
+void SerialDebug::cmdJump(char const * args)
+{
+  uint32_t addr = 0;
+  if (!parseAddress(args, &addr)) {
+    write("usage: j seg:off\r\n");
+    return;
+  }
+
+  uint16_t seg, off;
+  if (strchr(args, ':')) {
+    bool ok = false;
+    seg = (uint16_t) parseHex(args, &ok);
+    char const * p = strchr(args, ':') + 1;
+    off = (uint16_t) parseHex(p, &ok);
+  } else {
+    seg = (uint16_t) (addr >> 4);
+    off = (uint16_t) (addr & 0x0f);
+  }
+
+  i8086::setCS(seg);
+  i8086::setIP(off);
+  writeFmt("CS:IP set to %04X:%04X\r\n", seg, off);
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// USB serial routing
+// ---------------------------------------------------------------------------------------------
+//
+// COM1 shares pins 3/1 with the USB serial console, so historically a machine got one or the
+// other. When the console is off, an emulated port takes those pins directly through a real
+// SerialPort and nothing here is involved. When the console is on it owns the UART, and this
+// carries a chosen port's bytes in software instead: guest output is written to the host, and
+// host input is handed to the chip with injectRx(). Both stay alive, which is the point -- a
+// transfer or a terminal session does not cost you the debugger.
+//
+// While a port is routed, bytes that would have gone to the emulated keyboard go to that port
+// instead. Ctrl+C Ctrl+D still reaches the monitor and postbox frames are still claimed first, so
+// there is always a way back. Use 'k' from the monitor to type at the guest meanwhile.
+
+void SerialDebug::bridgeTX(void * context, uint8_t value)
+{
+  Serial.write(value);
+}
+
+
+void SerialDebug::setUsbSerialRoute(int port)
+{
+  if (!m_machine)
+    return;
+
+  m_usbSerialRoute = port;
+  m_machine->bridgeCOM(port, this, bridgeTX);
+}
+
+
+void SerialDebug::cmdUsbSerial(char const * args)
+{
+  while (*args == ' ')
+    ++args;
+
+  if (*args) {
+    if      (!strncmp(args, "off",  3)) setUsbSerialRoute(0);
+    else if (!strncmp(args, "com1", 4)) setUsbSerialRoute(1);
+    else if (!strncmp(args, "com2", 4)) setUsbSerialRoute(2);
+    else {
+      write("usage: u [off|com1|com2]\r\n");
+      return;
+    }
+  }
+
+  writeFmt("USB serial carries: %s\r\n",
+           m_usbSerialRoute == 1 ? "COM1" : (m_usbSerialRoute == 2 ? "COM2" : "nothing"));
+}
+
+
+void SerialDebug::cmdWriteReg(char const * args)
+{
+  char name[4] = { 0, 0, 0, 0 };
+  int n = 0;
+  while (*args == ' ')
+    ++args;
+  while (*args && *args != ' ' && n < 3) {
+    char c = *args++;
+    name[n++] = (c >= 'A' && c <= 'Z') ? (c + 32) : c;
+  }
+
+  bool ok = false;
+  uint32_t v = parseHex(args, &ok);
+  if (!ok || n == 0) {
+    write("usage: w reg value   (ax bx cx dx si di bp sp cs ds es ss ip al ah)\r\n");
+    return;
+  }
+
+  uint16_t w16 = (uint16_t) v;
+  uint8_t  w8  = (uint8_t) v;
+
+  if      (!strcmp(name, "ax")) i8086::setAX(w16);
+  else if (!strcmp(name, "bx")) i8086::setBX(w16);
+  else if (!strcmp(name, "cx")) i8086::setCX(w16);
+  else if (!strcmp(name, "dx")) i8086::setDX(w16);
+  else if (!strcmp(name, "di")) i8086::setDI(w16);
+  else if (!strcmp(name, "sp")) i8086::setSP(w16);
+  else if (!strcmp(name, "cs")) i8086::setCS(w16);
+  else if (!strcmp(name, "ds")) i8086::setDS(w16);
+  else if (!strcmp(name, "es")) i8086::setES(w16);
+  else if (!strcmp(name, "ss")) i8086::setSS(w16);
+  else if (!strcmp(name, "ip")) i8086::setIP(w16);
+  else if (!strcmp(name, "al")) i8086::setAL(w8);
+  else if (!strcmp(name, "ah")) i8086::setAH(w8);
+  else {
+    writeFmt("no such register \"%s\"\r\n", name);
+    return;
+  }
+
+  writeFmt("%s = %04X\r\n", name, (unsigned) v);
+}
+
+
 void SerialDebug::cmdInPort(char const * args)
 {
   bool ok = false;
@@ -796,6 +1132,20 @@ void SerialDebug::runMonitor()
       case 'f': cmdFind(p);      break;
       case 'p': cmdScreenshot(); break;
       case 'v': cmdVideoState(); break;
+      case 'w': cmdWriteReg(p);  break;
+      case 'k': cmdInjectKey(p); break;
+      case 'l': cmdLoad(p);      break;
+      case 'j': cmdJump(p);      break;
+      case 'u': cmdUsbSerial(p); break;
+
+      // Ctrl+Alt+Del. The guest restarts from POST, which is the only way to get a
+      // breakpoint in before the video option ROM initialises itself.
+      case 'z':
+        write("--- rebooting the guest ---\r\n");
+        m_machine->trigReset();
+        m_state    = State::Screen;
+        m_lastHash = 0;
+        return;
       case 'x': cmdExport(p);    break;
 
       case 'b':

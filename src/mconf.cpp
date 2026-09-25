@@ -192,6 +192,8 @@ void MachineConf::loadFromFile(FILE * file)
       item->setRamSize(value);
     else if (strcmp("enabledebug", tag) == 0)
       item->setDebugConsole(value);
+    else if (strcmp("usbserial", tag) == 0)
+      item->setUsbSerial(value);
     else if (strcmp("video", tag) == 0)
       item->setVideoAdapter(value);
     else if (strcmp("egarom", tag) == 0)
@@ -228,6 +230,11 @@ void MachineConf::saveToFile(FILE * file)
     // only written when on, so machines that never asked for it keep the file they had
     if (item->debugConsole)
       fputs("enabledebug 1 ", file);
+    // only written when it was asked for, so files that never mentioned it are left as they were
+    if (item->usbSerialSet && item->usbSerial != 0)
+      fprintf(file, "usbserial %s ", item->usbSerial == 2 ? "com2" : "com1");
+    else if (item->usbSerialSet)
+      fputs("usbserial off ", file);
     if (item->videoAdapter == 1) {
       fputs("video ega ", file);
       if (item->egaRom && item->egaRom[0]) {
@@ -270,6 +277,7 @@ struct ConfigDialog : public uiApp {
   uiComboBox      * bootDriveComboBox;
   uiComboBox      * ramSizeComboBox;
   uiCheckBox      * debugConsoleCheckBox;
+  uiComboBox      * usbSerialComboBox;
   uiComboBox      * videoAdapterComboBox;
 
 
@@ -375,12 +383,22 @@ struct ConfigDialog : public uiApp {
     videoAdapterComboBox->items().append("EGA (BIOS ROM)");
     videoAdapterComboBox->selectItem(item->videoAdapter ? 1 : 0);
 
-    // Serial debug console. Off unless asked for: it is mutually exclusive with COM1, which takes
-    // the same USB serial pins (see setup() in main.cpp), so turning it on silently would take
-    // COM1 away from machines that have always had it.
+    // Serial debug console. Off unless asked for. It owns the USB serial pins, which COM1 would
+    // otherwise use, but it no longer excludes a COM port: see the routing combo below.
     debugConsoleCheckBox = new uiCheckBox(mainFrame, Point(60, y + dy), Size(hh, hh), uiCheckBoxKind::CheckBox);
     debugConsoleCheckBox->setChecked(item->debugConsole);
-    new uiStaticLabel(mainFrame, "Serial debug console (takes over COM1)", Point(80, y + dy + oy));
+    new uiStaticLabel(mainFrame, "Serial debug console", Point(80, y + dy + oy));
+
+    // Which emulated COM port, if any, reaches the host over the USB serial. With the debug
+    // console off the port takes the UART pins directly; with it on the console carries the port
+    // in software, so a terminal or a file transfer and the debugger all work at once. The
+    // debugger's "u" command changes this while the machine runs.
+    new uiStaticLabel(mainFrame, "USB serial", Point(265, y + dy + oy));
+    usbSerialComboBox = new uiComboBox(mainFrame, Point(330, y + dy), Size(120, hh), 60);
+    usbSerialComboBox->items().append("not connected");
+    usbSerialComboBox->items().append("COM1");
+    usbSerialComboBox->items().append("COM2");
+    usbSerialComboBox->selectItem(item->effectiveUsbSerial());
 
     // bottom buttons
 
@@ -459,6 +477,9 @@ struct ConfigDialog : public uiApp {
     item->bootDrive    = bootDriveComboBox->selectedItem();
     item->ramSizeKB    = (ramSizeComboBox->selectedItem() + 1) * 64;
     item->debugConsole = debugConsoleCheckBox->checked();
+    // saved explicitly once the dialogue has been used, so the file records the choice
+    item->setUsbSerial(usbSerialComboBox->selectedItem() == 2 ? "com2" :
+                      (usbSerialComboBox->selectedItem() == 1 ? "com1" : "off"));
     item->videoAdapter = videoAdapterComboBox->selectedItem() > 0 ? 1 : 0;
 
     // Warn when the selected boot drive has no image assigned. The boot drive defaults to Floppy 0,

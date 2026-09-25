@@ -65,8 +65,30 @@ public:
   }
   
   void setSerialPort(SerialPort * value);
-  
-  bool assigned()            { return m_serialPort != nullptr; }
+
+  // PCEmulator: bridged mode, for when the UART pins are not available because something else owns
+  // them -- on this hardware that is the serial debug console, which shares pins 3/1 with COM1.
+  // Instead of a physical port the chip is given a transmit callback and is fed received bytes
+  // with injectRx(), so the console can carry the port's traffic in software and stay usable at
+  // the same time. The modem control lines have nothing behind them in this mode, so they read as
+  // a permanently ready DTE (CTS, DSR and DCD asserted, RI clear) and the line error flags stay
+  // clear: a bridged stream cannot have a parity, framing or break condition.
+  typedef void (*TXCallback)(void * context, uint8_t value);
+
+  void setBridge(void * context, TXCallback txCallback)
+  {
+    m_bridgeContext = context;
+    m_bridgeTX      = txCallback;
+  }
+
+  void clearBridge()         { m_bridgeContext = nullptr; m_bridgeTX = nullptr; }
+
+  bool bridged()             { return m_bridgeTX != nullptr; }
+
+  // hands a byte from the host to the guest, exactly as a real port's RX callback would
+  void injectRx(uint8_t value)  { rxCallback(this, value, false); }
+
+  bool assigned()            { return m_serialPort != nullptr || m_bridgeTX != nullptr; }
   
   void reset();
   
@@ -109,6 +131,8 @@ private:
   int32_t           m_freq;
   
   SerialPort *      m_serialPort;
+  void *            m_bridgeContext;
+  TXCallback        m_bridgeTX;
   
   // callbacks
   void *            m_context;

@@ -79,6 +79,38 @@ private:
   void cmdFind(char const * args);
   void cmdScreenshot();
   void cmdVideoState();
+  void cmdWriteReg(char const * args);
+  void cmdInjectKey(char const * args);
+  void cmdUsbSerial(char const * args);
+
+  // Which emulated COM port, if any, this console is carrying in software. Only meaningful while
+  // the debug console owns the UART: with the console off a COM port takes the pins directly and
+  // no bridging is involved. See PC8250::setBridge().
+  static void bridgeTX(void * context, uint8_t value);
+
+  int m_usbSerialRoute = 0;      // 0 = none, 1 = COM1, 2 = COM2
+
+public:
+  // Routes an emulated COM port through this console, or 0 to stop. Safe to call at any time,
+  // which is what makes it switchable from the monitor while the machine is running.
+  void setUsbSerialRoute(int port);
+  int  usbSerialRoute() const    { return m_usbSerialRoute; }
+
+private:
+  void cmdLoad(char const * args);
+  void cmdJump(char const * args);
+
+  // Postbox transport. Frames are recognised ahead of every other use of the serial line, in any
+  // state, so a transfer can run while the guest runs and the monitor stays available.
+  bool postboxFeed(uint8_t ch);
+  void postboxHandleFrame();
+
+  enum class PbState { Idle, Intro, Cmd, Len, Payload };
+  PbState  m_pbState        = PbState::Idle;
+  uint8_t  m_pbCmd          = 0;
+  uint8_t  m_pbLen          = 0;
+  uint8_t  m_pbFill         = 0;
+  uint8_t  m_pbBuf[256];
   void cmdExport(char const * args);
   void cmdInPort(char const * args);
   void cmdOutPort(char const * args);
