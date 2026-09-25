@@ -14,3 +14,6 @@ data/fs/*.img
 # Hard disk / floppy images used for testing are not committed either: they are large (the
 # MS-DOS install is 80MB) and, when built from retail DOS, not redistributable.
 images/*.img
+
+# python bytecode from the host side tools
+__pycache__/
