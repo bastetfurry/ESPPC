@@ -2485,7 +2485,16 @@ int10_video_subsystem_cfg:
   mov   bh, 0          ; colour mode in effect
   mov   bl, 1          ; 128 KB of video memory (four 32 KB planes, see src/ega.h)
   mov   ch, 0          ; feature bits
-  mov   cl, 0x09       ; switch settings: EGA with an enhanced colour display
+  ; Switch settings. 0x09 is what the EGA BIOS option ROM's own POST is happy with: it drives
+  ; the ROM's configuration choice and, with it, the 350 scanlines per frame that
+  ; egaInputStatus1() models. 0x05 would be the code for an enhanced colour display, and
+  ; callers do read this byte that way -- QBasic maps {03,09} to "colour display" and
+  ; {04,05,0A,0B} to "enhanced display" -- but switching to it makes the ROM expect a
+  ; different frame and it fails its own CRT timing test and beeps. Changing this therefore
+  ; means retuning EGA_POST_SCANLINES to match, and it buys nothing on its own: forcing
+  ; QBasic's capability byte to the enhanced value (and to 0x90) still did not make it offer
+  ; the EGA SCREEN modes, so the gate is somewhere else.
+  mov   cl, 0x09       ; switch settings, see the note above before changing this
 int10_video_subsystem_cfg_done:
   iret
 
@@ -2593,7 +2602,10 @@ int10_get_state_info:
   mov  al, [vid_rows-bios_data]
   mov  byte [es:di+0x22], al
   mov  word [es:di+0x23], 0x0008
-  mov  byte [es:di+0x25], 0x0c    ; active display combination code (0x0c=MCGA)
+  ; 0x04 = EGA with colour display. This used to say 0x0c (MCGA), which contradicted both
+  ; 40:8a and the code AH=1Ah documents, and told anything reading the state block that the
+  ; EGA graphics modes could not exist -- MCGA has none of 0Dh, 0Eh, 0Fh or 10h.
+  mov  byte [es:di+0x25], 0x04    ; active display combination code (0x04=EGA colour)
   mov  byte [es:di+0x26], 0x00    ; inactive display combination code
   mov  word [es:di+0x27], 0x0010  ; Number of dislayed colours
 
@@ -6413,7 +6425,7 @@ vid_rows         db  24         ; 40:84
 vidmode_opt      db  0x92       ; 40:87  bit 3 = 0 EGA active, bits 2-1 = 01 -> 128 KB
                                  ; (four 32 KB planes, see src/ega.h). Was 0x96, which claimed
                                  ; the full 256 KB an emulated EGA cannot have here.
-                 db  0x09       ; 40:88    0x89
+                 db  0x09       ; 40:88  EGA switch settings, see int10_video_subsystem_cfg
                  db  0x81       ; 40:89    0x51
 video_card       db  0x04       ; 40:8a  display combination code: EGA with colour display,
                                  ; matching what int10_vid_combination returns for AH=1Ah
@@ -6746,13 +6758,14 @@ video_init_table:
 
 vid_static_table:
   db 0x7f ; bits 0 .. 7 = modes 00h .. 07h supported
-  db 0x00 ; bits 0 .. 7 = modes 08h .. 0fh supported
-  db 0x0a ; bits 0 .. 3 = modes 10h .. 13h supported
+  db 0xe0 ; bits 0 .. 7 = modes 08h .. 0fh supported (bits 5,6,7 = 0Dh, 0Eh, 0Fh)
+  db 0x0b ; bits 0 .. 3 = modes 10h .. 13h supported (bit 0 = 10h, the EGA 640x350x16 mode)
   db 0x00 ; IBM reserved
   db 0x00 ; IBM reserved
   db 0x00 ; IBM reserved
   db 0x00 ; IBM reserved
-  db 0x01 ; scan lines suppported: bit 0 = 200, 1 = 350, 2 = 400
+  db 0x03 ; scan lines suppported: bit 0 = 200, 1 = 350, 2 = 400. 350 is what modes 0Fh
+          ; and 10h need, and claiming 200 only made them impossible by definition.
   db 0x08 ; total number of character blocks in text mode
   db 0x08 ; maximum number of character blocks in text mode
   dw 0x046c ; misc support flags
