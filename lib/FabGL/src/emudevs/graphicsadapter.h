@@ -143,6 +143,13 @@ public:
 
   bool VSync()                                             { return m_VGADCtrl.VSync(); }
 
+  // for the debug monitor: what the adapter believes it is currently driving
+  bool videoEnabled() const                                { return m_videoEnabled; }
+  int  viewPortWidth()                                     { return m_VGADCtrl.getViewPortWidth(); }
+  int  viewPortHeight()                                    { return m_VGADCtrl.getViewPortHeight(); }
+  int  egaCharHeight() const                               { return m_egaCharHeight; }
+  int  egaTextColumns() const                              { return m_egaTextColumns; }
+
 
 private:
 

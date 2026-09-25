@@ -413,6 +413,7 @@ void SerialDebug::help()
   write("  e addr bb bb ..   write bytes\r\n");
   write("  f bb bb ..        search conventional memory for a byte sequence\r\n");
   write("  p                 dump the framebuffer as a binary stream\r\n");
+  write("  v                 report what the video side is driving\r\n");
   write("  b [addr]          one-shot breakpoint on a linear address (no addr clears)\r\n");
   write("  x addr len        stream guest memory as raw binary\r\n");
   write("  i port            read an I/O port\r\n");
@@ -681,6 +682,24 @@ void SerialDebug::cmdExport(char const * args)
 }
 
 
+// v -- what the video side currently believes it is driving. Useful when the guest is provably
+// writing the right thing but nothing reaches the monitor.
+void SerialDebug::cmdVideoState()
+{
+  auto ga = m_machine->graphicsAdapter();
+
+  writeFmt("emulation   %d\r\n", (int) ga->emulation());
+  writeFmt("videoEnabled %d\r\n", (int) ga->videoEnabled());
+  writeFmt("viewport    %dx%d\r\n", ga->viewPortWidth(), ga->viewPortHeight());
+  writeFmt("text        %d cols, %d rows, %d scanlines/char\r\n",
+           ga->getTextColumns(), ga->getTextRows(), ga->egaCharHeight());
+  writeFmt("EGA active  %d, window %05X..%05X, oddEven %d\r\n",
+           (int) m_machine->EGAActive(), (unsigned) m_machine->ega()->mapBase(),
+           (unsigned) m_machine->ega()->mapEnd(), (int) m_machine->ega()->oddEven());
+  writeFmt("free heap   %d internal\r\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+}
+
+
 void SerialDebug::cmdInPort(char const * args)
 {
   bool ok = false;
@@ -738,6 +757,7 @@ void SerialDebug::runMonitor()
       case 'e': cmdEnter(p);     break;
       case 'f': cmdFind(p);      break;
       case 'p': cmdScreenshot(); break;
+      case 'v': cmdVideoState(); break;
       case 'x': cmdExport(p);    break;
 
       case 'b':

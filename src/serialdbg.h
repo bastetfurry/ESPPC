@@ -78,6 +78,7 @@ private:
   void cmdEnter(char const * args);
   void cmdFind(char const * args);
   void cmdScreenshot();
+  void cmdVideoState();
   void cmdExport(char const * args);
   void cmdInPort(char const * args);
   void cmdOutPort(char const * args);

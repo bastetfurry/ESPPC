@@ -708,8 +708,19 @@ bool Machine::setEGAMode(int biosMode)
       heap_caps_free(s_videoMemory);
       s_videoMemory = nullptr;
     }
-    if (!m_EGA.allocVRAM(EGA_BANK_COUNT))
+
+    if (!m_EGA.allocVRAM(EGA_BANK_COUNT)) {
+      // The CGA buffer has already been released at this point, so it has to come back before
+      // the caller falls through to the CGA path -- otherwise that path renders from a null
+      // pointer and the video stays dark with no clue as to why.
+      printf("EGA: cannot allocate planar memory for text mode, falling back to CGA\n");
+      s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+      if (s_videoMemory)
+        memset(s_videoMemory, 0, VIDEOMEMSIZE);
+      m_frameBuffer = s_videoMemory;
+      m_graphicsAdapter.enableVideo(true);
       return false;
+    }
 
     m_EGAActive = true;
     m_EGA.reset();
