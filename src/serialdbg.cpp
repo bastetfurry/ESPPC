@@ -837,7 +837,26 @@ void SerialDebug::cmdVideoState()
   writeFmt("EGA active  %d, window %05X..%05X, oddEven %d\r\n",
            (int) m_machine->EGAActive(), (unsigned) m_machine->ega()->mapBase(),
            (unsigned) m_machine->ega()->mapEnd(), (int) m_machine->ega()->oddEven());
-  writeFmt("free heap   %d internal\r\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+  // Total free is not the interesting number: the SysReq menu needs a single contiguous block of
+  // about 50 KB, so a heap that is large but chopped up will still fail it. Report both, for
+  // internal and DMA capable memory, plus what is parked in PSRAM.
+  writeFmt("heap intern %d free, %d largest\r\n",
+           heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+  writeFmt("heap dma    %d free, %d largest\r\n",
+           heap_caps_get_free_size(MALLOC_CAP_DMA),
+           heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+  writeFmt("heap psram  %d free, %d largest\r\n",
+           heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+           heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+  {
+    // sysReqCallback() parks the EGA planes, then picks 500x400 (50000 bytes) if it can and
+    // 400x300 (30000) otherwise, refusing to open below 35000 rather than hanging on it.
+    size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    writeFmt("sysreq menu %s\r\n",
+             largest >= 55000 ? "would open at 500x400" :
+             largest >= 35000 ? "would open at 400x300" : "WOULD REFUSE TO OPEN");
+  }
 
   // Is the scanline interrupt still running? VSync is set inside it, so if the DMA has stopped
   // this never changes no matter how long we watch. Sampled for about 100ms, several frames.

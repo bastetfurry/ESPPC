@@ -113,6 +113,9 @@ Machine::Machine() :
     m_EGAMiscOutput(0),
     m_EGAACColorPlaneEnable(0x0f),
     m_EGAFramePos(0),
+    m_EGAPark(nullptr),
+    m_EGAParkBanks(0),
+    m_EGAStride(80),
     m_postboxHostOpen(false),
     m_EGASwitches(0x09),
     m_debugConsoleRequested(false),
@@ -846,6 +849,74 @@ void Machine::egaDrawChar(uint8_t ch, uint8_t colour)
 }
 
 
+// Park the EGA planes in PSRAM so their internal RAM can be used for something else.
+//
+// The planes are four banks of 32 KB, all of it internal: with a mode up the largest free internal
+// block drops to about 14 KB. That is why opening the SysReq menu while an EGA mode was running
+// hung the machine -- the InputBox wants a contiguous frame buffer of roughly 50 KB, the
+// allocation could not succeed, and FabGL does not fail gracefully. PSRAM has plenty of room, so
+// the contents go there and come back untouched.
+bool Machine::suspendEGA()
+{
+  if (!m_EGAActive || m_EGAPark)
+    return false;
+
+  // PSRAM is not handed to the heap allocator on this machine: setup() brings it up itself with
+  // esp_spiram_init() and BOARD_HAS_PSRAM is deliberately left undefined, so heap_caps_malloc with
+  // MALLOC_CAP_SPIRAM finds nothing and would fail every time. The emulator addresses PSRAM
+  // directly instead, and guest RAM is the first RAM_SIZE bytes of this machine's 2 MB half, so
+  // the megabyte just past it is free for this.
+  m_EGAPark = (uint32_t*) (s_memory + RAM_SIZE);
+
+  // Put back exactly what was there. A graphics mode allocates only the banks it needs -- two for
+  // mode 0Eh -- so re-allocating all four on resume would change the offset mask the renderer and
+  // the guest are working to.
+  auto banks = m_EGA.banks();
+  m_EGAParkBanks = 0;
+  for (int b = 0; b < EGA_BANK_COUNT; ++b) {
+    if (!banks[b])
+      break;
+    memcpy(m_EGAPark + (size_t) b * EGA_BANK_ENTRIES, banks[b], EGA_BANK_ENTRIES * sizeof(uint32_t));
+    ++m_EGAParkBanks;
+  }
+
+  // stop the renderer before the memory goes away, and clear the pointer it guards on so a
+  // scanline callback that is already in flight cannot follow a freed bank
+  m_graphicsAdapter.enableVideo(false);
+  m_graphicsAdapter.setEGAVideoBuffer(nullptr, m_EGAStride, 0, 0);
+
+  m_EGA.freeVRAM();
+
+  printf("EGA: planes parked in PSRAM, internal heap free %d (largest %d)\n",
+         heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
+  return true;
+}
+
+
+void Machine::resumeEGA()
+{
+  if (!m_EGAPark)
+    return;
+
+  if (m_EGA.allocVRAM(m_EGAParkBanks)) {
+    auto banks = m_EGA.banks();
+    for (int b = 0; b < m_EGAParkBanks; ++b)
+      if (banks[b])
+        memcpy(banks[b], m_EGAPark + (size_t) b * EGA_BANK_ENTRIES, EGA_BANK_ENTRIES * sizeof(uint32_t));
+    printf("EGA: %d bank(s) restored from PSRAM\n", m_EGAParkBanks);
+    m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), m_EGAStride, m_EGA.bankMask(), m_EGA.offsetMask());
+  } else {
+    // the RAM did not come back, so there is nothing to show; say so rather than render garbage
+    printf("EGA: could not reclaim planar memory after the menu\n");
+    m_EGAActive = false;
+  }
+
+  m_EGAPark = nullptr;      // a fixed PSRAM window, nothing to give back
+}
+
+
 bool Machine::setEGAMode(int biosMode)
 {
   // Text modes on the EGA path. These are not the CGA text modes: characters live in plane 0,
@@ -863,7 +934,12 @@ bool Machine::setEGAMode(int biosMode)
       s_videoMemory = nullptr;
     }
 
-    if (!m_EGA.allocVRAM(EGA_BANK_COUNT)) {
+    // Two banks, not four. Text needs offsets 0..1999 for the character cells and 0..8191 for the
+    // font in plane 2, so 16384 byte-columns is ample -- and asking for all four meant that coming
+    // back from a graphics mode, which allocates only what it needs, had to find two more 32 KB
+    // blocks. With the planes already resident there is nowhere near that much left, so the text
+    // mode failed and the machine dropped to CGA for the rest of the session.
+    if (!m_EGA.allocVRAM(2)) {
       // The CGA buffer has already been released at this point, so it has to come back before
       // the caller falls through to the CGA path -- otherwise that path renders from a null
       // pointer and the video stays dark with no clue as to why.
@@ -907,6 +983,7 @@ bool Machine::setEGAMode(int biosMode)
     for (int i = 0; i < 16; ++i)
       m_EGAACPalette[i] = i;
 
+    m_EGAStride = textColumns;
     m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), textColumns, m_EGA.bankMask(), m_EGA.offsetMask());
     m_graphicsAdapter.setEGAStartAddress(0);
     m_graphicsAdapter.setEGACharHeight(16);
@@ -982,6 +1059,7 @@ bool Machine::setEGAMode(int biosMode)
   for (int i = 0; i < 16; ++i)
     m_EGAACPalette[i] = i;
 
+  m_EGAStride = stride;
   m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), stride, m_EGA.bankMask(), m_EGA.offsetMask());
   m_graphicsAdapter.setEGAStartAddress(0);
   m_graphicsAdapter.setEGAPalette(m_EGAACPalette);

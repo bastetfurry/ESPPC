@@ -332,7 +332,34 @@ char const * getDisk(char const * url)
 void sysReqCallback()
 {
   machine->graphicsAdapter()->enableVideo(false);
-  ibox.begin(VGA_640x480_60Hz, 500, 400, 4);
+
+  // The InputBox allocates a frame buffer of its own, about 50 KB for 500x400 at four colours.
+  // With the EGA planes resident the largest free internal block is nearer 14 KB, so that
+  // allocation cannot succeed and FabGL hangs on it instead of failing -- which is why this menu
+  // hung, seemingly at random, only once a guest had been in an EGA mode. Park the planes in
+  // PSRAM for the duration and put them back afterwards; the guest's screen is unaffected.
+  bool egaParked = machine->suspendEGA();
+
+  // Then pick a size that fits what is actually left. 500x400 at four colours is 50000 bytes and
+  // the largest contiguous internal block is routinely below that even at a fresh boot, which is
+  // the real reason this menu hung "at random": FabGL does not fail that allocation, it hangs on
+  // it. Measure first, and if even the small layout will not fit, say so and carry on rather than
+  // taking the whole emulator down.
+  size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+
+  if (largest < 35000) {
+    printf("SysReq: largest free internal block is %u bytes, too little for the menu\n",
+           (unsigned) largest);
+    if (egaParked)
+      machine->resumeEGA();
+    machine->graphicsAdapter()->enableVideo(true);
+    return;
+  }
+
+  if (largest >= 55000)
+    ibox.begin(VGA_640x480_60Hz, 500, 400, 4);   // 50000 bytes
+  else
+    ibox.begin(VGA_640x480_60Hz, 400, 300, 4);   // 30000 bytes
 
   int s = ibox.menu("", "Select a command", "Restart Host;Restart Guest;Mount Disk;Eject Floppy;Continue");
   switch (s) {
@@ -414,6 +441,8 @@ void sysReqCallback()
   }
 
   ibox.end();
+  if (egaParked)
+    machine->resumeEGA();
   PS2Controller::keyboard()->enableVirtualKeys(false, false); // don't use virtual keys
   machine->graphicsAdapter()->enableVideo(true);
 }
