@@ -976,8 +976,7 @@ bool Machine::setEGAMode(int biosMode)
       m_EGA.writePlaneByte(1, i, 0x07);      // light grey on black
     }
 
-    for (int i = 0; i < 16; ++i)
-      m_EGAACPalette[i] = i;
+    setEGADefaultPalette(false);
 
     m_EGAStride = textColumns;
     m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), textColumns, m_EGA.bankMask(), m_EGA.offsetMask());
@@ -1070,9 +1069,7 @@ bool Machine::setEGAMode(int biosMode)
   m_EGA.selectGraphics(6);
   m_EGA.writeGraphics(0x05);        // 64 KB at A0000, graphics (not alphanumeric) addressing
 
-  // default EGA palette: attribute N selects colour N
-  for (int i = 0; i < 16; ++i)
-    m_EGAACPalette[i] = i;
+  setEGADefaultPalette(biosMode == 0x0d || biosMode == 0x0e);
 
   m_EGAStride = stride;
   m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), stride, m_EGA.bankMask(), m_EGA.offsetMask());
@@ -1192,6 +1189,28 @@ uint8_t Machine::egaInputStatus1()
 }
 
 
+// What the EGA BIOS loads into the palette registers on a mode set. The values are 6 bit, and
+// read differently depending on the line count (see GraphicsAdapter::setupEGALUT): the 200 line
+// modes put intensity in bit 4, the 350 line modes spell out rgbRGB, where brown is 0x14 and the
+// bright colours carry all three low intensity bits.
+void Machine::setEGADefaultPalette(bool line200)
+{
+  static const uint8_t pal200[16] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                                      0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17 };
+  static const uint8_t pal350[16] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x07,
+                                      0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f };
+  memcpy(m_EGAACPalette, line200 ? pal200 : pal350, 16);
+}
+
+
+void Machine::setEGAPaletteReg(int index, uint8_t value)
+{
+  m_EGAACPalette[index & 0x0f] = value & 0x3f;
+  if (m_EGAActive)
+    m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
+}
+
+
 void Machine::setEGAAttributeReg(uint8_t value)
 {
   if (!m_EGAACFlipFlop) {
@@ -1200,9 +1219,12 @@ void Machine::setEGAAttributeReg(uint8_t value)
   } else {
     m_EGAACFlipFlop = false;
     if (m_EGAACIndex < 16) {
-      m_EGAACPalette[m_EGAACIndex] = value & 0x3f;
+      setEGAPaletteReg(m_EGAACIndex, value);
+    } else if (m_EGAACIndex == 0x10) {
+      // Mode Control. Bit 3 picks whether attribute bit 7 blinks or selects a bright background.
+      // The CGA path keeps blink in its own mode register, so leave it alone there.
       if (m_EGAActive)
-        m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
+        m_graphicsAdapter.setBit7Blink(value & 0x08);
     } else if (m_EGAACIndex == 0x12) {
       // Colour Plane Enable. Bits 5-4 are the video status mux, which selects the pair of
       // attribute controller outputs the EGA reports in Input Status Register 1. The BIOS POST

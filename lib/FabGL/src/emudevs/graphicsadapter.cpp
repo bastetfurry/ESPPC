@@ -375,12 +375,28 @@ void GraphicsAdapter::setupEGALUT()
   if (!m_egaPal2)
     m_egaPal2 = (uint16_t*) heap_caps_malloc(256 * sizeof(uint16_t), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
 
-  bool mono = (m_emulation == Emulation::PC_Graphics_EGA_640x350_2Colors);
+  bool mono   = (m_emulation == Emulation::PC_Graphics_EGA_640x350_2Colors);
+
+  // A palette register holds 6 bits, and what they mean depends on the monitor mode the scan
+  // rate selects. In the 200 line modes the EGA drives a CGA style monitor: bits 2-0 are R G B
+  // and bit 4 is intensity, the rest ignored, and the monitor turns dark yellow into brown. In
+  // the 350 line modes every bit is a colour line, rgbRGB with the capitals worth two thirds and
+  // the lower case one third -- which is exactly RGB222.
+  bool line200 = (m_emulation == Emulation::PC_Graphics_EGA_320x200_16Colors ||
+                  m_emulation == Emulation::PC_Graphics_EGA_640x200_16Colors);
 
   uint8_t raw[16];
   for (int i = 0; i < 16; ++i) {
-    RGB222 c = mono ? RGB222((i & 1) * 3, (i & 1) * 3, (i & 1) * 3)
-                    : EGADefaultPalette[m_egaPalette[i] & 0x0f];
+    uint8_t v = m_egaPalette[i];
+    RGB222 c;
+    if (mono)
+      c = RGB222((i & 1) * 3, (i & 1) * 3, (i & 1) * 3);
+    else if (line200)
+      c = EGADefaultPalette[(v & 0x07) | ((v >> 1) & 0x08)];
+    else
+      c = RGB222(((v >> 1) & 2) | ((v >> 5) & 1),
+                 ( v       & 2) | ((v >> 4) & 1),
+                 ((v << 1) & 2) | ((v >> 3) & 1));
     raw[i] = m_VGADCtrl.createRawPixel(c);
   }
 

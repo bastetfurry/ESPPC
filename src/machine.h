@@ -238,6 +238,10 @@ public:
   EGA * ega()                          { return &m_EGA; }
   uint8_t const * egaPalette() const   { return m_EGAACPalette; }
 
+  // The attribute controller's palette registers, for the BIOS palette calls (INT 10h AH=10h).
+  // value is 6 bit rgbRGB, as on the port.
+  void setEGAPaletteReg(int index, uint8_t value);
+
   // Enables the serial debug console (see serialdbg.h). Must be called before run(), and only
   // when COM1 is left unattached -- they share the same pins.
   void enableDebugConsole()            { m_debugConsoleRequested = true; }
@@ -303,6 +307,7 @@ private:
   void loadEGAFont(int charHeight);
   void setCGAMode();
   void setEGAAttributeReg(uint8_t value);
+  void setEGADefaultPalette(bool line200);
   uint8_t egaInputStatus1();
   void setCGA6845Register(uint8_t value);
 

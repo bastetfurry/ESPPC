@@ -21,11 +21,17 @@ import zlib
 import serial
 
 
-# An attribute picks a palette register, and the emulator renders that register's value through
-# EGADefaultPalette[value & 0x0f] (see GraphicsAdapter::setupEGALUT). Decode the same way, or a
-# dithered picture comes out looking like noise.
-def palette_entry(v):
-    return CGA16[v & 0x0f]
+# An attribute picks a palette register, and the emulator renders that register's 6 bit value the
+# way the monitor would (see GraphicsAdapter::setupEGALUT): in the 200 line modes bits 2-0 are
+# RGB and bit 4 intensity, in the 350 line modes it is rgbRGB, two thirds for the capitals and
+# one third for the rest. Decode the same way, or a dithered picture comes out looking like noise.
+def palette_entry(v, h=350):
+    if h <= 200:
+        return CGA16[(v & 0x07) | ((v >> 1) & 0x08)]
+    lvl = (0, 85, 170, 255)
+    return (lvl[((v >> 1) & 2) | ((v >> 5) & 1)],
+            lvl[(v & 2) | ((v >> 4) & 1)],
+            lvl[((v << 1) & 2) | ((v >> 3) & 1)])
 
 
 CGA16 = [(0, 0, 0), (0, 0, 170), (0, 170, 0), (0, 170, 170),
@@ -150,7 +156,7 @@ def main():
         return 1
 
     if fmt == 'ega':
-        pal = [palette_entry(int(palhex[i * 2:i * 2 + 2], 16)) for i in range(16)] if palhex \
+        pal = [palette_entry(int(palhex[i * 2:i * 2 + 2], 16), h) for i in range(16)] if palhex \
               else CGA16
         rows = decode_ega(data, w, h, stride, pal)
     elif fmt == 'hgc':

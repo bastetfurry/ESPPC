@@ -2276,11 +2276,25 @@ int10_get_vm:
 int10_palette:
   ; int 10, 10
   ; Supported functions:
+  ;   AL = 00 : set one EGA palette register            (emulator side)
+  ;   AL = 01 : set overscan register                   (emulator side)
+  ;   AL = 02 : set all EGA palette registers + overscan (emulator side)
+  ;   AL = 03 : toggle intensity/blink                  (emulator side)
   ;   AL = 10 : set DAC color register
   ;   AL = 12 : set block of DAC color registers
   ;   AL = 15 : get individual colour register
   ;   Al = 17 : get block of DAC colour registers
+  ;
+  ; AL = 00..03 are the EGA's own palette calls. Windows 3.0's EGA driver loads its palette with
+  ; AL = 02; ignoring it left the power-on palette in place, and since Windows numbers its colours
+  ; with red in bit 0 rather than blue, red and blue came out swapped.
 
+  cmp  al, 0x03
+  ja   int10_palette_dac
+  emu_video_handler
+  jmp  int10_palette_done
+
+int10_palette_dac:
   cmp  al, 0x10
   je   int10_palette_set1
   cmp  al, 0x12

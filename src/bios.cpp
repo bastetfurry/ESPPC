@@ -1393,6 +1393,38 @@ void BIOS::videoHandlerEntry()
       break;
     }
 
+    // EGA palette registers. The ROM side only forwards AL = 00..03 here; the DAC calls it
+    // handles itself.
+    case 0x10:
+      switch (i8086::AL()) {
+
+        // Set one palette register: BL = register, BH = 6 bit rgbRGB value
+        case 0x00:
+          if (i8086::BL() < 16)
+            m_machine->setEGAPaletteReg(i8086::BL(), i8086::BH());
+          break;
+
+        // Set the overscan (border) register. Nothing draws a border, so there is nothing to do.
+        case 0x01:
+          break;
+
+        // Set all sixteen palette registers and the overscan register from the 17 bytes at ES:DX
+        case 0x02:
+        {
+          uint32_t addr = ((uint32_t)i8086::ES() << 4) + i8086::DX();
+          for (int i = 0; i < 16; ++i)
+            m_machine->setEGAPaletteReg(i, m_memory[(addr + i) & 0xfffff]);
+          break;
+        }
+
+        // BL = 0: attribute bit 7 is background intensity, BL = 1: it blinks
+        case 0x03:
+          ga->setBit7Blink(i8086::BL() & 1);
+          break;
+
+      }
+      break;
+
     default:
       printf("unsupported INT 10h, AX = %04X\n", i8086::AX());
       break;
