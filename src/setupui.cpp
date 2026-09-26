@@ -853,22 +853,76 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
 // Advanced Settings, in the manner of an Award "Advanced BIOS Features" page
 
 
+namespace {
+
+// Time zones offered by name. The ESP32 wants POSIX TZ strings, which nobody should have to type;
+// "Custom..." is there for any zone not listed.
+struct TimeZone { char const * name; char const * tz; };
+TimeZone const TIME_ZONES[] = {
+  { "UTC",                              "UTC0" },
+  { "UK, Ireland, Portugal (GMT/BST)",  "GMT0BST,M3.5.0/1,M10.5.0" },
+  { "Central Europe (CET/CEST)",        "CET-1CEST,M3.5.0,M10.5.0/3" },
+  { "Eastern Europe (EET/EEST)",        "EET-2EEST,M3.5.0/3,M10.5.0/4" },
+  { "Moscow (MSK)",                     "MSK-3" },
+  { "India (IST)",                      "IST-5:30" },
+  { "China, Singapore (UTC+8)",         "CST-8" },
+  { "Japan, Korea (UTC+9)",             "JST-9" },
+  { "Australia East (AEST/AEDT)",       "AEST-10AEDT,M10.1.0,M4.1.0/3" },
+  { "New Zealand (NZST/NZDT)",          "NZST-12NZDT,M9.5.0,M4.1.0/3" },
+  { "Brazil, Sao Paulo (UTC-3)",        "<-03>3" },
+  { "US Eastern (EST/EDT)",             "EST5EDT,M3.2.0,M11.1.0" },
+  { "US Central (CST/CDT)",             "CST6CDT,M3.2.0,M11.1.0" },
+  { "US Mountain (MST/MDT)",            "MST7MDT,M3.2.0,M11.1.0" },
+  { "US Arizona (MST)",                 "MST7" },
+  { "US Pacific (PST/PDT)",             "PST8PDT,M3.2.0,M11.1.0" },
+};
+constexpr int TIME_ZONE_COUNT = sizeof(TIME_ZONES) / sizeof(TIME_ZONES[0]);
+
+// the listed zone for a TZ string, or -1 for a custom one
+int findTimeZone(char const * tz)
+{
+  for (int i = 0; i < TIME_ZONE_COUNT; ++i)
+    if (!strcmp(TIME_ZONES[i].tz, tz))
+      return i;
+  return -1;
+}
+
+void trimSpaces(char * buf)
+{
+  char * s = buf;
+  while (*s == ' ')
+    ++s;
+  char * e = s + strlen(s);
+  while (e > s && e[-1] == ' ')
+    *--e = 0;
+  memmove(buf, s, strlen(s) + 1);
+}
+
+}   // namespace
+
+
 bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
 {
+  enum class Kind { Text, TimeZone };
+
   struct Item {
     char const * label;
-    char *       value;         // text settings edit this buffer
+    Kind         kind;
+    char *       value;         // the setting's buffer, edited in place
     int          maxLength;
-    char const * whenEmpty;     // what an empty value means, shown in its place
+    char const * whenEmpty;     // what an empty value means
     char const * help;
   };
 
   HostSettings edit = settings;
 
   Item const ITEMS[] = {
-    { "NTP Server", edit.ntpServer, (int) sizeof(edit.ntpServer) - 1, HostSettings::DEFAULT_NTP_SERVER,
+    { "NTP Server", Kind::Text, edit.ntpServer, (int) sizeof(edit.ntpServer) - 1, HostSettings::DEFAULT_NTP_SERVER,
       "Time server asked for the date and time at a cold boot, when Wi-Fi is configured. Empty "
       "means pool.ntp.org. Takes effect at the next power on." },
+    { "Time Zone", Kind::TimeZone, edit.timeZone, (int) sizeof(edit.timeZone) - 1, HostSettings::DEFAULT_TIME_ZONE,
+      "Local time for the clock the guest sees, daylight saving included. Pick one, or Custom "
+      "for a POSIX TZ string such as CET-1CEST,M3.5.0,M10.5.0/3. Takes effect when saved." },
   };
   constexpr int COUNT = sizeof(ITEMS) / sizeof(ITEMS[0]);
 
@@ -892,13 +946,23 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
   while (true) {
 
     for (int i = 0; i < COUNT; ++i) {
+      char const * v = ITEMS[i].value[0] ? ITEMS[i].value : ITEMS[i].whenEmpty;
+      if (ITEMS[i].kind == Kind::TimeZone) {
+        int z = findTimeZone(v);
+        if (z >= 0)
+          v = TIME_ZONES[z].name;
+      }
       ui.text(2, 3 + i, ITEMS[i].label, TUI_SCREEN, 20);
       ui.text(22, 3 + i, "[", TUI_SCREEN);
-      ui.text(23, 3 + i, ITEMS[i].value[0] ? ITEMS[i].value : ITEMS[i].whenEmpty,
-              i == sel ? TUI_HILITE : TUI_LABEL, 26);
+      ui.text(23, 3 + i, v, i == sel ? TUI_HILITE : TUI_LABEL, 26);
       ui.text(49, 3 + i, "]", TUI_SCREEN);
     }
-    wrapText(ui, 54, 5, 24, 13, ITEMS[sel].help, TUI_SCREEN);
+    wrapText(ui, 54, 5, 24, 9, ITEMS[sel].help, TUI_SCREEN);
+    // the full value where the field is too short, and the TZ string behind a named zone
+    {
+      char const * v = ITEMS[sel].value[0] ? ITEMS[sel].value : ITEMS[sel].whenEmpty;
+      wrapText(ui, 54, 15, 24, 4, v, TUI_DIM);
+    }
 
     TextUI::Key k;
     ui.getKey(&k);
@@ -908,18 +972,32 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
     else if (k.vk == VirtualKey::VK_DOWN || k.vk == VirtualKey::VK_KP_DOWN)
       sel = imin(COUNT - 1, sel + 1);
     else if (isEnter(k.vk)) {
-      char buf[128];
-      strlcpy(buf, ITEMS[sel].value, sizeof(buf));
-      if (ui.textInput(ITEMS[sel].label, nullptr, buf, imin(ITEMS[sel].maxLength, (int) sizeof(buf) - 1))) {
-        // no spaces in a host name; a blank entry means the default
-        char * s = buf;
-        while (*s == ' ')
-          ++s;
-        char * e = s + strlen(s);
-        while (e > s && e[-1] == ' ')
-          *--e = 0;
-        strlcpy(ITEMS[sel].value, s, ITEMS[sel].maxLength + 1);
-        modified = true;
+      Item const & it = ITEMS[sel];
+      bool typeIt = (it.kind == Kind::Text);
+
+      if (it.kind == Kind::TimeZone) {
+        char const * names[TIME_ZONE_COUNT + 1];
+        for (int i = 0; i < TIME_ZONE_COUNT; ++i)
+          names[i] = TIME_ZONES[i].name;
+        names[TIME_ZONE_COUNT] = "Custom (POSIX TZ string)...";
+        int cur = findTimeZone(it.value[0] ? it.value : it.whenEmpty);
+        int s = ui.menu(it.label, nullptr, names, TIME_ZONE_COUNT + 1, cur >= 0 ? cur : TIME_ZONE_COUNT);
+        if (s >= 0 && s < TIME_ZONE_COUNT) {
+          strlcpy(it.value, TIME_ZONES[s].tz, it.maxLength + 1);
+          modified = true;
+        } else if (s == TIME_ZONE_COUNT)
+          typeIt = true;
+      }
+
+      if (typeIt) {
+        char buf[128];
+        strlcpy(buf, it.value[0] ? it.value : (it.kind == Kind::TimeZone ? it.whenEmpty : ""), sizeof(buf));
+        if (ui.textInput(it.label, it.kind == Kind::TimeZone ? "POSIX TZ string" : nullptr, buf,
+                         imin(it.maxLength, (int) sizeof(buf) - 1))) {
+          trimSpaces(buf);    // no spaces in a host name or a TZ string; blank means the default
+          strlcpy(it.value, buf, it.maxLength + 1);
+          modified = true;
+        }
       }
     } else if (k.vk == VirtualKey::VK_ESCAPE) {
       if (!modified || ui.message("Exit", "Quit without saving (Y/N)?", "No;Yes") == 1)

@@ -101,6 +101,14 @@ static bool wifiConnected = false;
 // pointer to the server name for as long as it runs.
 static HostSettings hostSettings;
 
+// The clock runs in UTC; the zone only decides how it reads locally, so it can change at any time.
+static void applyTimeZone()
+{
+  setenv("TZ", hostSettings.timeZone[0] ? hostSettings.timeZone : HostSettings::DEFAULT_TIME_ZONE, 1);
+  tzset();
+}
+
+
 static char const * ntpServer()
 {
   return hostSettings.ntpServer[0] ? hostSettings.ntpServer : HostSettings::DEFAULT_NTP_SERVER;
@@ -212,9 +220,7 @@ void shutdownHandler()
 
 void updateDateTime()
 {
-  // Set timezone
-  setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
-  tzset();
+  applyTimeZone();
 
   // get datetime from savedTimeValue? (noinit section)
   if (esp_reset_reason() == ESP_RST_SW) {
@@ -391,7 +397,7 @@ static void drawSetupFrame()
   // key help
   ui.frame(0, 20, 80, 5, TUI_SCREEN, true);
   ui.text(2, 21, "\x18\x19 PgUp PgDn : Select Machine      Enter : Boot        F4  : Browse Files", TUI_SCREEN);
-  ui.text(2, 22, "F2 : Edit     F3 : New     Del : Remove                        F5  : Advanced Settings", TUI_SCREEN);
+  ui.text(2, 22, "F2 : Edit     F3 : New     Del : Remove     F5  : Advanced Settings", TUI_SCREEN);
 }
 
 
@@ -700,6 +706,8 @@ void setup()
   // host settings, before anything that uses them (the clock is set during the POST below)
   if (preferences.isKey("NtpServer"))    // asking for a missing key logs an error at every boot
     preferences.getString("NtpServer", hostSettings.ntpServer, sizeof(hostSettings.ntpServer));
+  if (preferences.isKey("TimeZone"))
+    preferences.getString("TimeZone", hostSettings.timeZone, sizeof(hostSettings.timeZone));
 
   // The machine exists from here on so the setup screens can borrow its video adapter; nothing in
   // it runs until machine->run() below, and TextUI::end() hands the adapter back unconfigured.
@@ -795,8 +803,11 @@ void setup()
         break;
       }
       case SetupAction::Advanced:
-        if (setupAdvancedSettings(ui, hostSettings))
+        if (setupAdvancedSettings(ui, hostSettings)) {
           preferences.putString("NtpServer", hostSettings.ntpServer);
+          preferences.putString("TimeZone", hostSettings.timeZone);
+          applyTimeZone();
+        }
         break;
       case SetupAction::Files:
         setupFilesBrowser(ui, SD_MOUNT_PATH);
