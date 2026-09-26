@@ -228,12 +228,17 @@ void updateDateTime()
       sntp_setoperatingmode(SNTP_OPMODE_POLL);
       sntp_setservername(0, (char*)"pool.ntp.org");
       sntp_init();
-      for (int i = 0; i < 12 && sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED; ++i) {
+      // sntp_get_sync_status() reports COMPLETED once and then resets itself, so the answer has to
+      // be kept from the read that saw it; asking again afterwards always says it failed.
+      for (int i = 0; i < 12; ++i) {
+        if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+          synced = true;
+          break;
+        }
         if (!p.update(i * 100 / 12, "Getting date and time from pool.ntp.org..."))
           break;
         delay(500);
       }
-      synced = sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED;
       sntp_stop();
     });
     ui.postResult(synced ? "Synchronised with pool.ntp.org" : "No answer from pool.ntp.org",
