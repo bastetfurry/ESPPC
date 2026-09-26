@@ -425,7 +425,12 @@ bool BitmappedDisplayController::suspendDoubleBuffering(bool value)
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::resetPaintState()
+// PCEmulator: the primitive machinery below was IRAM_ATTR so FabGL's paletted VGA controllers could
+// run primitives from their interrupt. This build has none of those: the emulator drives the
+// output with VGADirectController, whose interrupt only calls the scanline renderer, and nothing
+// queues primitives since the text UI replaced FabGL's GUI. So it lives in flash, which frees
+// about 8 KB of IRAM. Put IRAM_ATTR back if a paletted controller is ever used again.
+void BitmappedDisplayController::resetPaintState()
 {
   m_paintState.penColor              = RGB888(255, 255, 255);
   m_paintState.brushColor            = RGB888(0, 0, 0);
@@ -489,7 +494,7 @@ void BitmappedDisplayController::primitiveReplaceDynamicBuffers(Primitive & prim
 
 
 // call this only inside an ISR
-bool IRAM_ATTR BitmappedDisplayController::getPrimitiveISR(Primitive * primitive)
+bool BitmappedDisplayController::getPrimitiveISR(Primitive * primitive)
 {
   return xQueueReceiveFromISR(m_execQueue, primitive, nullptr);
 }
@@ -537,7 +542,7 @@ void BitmappedDisplayController::enableBackgroundPrimitiveExecution(bool value)
 
 // Use for fast queue processing. Warning, may generate flickering because don't care of vertical sync
 // Do not call inside ISR
-void IRAM_ATTR BitmappedDisplayController::processPrimitives()
+void BitmappedDisplayController::processPrimitives()
 {
   suspendBackgroundPrimitiveExecution();
   Rect updateRect = Rect(SHRT_MAX, SHRT_MAX, SHRT_MIN, SHRT_MIN);
@@ -574,7 +579,7 @@ void BitmappedDisplayController::setSprites(Sprite * sprites, int count, int spr
 }
 
 
-Sprite * IRAM_ATTR BitmappedDisplayController::getSprite(int index)
+Sprite * BitmappedDisplayController::getSprite(int index)
 {
   return (Sprite*) ((uint8_t*)m_sprites + index * m_spriteSize);
 }
@@ -587,7 +592,7 @@ void BitmappedDisplayController::refreshSprites()
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::hideSprites(Rect & updateRect)
+void BitmappedDisplayController::hideSprites(Rect & updateRect)
 {
   if (!m_spritesHidden) {
     m_spritesHidden = true;
@@ -627,7 +632,7 @@ void IRAM_ATTR BitmappedDisplayController::hideSprites(Rect & updateRect)
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::showSprites(Rect & updateRect)
+void BitmappedDisplayController::showSprites(Rect & updateRect)
 {
   if (m_spritesHidden) {
     m_spritesHidden = false;
@@ -715,7 +720,7 @@ void BitmappedDisplayController::setMouseCursorPos(int X, int Y)
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::execPrimitive(Primitive const & prim, Rect & updateRect, bool insideISR)
+void BitmappedDisplayController::execPrimitive(Primitive const & prim, Rect & updateRect, bool insideISR)
 {
   switch (prim.cmd) {
     case PrimitiveCmd::Flush:
@@ -832,19 +837,19 @@ void IRAM_ATTR BitmappedDisplayController::execPrimitive(Primitive const & prim,
 }
 
 
-RGB888 IRAM_ATTR BitmappedDisplayController::getActualBrushColor()
+RGB888 BitmappedDisplayController::getActualBrushColor()
 {
   return paintState().paintOptions.swapFGBG ? paintState().penColor : paintState().brushColor;
 }
 
 
-RGB888 IRAM_ATTR BitmappedDisplayController::getActualPenColor()
+RGB888 BitmappedDisplayController::getActualPenColor()
 {
   return paintState().paintOptions.swapFGBG ? paintState().brushColor : paintState().penColor;
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::lineTo(Point const & position, Rect & updateRect)
+void BitmappedDisplayController::lineTo(Point const & position, Rect & updateRect)
 {
   RGB888 color = getActualPenColor();
 
@@ -864,7 +869,7 @@ void IRAM_ATTR BitmappedDisplayController::lineTo(Point const & position, Rect &
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::updateAbsoluteClippingRect()
+void BitmappedDisplayController::updateAbsoluteClippingRect()
 {
   int X1 = iclamp(paintState().origin.X + paintState().clippingRect.X1, 0, getViewPortWidth() - 1);
   int Y1 = iclamp(paintState().origin.Y + paintState().clippingRect.Y1, 0, getViewPortHeight() - 1);
@@ -874,7 +879,7 @@ void IRAM_ATTR BitmappedDisplayController::updateAbsoluteClippingRect()
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::drawRect(Rect const & rect, Rect & updateRect)
+void BitmappedDisplayController::drawRect(Rect const & rect, Rect & updateRect)
 {
   int x1 = (rect.X1 < rect.X2 ? rect.X1 : rect.X2) + paintState().origin.X;
   int y1 = (rect.Y1 < rect.Y2 ? rect.Y1 : rect.Y2) + paintState().origin.Y;
@@ -893,7 +898,7 @@ void IRAM_ATTR BitmappedDisplayController::drawRect(Rect const & rect, Rect & up
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::fillRect(Rect const & rect, RGB888 const & color, Rect & updateRect)
+void BitmappedDisplayController::fillRect(Rect const & rect, RGB888 const & color, Rect & updateRect)
 {
   int x1 = (rect.X1 < rect.X2 ? rect.X1 : rect.X2) + paintState().origin.X;
   int y1 = (rect.Y1 < rect.Y2 ? rect.Y1 : rect.Y2) + paintState().origin.Y;
@@ -922,7 +927,7 @@ void IRAM_ATTR BitmappedDisplayController::fillRect(Rect const & rect, RGB888 co
 
 
 // McIlroy's algorithm
-void IRAM_ATTR BitmappedDisplayController::fillEllipse(int centerX, int centerY, Size const & size, RGB888 const & color, Rect & updateRect)
+void BitmappedDisplayController::fillEllipse(int centerX, int centerY, Size const & size, RGB888 const & color, Rect & updateRect)
 {
   const int clipX1 = paintState().absClippingRect.X1;
   const int clipY1 = paintState().absClippingRect.Y1;
@@ -985,7 +990,7 @@ void IRAM_ATTR BitmappedDisplayController::fillEllipse(int centerX, int centerY,
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::renderGlyphsBuffer(GlyphsBufferRenderInfo const & glyphsBufferRenderInfo, Rect & updateRect)
+void BitmappedDisplayController::renderGlyphsBuffer(GlyphsBufferRenderInfo const & glyphsBufferRenderInfo, Rect & updateRect)
 {
   int itemX = glyphsBufferRenderInfo.itemX;
   int itemY = glyphsBufferRenderInfo.itemY;
@@ -1010,7 +1015,7 @@ void IRAM_ATTR BitmappedDisplayController::renderGlyphsBuffer(GlyphsBufferRender
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::drawPath(Path const & path, Rect & updateRect)
+void BitmappedDisplayController::drawPath(Path const & path, Rect & updateRect)
 {
   RGB888 color = getActualPenColor();
 
@@ -1059,7 +1064,7 @@ void IRAM_ATTR BitmappedDisplayController::drawPath(Path const & path, Rect & up
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::fillPath(Path const & path, RGB888 const & color, Rect & updateRect)
+void BitmappedDisplayController::fillPath(Path const & path, RGB888 const & color, Rect & updateRect)
 {
   const int clipX1 = paintState().absClippingRect.X1;
   const int clipY1 = paintState().absClippingRect.Y1;
@@ -1133,7 +1138,7 @@ void IRAM_ATTR BitmappedDisplayController::fillPath(Path const & path, RGB888 co
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::absDrawThickLine(int X1, int Y1, int X2, int Y2, int penWidth, RGB888 const & color)
+void BitmappedDisplayController::absDrawThickLine(int X1, int Y1, int X2, int Y2, int penWidth, RGB888 const & color)
 {
   // just to "de-absolutize"
   const int origX = paintState().origin.X;
@@ -1177,7 +1182,7 @@ void IRAM_ATTR BitmappedDisplayController::absDrawThickLine(int X1, int Y1, int 
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::drawBitmap(BitmapDrawingInfo const & bitmapDrawingInfo, Rect & updateRect)
+void BitmappedDisplayController::drawBitmap(BitmapDrawingInfo const & bitmapDrawingInfo, Rect & updateRect)
 {
   int x = bitmapDrawingInfo.X + paintState().origin.X;
   int y = bitmapDrawingInfo.Y + paintState().origin.Y;
@@ -1187,7 +1192,7 @@ void IRAM_ATTR BitmappedDisplayController::drawBitmap(BitmapDrawingInfo const & 
 }
 
 
-void IRAM_ATTR BitmappedDisplayController::absDrawBitmap(int destX, int destY, Bitmap const * bitmap, void * saveBackground, bool ignoreClippingRect)
+void BitmappedDisplayController::absDrawBitmap(int destX, int destY, Bitmap const * bitmap, void * saveBackground, bool ignoreClippingRect)
 {
   const int clipX1 = ignoreClippingRect ? 0 : paintState().absClippingRect.X1;
   const int clipY1 = ignoreClippingRect ? 0 : paintState().absClippingRect.Y1;
