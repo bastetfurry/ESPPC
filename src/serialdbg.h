@@ -79,6 +79,7 @@ private:
   void cmdFind(char const * args);
   void cmdScreenshot();
   void cmdVideoState();
+  void cmdHeapMap();
   void cmdWriteReg(char const * args);
   void cmdInjectKey(char const * args);
   void cmdUsbSerial(char const * args);

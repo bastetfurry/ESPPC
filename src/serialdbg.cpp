@@ -9,6 +9,7 @@
 #include <stdlib.h>
 
 #include "fabgl.h"
+#include "esp_heap_caps.h"
 
 #include "machine.h"
 #include "bios.h"
@@ -555,6 +556,7 @@ void SerialDebug::help()
   write("  f bb bb ..        search conventional memory for a byte sequence\r\n");
   write("  p                 dump the framebuffer as a binary stream\r\n");
   write("  v                 report what the video side is driving\r\n");
+  write("  h                 heap map: every RAM region, free, largest block, low water\r\n");
   write("  b [addr]          one-shot breakpoint on a linear address (no addr clears)\r\n");
   write("  x addr len        stream guest memory as raw binary\r\n");
   write("  i port            read an I/O port\r\n");
@@ -820,6 +822,33 @@ void SerialDebug::cmdExport(char const * args)
   }
 
   write("\r\nEXPORTEND\r\n");
+}
+
+
+// h -- the allocator's own view of every region it manages. MALLOC_CAP_32BIT covers them all:
+// the byte-addressable DRAM regions and the leftover IRAM that is only usable for aligned 32 bit
+// data. PSRAM is not in the heap on this machine (see setup()), so it does not appear. The
+// "minimum free" column is the low water mark since boot, which shows how close a region has come
+// to running out even when it looks roomy now.
+void SerialDebug::cmdHeapMap()
+{
+  write("internal 8 bit  ");
+  writeFmt("free %u, largest %u, low water %u\r\n",
+           (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+           (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+           (unsigned) heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  write("dma capable     ");
+  writeFmt("free %u, largest %u\r\n",
+           (unsigned) heap_caps_get_free_size(MALLOC_CAP_DMA),
+           (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+  write("32 bit only     ");
+  writeFmt("free %u  (IRAM leftovers, aligned word access only; the 0x4008/0x4009 region below)\r\n",
+           (unsigned)(heap_caps_get_free_size(MALLOC_CAP_32BIT) - heap_caps_get_free_size(MALLOC_CAP_8BIT)));
+  write("--- per region (ESP-IDF heap_caps_print_heap_info) ---\r\n");
+  fflush(stdout);
+  heap_caps_print_heap_info(MALLOC_CAP_32BIT);
+  fflush(stdout);
+  write("--- end ---\r\n");
 }
 
 
@@ -1151,6 +1180,7 @@ void SerialDebug::runMonitor()
       case 'f': cmdFind(p);      break;
       case 'p': cmdScreenshot(); break;
       case 'v': cmdVideoState(); break;
+      case 'h': cmdHeapMap();    break;
       case 'w': cmdWriteReg(p);  break;
       case 'k': cmdInjectKey(p); break;
       case 'l': cmdLoad(p);      break;
