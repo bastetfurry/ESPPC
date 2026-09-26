@@ -435,6 +435,7 @@ private:
   uint8_t                  m_EGAACPalette[16];
   uint8_t                  m_EGAACColorPlaneEnable;  // AC register 0x12, incl. the status mux
   uint32_t                 m_EGAFramePos;            // raster position, in status register reads
+  int64_t                  m_EGARetraceUs;           // esp_timer time the last vertical retrace began
   uint32_t *               m_EGAPark;                // planes parked in PSRAM, null when resident
   int                      m_EGAParkBanks;           // how many banks the mode addressed when parked
   int                      m_EGAStride;              // byte-columns per scanline, to re-register

@@ -25,6 +25,7 @@
 
 
 #include "machine.h"
+#include "esp_timer.h"
 
 #include <stdio.h>
 #include <ctype.h>
@@ -113,6 +114,7 @@ Machine::Machine() :
     m_EGAMiscOutput(0),
     m_EGAACColorPlaneEnable(0x0f),
     m_EGAFramePos(0),
+    m_EGARetraceUs(0),
     m_EGAPark(nullptr),
     m_EGAParkBanks(0),
     m_EGAStride(80),
@@ -1137,23 +1139,37 @@ uint8_t Machine::egaInputStatus1()
   // produce a specific count, so the position is modelled: each scanline is one read with display
   // enable low followed by one read with it high, and a retrace block closes the frame. Because
   // the BIOS syncs on retrace first, counting always starts at line 0 and lands on 350.
-  // A scanline is presented as several "display active" reads followed by one blanking read. The
-  // BIOS counts one line per active-to-blanking edge, so the number of active reads does not
-  // change the count, but it does change how long a frame takes. That matters: after counting the
-  // lines the BIOS reads PIT counter 0 and requires the frame to have taken between 15263 and
-  // 24403 ticks, roughly 49 to 78 Hz. Measured on this board: two reads per line gave 10089 ticks
-  // and four gave 14579, so a line costs about 16 ticks of loop overhead plus 6.4 per read. Six
-  // reads lands near 19000, comfortably in the middle of the window rather than against an edge,
-  // which leaves room for the emulator running a little faster or slower than it does today.
+  // A scanline is presented as a "display active" read followed by a blanking read, and the BIOS
+  // counts one line per active-to-blanking edge.
+  //
+  // The frame's duration is a separate matter. After counting the lines the BIOS reads PIT counter
+  // 0 and requires the frame, retrace to retrace, to have taken between 15263 and 24403 ticks,
+  // roughly 49 to 78 Hz. That used to come out of the number of reads per line, tuned against how
+  // fast the emulator happened to run: six reads gave about 19000 ticks on a DIO flash build. It
+  // was fragile. The QIO build and later code layout changes moved it past the edge of the window
+  // and the ROM beeped 1 long 3 short (error 7) again. So the lines are now presented quickly, and
+  // the bottom border is held -- blanked, but not yet retrace -- until a real 60 Hz frame has passed
+  // since the last retrace began. The ROM then measures about 19900 ticks on any build, and
+  // software waiting for vertical retrace gets real 60 Hz pacing as well.
   //
   // The "+ 1" is the read that observes the end of retrace: the BIOS spends one query noticing
   // retrace has finished before it starts counting, so without that slot the pairing shifts and
   // it counts one line short (349 instead of 350, which is what it first complained about).
-  const uint32_t readsPerLine = 6;
+  const uint32_t readsPerLine = 2;
   const uint32_t activeReads  = EGA_POST_SCANLINES * readsPerLine + 1;
   const uint32_t frameReads   = activeReads + 4;  // a retrace long enough to be seen
+  const int64_t  frameUs      = 16683;            // 59.94 Hz, as the ESP32's own VGA output
 
-  uint32_t pos  = m_EGAFramePos;
+  uint32_t pos = m_EGAFramePos;
+
+  if (pos == activeReads) {
+    // bottom border: hold here until the frame has lasted as long as a real one
+    int64_t now = esp_timer_get_time();
+    if (now - m_EGARetraceUs < frameUs)
+      return 0x01;
+    m_EGARetraceUs = now;                         // retrace starts with this read
+  }
+
   m_EGAFramePos = (pos + 1) % frameReads;
 
   uint8_t status;
