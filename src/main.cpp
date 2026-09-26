@@ -57,6 +57,8 @@ extern "C" {
 
 #include "mconf.h"
 #include "machine.h"
+#include "textui.h"
+#include "setupui.h"
 
 
 
@@ -87,7 +89,8 @@ void loop();
 
 
 Preferences   preferences;
-InputBox      ibox;
+InputBox      ibox;      // the SysReq menu, until it moves to text
+TextUI        ui;
 Machine     * machine;
 
 
@@ -107,10 +110,13 @@ bool tryToConnect()
     char SSID[32] = "";
     char psw[32]  = "";
     if (preferences.getString("SSID", SSID, sizeof(SSID)) && preferences.getString("WiFiPsw", psw, sizeof(psw))) {
-      ibox.progressBox("", "Abort", true, 200, [&](fabgl::ProgressForm * form) {
+      char label[48];
+      snprintf(label, sizeof(label), "Wi-Fi %s", SSID);
+      ui.postItem(label);
+      ui.progress("Wi-Fi", true, [&](TextUI::Progress & p) {
         WiFi.begin(SSID, psw);
         for (int i = 0; i < 32 && WiFi.status() != WL_CONNECTED; ++i) {
-          if (!form->update(i * 100 / 32, "Connecting to %s...", SSID))
+          if (!p.update(i * 100 / 32, "Connecting to %s...", SSID))
             break;
           delay(500);
           if (i == 16)
@@ -118,10 +124,11 @@ bool tryToConnect()
         }
         connected = (WiFi.status() == WL_CONNECTED);
       });
-      // show to user the connection state
-      if (!connected) {
+      if (connected) {
+        ui.postResult(WiFi.localIP().toString().c_str(), TUI_POST_OK);
+      } else {
         WiFi.disconnect();
-        ibox.message("", "WiFi Connection failed!");
+        ui.postResult("Failed", TUI_POST_FAIL);
       }
     }
   }
@@ -135,46 +142,46 @@ bool checkWiFi()
   if (!wifiConnected) {
 
     // configure WiFi?
-    if (ibox.message("WiFi Configuration", "Configure WiFi?", "No", "Yes") == InputResult::Enter) {
+    if (ui.message("Wi-Fi Configuration", "Configure Wi-Fi now?", "No;Yes") == 1) {
 
       // repeat until connected or until user cancels
       do {
 
-        // yes, scan for networks showing a progress dialog box
+        // scan for networks
         int networksCount = 0;
-        ibox.progressBox("", nullptr, false, 200, [&](fabgl::ProgressForm * form) {
-          form->update(0, "Scanning WiFi networks...");
+        ui.progress("Wi-Fi", false, [&](TextUI::Progress & p) {
+          p.update(0, "Scanning Wi-Fi networks...");
           networksCount = WiFi.scanNetworks();
+          p.update(100, "Scanning Wi-Fi networks...");
         });
 
-        // are there available WiFi?
         if (networksCount > 0) {
 
-          // yes, show a selectable list
-          StringList list;
-          for (int i = 0; i < networksCount; ++i)
-            list.appendFmt("%s (%d dBm)", WiFi.SSID(i).c_str(), WiFi.RSSI(i));
-          int s = ibox.menu("WiFi Configuration", "Please select a WiFi network", &list);
+          // one line per network, kept alive until the menu is done with them
+          char (*lines)[48] = (char (*)[48]) malloc(networksCount * 48);
+          char const ** items = (char const **) malloc(networksCount * sizeof(char const *));
+          for (int i = 0; i < networksCount; ++i) {
+            snprintf(lines[i], 48, "%-32.32s %4d dBm", WiFi.SSID(i).c_str(), WiFi.RSSI(i));
+            items[i] = lines[i];
+          }
+          int s = ui.menu("Wi-Fi Configuration", "Select a network", items, networksCount);
+          free(items);
+          free(lines);
 
-          // user selected something?
           if (s > -1) {
-            // yes, ask for WiFi password
             char psw[32] = "";
-            if (ibox.textInput("WiFi Configuration", "Insert WiFi password", psw, 31, "Cancel", "OK", true) == InputResult::Enter) {
-              // user pressed OK, connect to WiFi...
+            if (ui.textInput("Wi-Fi Configuration", "Password", psw, 31, true)) {
               preferences.putString("SSID", WiFi.SSID(s).c_str());
               preferences.putString("WiFiPsw", psw);
               wifiConnected = tryToConnect();
-              // show to user the connection state
               if (wifiConnected)
-                ibox.message("", "Connection succeeded!");
+                ui.message("Wi-Fi", "Connection succeeded.");
             } else
               break;
           } else
             break;
         } else {
-          // there is no WiFi
-          ibox.message("", "No WiFi network found!");
+          ui.message("Wi-Fi", "No Wi-Fi network found.");
           break;
         }
         WiFi.scanDelete();
@@ -210,27 +217,36 @@ void updateDateTime()
     savedTimeValue.tv_sec  += savedTimeValue.tv_usec / 1000000;
     savedTimeValue.tv_usec %= 1000000;
     settimeofday(&savedTimeValue, nullptr);
+    ui.postItem("Real Time Clock");
+    ui.postResult("Kept across restart", TUI_POST_OK);
     return;
   }
 
   if (checkWiFi()) {
 
     // we need time right now
-    ibox.progressBox("", nullptr, true, 200, [&](fabgl::ProgressForm * form) {
+    ui.postItem("Real Time Clock");
+    bool synced = false;
+    ui.progress("Date and Time", true, [&](TextUI::Progress & p) {
       sntp_setoperatingmode(SNTP_OPMODE_POLL);
       sntp_setservername(0, (char*)"pool.ntp.org");
       sntp_init();
       for (int i = 0; i < 12 && sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED; ++i) {
-        form->update(i * 100 / 12, "Getting date-time from SNTP...");
+        if (!p.update(i * 100 / 12, "Getting date and time from pool.ntp.org..."))
+          break;
         delay(500);
       }
+      synced = sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED;
       sntp_stop();
-      ibox.setAutoOK(2);
-      ibox.message("", "Date and Time updated. Restarting...");
-      #ifndef FABGL_EMULATED
-      esp_restart();
-      #endif
     });
+    ui.postResult(synced ? "Synchronised with pool.ntp.org" : "No answer from pool.ntp.org",
+                  synced ? TUI_POST_OK : TUI_POST_FAIL);
+    // restart either way: the Wi-Fi stack is only fully gone after a reset, and the saved time
+    // carries over it (see shutdownHandler())
+    ui.message(nullptr, "Date and time updated.\nRestarting...", "OK", 2);
+    #ifndef FABGL_EMULATED
+    esp_restart();
+    #endif
 
   } else {
 
@@ -238,6 +254,8 @@ void updateDateTime()
     auto tm = (struct tm){ .tm_sec  = 0, .tm_min  = 0, .tm_hour = 8, .tm_mday = 14, .tm_mon  = 7, .tm_year = 84 };
     auto now = (timeval){ .tv_sec = mktime(&tm) };
     settimeofday(&now, nullptr);
+    ui.postItem("Real Time Clock");
+    ui.postResult("Not set, using 14 Aug 1984", TUI_POST_NOTE);
 
   }
 }
@@ -250,8 +268,8 @@ bool downloadURL(char const * URL, FILE * file)
 
   char const * filename = strrchr(URL, '/') + 1;
 
-  ibox.progressBox("", "Abort", true, 380, [&](fabgl::ProgressForm * form) {
-    form->update(0, "Preparing to download %s", filename);
+  ui.progress("Download", true, [&](TextUI::Progress & p) {
+    p.update(0, "Preparing to download %s", filename);
     HTTPClient http;
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.begin(URL);
@@ -275,7 +293,7 @@ bool downloadURL(char const * URL, FILE * file)
             dsize += c;
             if (len > 0)
               len -= c;
-            if (!form->update((int64_t)dsize * 100 / tlen, "Downloading %s (%.2f / %.2f MB)", filename, (double)dsize / 1048576.0, tlen / 1048576.0))
+            if (!p.update(tlen > 0 ? (int)((int64_t)dsize * 100 / tlen) : 0, "%s  %.2f / %.2f MB", filename, (double)dsize / 1048576.0, tlen / 1048576.0))
               break;
           }
         }
@@ -329,6 +347,165 @@ char const * getDisk(char const * url)
 
 
 // user pressed SYSREQ (ALT + PRINTSCREEN)
+// What the machine selection screen asks the caller to do next.
+enum class SetupAction { Boot, Edit, New, Remove, Files };
+
+
+// last path component of a disk entry, which is what fits in the details panel
+static char const * diskName(char const * path)
+{
+  if (!path || !path[0])
+    return "None";
+  char const * s = strrchr(path, '/');
+  return s && s[1] ? s + 1 : path;
+}
+
+
+static void drawSetupFrame()
+{
+  ui.clear(TUI_SCREEN);
+  ui.centre(0, "ESP32 PC Emulator Setup Utility", TUI_SCREEN);
+  ui.centre(1, "Machine Configurations", TUI_LABEL);
+
+  // main area: list on the left, details on the right, joined by a single line divider
+  ui.frame(0, 2, 80, 18, TUI_SCREEN, true);
+  for (int y = 3; y < 19; ++y)
+    ui.put(47, y, 0xB3, TUI_SCREEN);
+  ui.put(47, 2, 0xD1, TUI_SCREEN);
+  ui.put(47, 19, 0xCF, TUI_SCREEN);
+
+  // key help
+  ui.frame(0, 20, 80, 5, TUI_SCREEN, true);
+  ui.text(2, 21, "\x18\x19 PgUp PgDn : Select Machine      Enter : Boot        F4  : Browse Files", TUI_SCREEN);
+  ui.text(2, 22, "F2 : Edit     F3 : New     Del : Remove", TUI_SCREEN);
+}
+
+
+static void drawSetupDetails(MachineConfItem * c)
+{
+  static char const * VIDEO[] = { "CGA / Hercules", "EGA" };
+  static char const * USB[]   = { "Off", "COM1", "COM2" };
+
+  for (int y = 3; y < 19; ++y)
+    ui.text(48, y, "", TUI_SCREEN, 31);
+  if (!c)
+    return;
+
+  ui.text(49, 3, "Machine Details", TUI_LABEL);
+  char const * label[] = { "Floppy A", "Floppy B", "Hard Disk 0", "Hard Disk 1" };
+  for (int i = 0; i < DISKCOUNT; ++i) {
+    ui.text(49, 5 + i, label[i], TUI_LABEL);
+    ui.text(61, 5 + i, diskName(c->disk[i]), TUI_VALUE, 17);
+  }
+  ui.text(49, 10, "Boot From", TUI_LABEL);
+  ui.text(61, 10, MachineConfItem::driveIndexToStr(c->bootDrive), TUI_VALUE);
+  ui.text(49, 11, "Memory", TUI_LABEL);
+  ui.textf(61, 11, TUI_VALUE, "%d KB", c->ramSizeKB);
+  ui.text(49, 12, "Video", TUI_LABEL);
+  ui.text(61, 12, VIDEO[c->videoAdapter ? 1 : 0], TUI_VALUE);
+  ui.text(49, 13, "Debug Cons.", TUI_LABEL);
+  ui.text(61, 13, c->debugConsole ? "Enabled" : "Disabled", TUI_VALUE);
+  ui.text(49, 14, "USB Serial", TUI_LABEL);
+  ui.text(61, 14, USB[c->effectiveUsbSerial() % 3], TUI_VALUE);
+
+  // a disk given as a URL is fetched on boot if the SD card does not have it yet
+  for (int i = 0; i < DISKCOUNT; ++i)
+    if (c->disk[i] && (!strncmp(c->disk[i], "http://", 7) || !strncmp(c->disk[i], "https://", 8))) {
+      ui.text(49, 17, "Downloads missing disks", TUI_DIM);
+      break;
+    }
+}
+
+
+// The selection screen. countdown > 0 boots the highlighted machine after that many seconds
+// unless a key is pressed first, as the old InputBox did with setAutoOK().
+static SetupAction selectMachine(MachineConf & mconf, int & idx, int countdown)
+{
+  int count = 0;
+  for (auto c = mconf.getFirstItem(); c; c = c->next)
+    ++count;
+
+  drawSetupFrame();
+
+  constexpr int LISTTOP  = 3;
+  constexpr int LISTROWS = 16;
+  idx = count ? fabgl::imax(0, fabgl::imin(idx, count - 1)) : 0;
+  int scroll = fabgl::imax(0, idx - LISTROWS + 1);
+
+  int64_t deadline = countdown > 0 ? esp_timer_get_time() + (int64_t) countdown * 1000000 : -1;
+
+  while (true) {
+
+    // list
+    for (int r = 0; r < LISTROWS; ++r) {
+      int i = scroll + r;
+      auto c = mconf.getItem(i);
+      bool sel = (i == idx) && c;
+      ui.text(1, LISTTOP + r, "", sel ? TUI_HILITE : TUI_SCREEN, 46);
+      if (c && i < count)
+        ui.text(3, LISTTOP + r, c->desc, sel ? TUI_HILITE : TUI_LABEL, 43);
+    }
+    ui.put(46, LISTTOP, scroll > 0 ? 0x1E : ' ', TUI_SCREEN);
+    ui.put(46, LISTTOP + LISTROWS - 1, scroll + LISTROWS < count ? 0x1F : ' ', TUI_SCREEN);
+    drawSetupDetails(mconf.getItem(idx));
+
+    // status line: countdown, or the clock
+    char status[80];
+    if (deadline >= 0) {
+      int left = (int)((deadline - esp_timer_get_time() + 999999) / 1000000);
+      snprintf(status, sizeof(status), "Booting in %d s, press any key to stop the countdown", fabgl::imax(left, 0));
+    } else {
+      time_t now = time(nullptr);
+      strftime(status, sizeof(status), "%a %d %b %Y  %H:%M", localtime(&now));
+    }
+    ui.text(2, 23, status, deadline >= 0 ? TUI_LABEL : TUI_SCREEN, 76);
+
+    TextUI::Key k;
+    if (!ui.getKey(&k, 250)) {
+      if (deadline >= 0 && esp_timer_get_time() >= deadline && count)
+        return SetupAction::Boot;
+      continue;
+    }
+    deadline = -1;
+
+    switch (k.vk) {
+      case VirtualKey::VK_UP:       case VirtualKey::VK_KP_UP:       idx = fabgl::imax(0, idx - 1); break;
+      case VirtualKey::VK_DOWN:     case VirtualKey::VK_KP_DOWN:     idx = fabgl::imin(count - 1, idx + 1); break;
+      case VirtualKey::VK_PAGEUP:   case VirtualKey::VK_KP_PAGEUP:   idx = fabgl::imax(0, idx - LISTROWS); break;
+      case VirtualKey::VK_PAGEDOWN: case VirtualKey::VK_KP_PAGEDOWN: idx = fabgl::imin(count - 1, idx + LISTROWS); break;
+      case VirtualKey::VK_HOME:     case VirtualKey::VK_KP_HOME:     idx = 0; break;
+      case VirtualKey::VK_END:      case VirtualKey::VK_KP_END:      idx = count - 1; break;
+      case VirtualKey::VK_RETURN:   case VirtualKey::VK_KP_ENTER:
+        if (count)
+          return SetupAction::Boot;
+        break;
+      case VirtualKey::VK_F2:       if (count) return SetupAction::Edit; break;
+      case VirtualKey::VK_F3:       return SetupAction::New;
+      case VirtualKey::VK_DELETE:   case VirtualKey::VK_KP_DELETE:
+        if (count) return SetupAction::Remove;
+        break;
+      case VirtualKey::VK_F4:       return SetupAction::Files;
+      default:                      break;
+    }
+    idx = fabgl::imax(0, idx);
+    if (idx < scroll)
+      scroll = idx;
+    else if (idx >= scroll + LISTROWS)
+      scroll = idx - LISTROWS + 1;
+  }
+}
+
+
+// Stops for good with a message on screen; used where the old code showed an InputBox without
+// buttons, which never returned either.
+static void fatal(char const * text)
+{
+  ui.message("Error", text, nullptr);
+  while (true)
+    delay(1000);
+}
+
+
 void sysReqCallback()
 {
   machine->graphicsAdapter()->enableVideo(false);
@@ -459,37 +636,55 @@ void setup()
 
   preferences.begin("PCEmulator", false);
 
-  // uncomment to clear preferences
-  //preferences.clear();
-  
-  // save some space reducing UI queue
+  // save some space reducing the UI queue of the FabGL dialogs that are still in use
   fabgl::BitmappedDisplayController::queueSize = 128;
 
-  ibox.begin(VGA_640x480_60Hz, 500, 400, 4);
-  ibox.setBackgroundColor(RGB888(0, 0, 0));
+  // uncomment to clear preferences
+  //preferences.clear();
 
-  ibox.onPaint = [&](Canvas * canvas) { drawInfo(canvas); };
+  // The machine exists from here on so the setup screens can borrow its video adapter; nothing in
+  // it runs until machine->run() below, and TextUI::end() hands the adapter back unconfigured.
+  machine = new Machine;
+
+  ui.begin(machine->graphicsAdapter());
+  ui.postBegin();
 
   // we need PSRAM for this app, but we will handle it manually, so please DO NOT enable PSRAM on your development env
   #ifdef BOARD_HAS_PSRAM
-  ibox.message("Warning!", "Please disable PSRAM to improve performance!");
+  ui.message("Warning", "Please disable PSRAM to improve performance!");
   #endif
 
   // note: we use just 2MB of PSRAM so the infamous PSRAM bug should not happen. But to avoid gcc compiler hack (-mfix-esp32-psram-cache-issue)
   // we enable PSRAM at runtime, otherwise the hack slows down CPU too much (PSRAM_HACK is no more required).
-  if (esp_spiram_init() != ESP_OK)
-    ibox.message("Error!", "This app requires a board with PSRAM!", nullptr, nullptr);
+  ui.postItem("PSRAM");
+  if (esp_spiram_init() != ESP_OK) {
+    ui.postResult("Not found", TUI_POST_FAIL);
+    fatal("This app requires a board with PSRAM!");
+  }
 
   #ifndef BOARD_HAS_PSRAM
   esp_spiram_init_cache();
   #endif
+  {
+    char r[32];
+    snprintf(r, sizeof(r), "%u KB OK", (unsigned)(esp_spiram_get_size() / 1024));
+    ui.postResult(r, TUI_POST_OK);
+  }
 
-  if (!FileBrowser::mountSDCard(false, SD_MOUNT_PATH, 8))   // @TODO: reduce to 4?
-    ibox.message("Error!", "This app requires a SD-CARD!", nullptr, nullptr);
+  ui.postItem("SD Card");
+  if (!FileBrowser::mountSDCard(false, SD_MOUNT_PATH, 8)) {  // @TODO: reduce to 4?
+    ui.postResult("Not found", TUI_POST_FAIL);
+    fatal("This app requires an SD card!");
+  }
+  ui.postResult("Mounted", TUI_POST_OK);
 
   // Mount the on-flash SPIFFS partition, which can hold a disk image (see data/ and
   // "pio run -t uploadfs"). Not fatal if it fails: it only means no flash-resident disks.
-  FileBrowser::mountSPIFFS(false, SPIFFS_MOUNT_PATH);
+  ui.postItem("Flash File System");
+  if (FileBrowser::mountSPIFFS(false, SPIFFS_MOUNT_PATH))
+    ui.postResult("Mounted", TUI_POST_OK);
+  else
+    ui.postResult("Not present", TUI_POST_NOTE);
 
   // uncomment to format SD!
   //FileBrowser::format(fabgl::DriveType::SDCard, 0);
@@ -501,58 +696,51 @@ void setup()
   // machine configurations
   MachineConf mconf;
 
-  // show a list of machine configurations
+  // the POST screen comes back after the setup screen, to log the disks
+  uint8_t * postScreen = (uint8_t*) malloc(TextUI::SCREENBYTES);
+  if (postScreen)
+    ui.save(postScreen);
 
-  ibox.setAutoOK(6);
   int idx = preferences.getInt("dconf", 0);
 
-  for (bool showDialog = true; showDialog; ) {
+  for (int countdown = 6; ; countdown = 0) {
 
     loadMachineConfiguration(&mconf);
 
-    StringList dconfs;
-    for (auto conf = mconf.getFirstItem(); conf; conf = conf->next)
-      dconfs.append(conf->desc);
-    dconfs.select(idx, true);
+    SetupAction action = selectMachine(mconf, idx, countdown);
+    if (action == SetupAction::Boot)
+      break;
 
-    ibox.setupButton(0, "Files");
-    ibox.setupButton(1, "Machine", "Edit;New;Remove", 52);
-    auto r = ibox.select("Machine Configurations", "Please select a machine configuration", &dconfs, nullptr, "Run");
-
-    idx = dconfs.getFirstSelected();
-
-    switch (r) {
-      case InputResult::ButtonExt0:
-        // Browse Files
-        ibox.folderBrowser("Browse Files", SD_MOUNT_PATH);
+    switch (action) {
+      case SetupAction::Edit:
+        setupEditMachine(ui, mconf, idx);
         break;
-      case InputResult::ButtonExt1:
-        // Machine
-        switch (ibox.selectedSubItem()) {
-          // Edit
-          case 0:
-            editConfigDialog(&ibox, &mconf, idx);
-            break;
-          // New
-          case 1:
-            newConfigDialog(&ibox, &mconf, idx);
-            break;
-          // Remove
-          case 2:
-            delConfigDialog(&ibox, &mconf, idx);
-            break;
-        };
+      case SetupAction::New:
+      {
+        // inserted in memory only; leaving the editor without saving drops it again, because the
+        // list is reloaded from the file at the top of this loop
+        auto item = new MachineConfItem;
+        item->setDesc("New Configuration");
+        mconf.insertItem(idx, item);
+        setupEditMachine(ui, mconf, idx);
         break;
-      case InputResult::Enter:
-        // Run
-        showDialog = false;
+      }
+      case SetupAction::Remove:
+      {
+        char q[96];
+        snprintf(q, sizeof(q), "Remove the configuration\n\"%.40s\"?", mconf.getItem(idx)->desc);
+        if (ui.message("Please Confirm", q, "No;Yes") == 1) {
+          mconf.deleteItem(idx);
+          saveMachineConfiguration(&mconf);
+        }
+        break;
+      }
+      case SetupAction::Files:
+        setupFilesBrowser(ui, SD_MOUNT_PATH);
         break;
       default:
         break;
     }
-
-    // next selection will not have timeout
-    ibox.setAutoOK(0);
   }
 
   idx = imax(idx, 0);
@@ -561,33 +749,51 @@ void setup()
   // setup selected configuration
   auto conf = mconf.getItem(idx);
 
+  if (postScreen) {
+    ui.restore(postScreen);
+    free(postScreen);
+  } else
+    ui.postBegin();
+
+  ui.postItem("Machine");
+  ui.postResult(conf->desc, TUI_POST_BRIGHT);
+
+  static char const * DRIVELABEL[DISKCOUNT] = { "Floppy A", "Floppy B", "Hard Disk 0", "Hard Disk 1" };
   char const * diskFilename[DISKCOUNT];
   downloadOK = true;
-  for (int i = 0; i < DISKCOUNT && downloadOK; ++i)
+  for (int i = 0; i < DISKCOUNT && downloadOK; ++i) {
     diskFilename[i] = getDisk(conf->disk[i]);
+    if (conf->disk[i] && conf->disk[i][0]) {
+      ui.postItem(DRIVELABEL[i]);
+      if (diskFilename[i])
+        ui.postResult(diskName(diskFilename[i]), TUI_POST_OK);
+      else
+        ui.postResult("Not available", TUI_POST_FAIL);
+    }
+  }
 
   if (!downloadOK || (!diskFilename[0] && !diskFilename[2])) {
     // unable to get boot disks
-    ibox.message("Error!", "Unable to get system disks!");
+    ui.message("Error", "Unable to get the system disks!\nRestarting...", "OK", 5);
     esp_restart();
   }
 
   if (wifiConnected) {
     // disk downloaded from the Internet, need to reboot to fully disable wifi
-    ibox.setAutoOK(2);
-    ibox.message("", "Disks downloaded. Restarting...");
+    ui.message(nullptr, "Disks downloaded.\nRestarting...", "OK", 2);
     #ifndef FABGL_EMULATED
     esp_restart();
     #endif
   }
 
-  ibox.end();
-  
+  ui.postLine("");
+  ui.postLine("Starting the machine...", TUI_POST_BRIGHT);
+  delay(400);
+  ui.end();
+
   // without WiFi it is possible to increase SD card speed
   FileBrowser::setSDCardMaxFreqKHz(SDMMC_FREQ_DEFAULT);
   FileBrowser::remountSDCard();
-
-  machine = new Machine;
 
   machine->setBaseDirectory(SD_MOUNT_PATH);
   for (int i = 0; i < DISKCOUNT; ++i)

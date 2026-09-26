@@ -266,6 +266,11 @@ void GraphicsAdapter::setEmulation(Emulation emulation)
       setupEmulation(emulation);
       setupLUT();
       enableVideo(videoWasEnabled);
+    } else {
+      // PCEmulator: back to the unconfigured state for real. The host's setup screens run the
+      // text mode before the machine starts, and without this its internal RAM copy of the font
+      // stayed allocated for good, even on an EGA machine that never draws with it again.
+      cleanupFont();
     }
   }
 }

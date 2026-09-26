@@ -27,7 +27,6 @@
 #include <memory>
 
 #include "fabgl.h"
-#include "fabui.h"
 #include "fabutils.h"
 
 
@@ -251,340 +250,6 @@ void MachineConf::saveToFile(FILE * file)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ConfigDialog
-
-
-struct ConfigDialog : public uiApp {
-
-  MachineConf     * mconf;
-  MachineConfItem * item;
-
-  RGB888            backgroundColor;
-
-  uiFrame         * mainFrame;
-  uiButton        * saveButton;
-  uiButton        * cancelButton;
-  uiButton        * createImageButton;
-  uiTextEdit      * descEdit;
-  uiTextEdit      * FD0PathEdit;
-  uiTextEdit      * FD1PathEdit;
-  uiTextEdit      * HD0PathEdit, * HD0CylEdit, * HD0HdsEdit, * HD0SecEdit;
-  uiTextEdit      * HD1PathEdit, * HD1CylEdit, * HD1HdsEdit, * HD1SecEdit;
-  uiButton        * browseFD0Button;
-  uiButton        * browseFD1Button;
-  uiButton        * browseHD0Button;
-  uiButton        * browseHD1Button;
-  uiComboBox      * bootDriveComboBox;
-  uiComboBox      * ramSizeComboBox;
-  uiCheckBox      * debugConsoleCheckBox;
-  uiComboBox      * usbSerialComboBox;
-  uiComboBox      * videoAdapterComboBox;
-
-
-  void init() {
-    rootWindow()->frameStyle().backgroundColor = backgroundColor;
-
-    rootWindow()->onPaint = [&]() { drawInfo(canvas()); };
-
-    mainFrame = new uiFrame(rootWindow(), "Machine Configuration", UIWINDOW_PARENTCENTER, Size(460, 280));
-    mainFrame->frameProps().resizeable        = false;
-    mainFrame->frameProps().hasMaximizeButton = false;
-    mainFrame->frameProps().hasMinimizeButton = false;
-    mainFrame->frameProps().hasCloseButton    = false;
-    mainFrame->onKeyUp = [&](uiKeyEventInfo const & key) {
-      if (key.VK == VirtualKey::VK_RETURN || key.VK == VirtualKey::VK_KP_ENTER) {
-        saveAndQuit();
-      } else if (key.VK == VirtualKey::VK_ESCAPE) {
-        justQuit();
-      }
-    };
-
-    int x = 6;
-    int y = 24;
-    constexpr int oy = 3;
-    constexpr int hh = 20;
-    constexpr int dy = hh + 9;
-
-    // description
-    new uiStaticLabel(mainFrame, "Description", Point(x, y + oy));
-    descEdit = new uiTextEdit(mainFrame, item->desc, Point(70, y), Size(270, hh));
-
-    y += dy;
-
-    // floppy 0
-    new uiStaticLabel(mainFrame, "Floppy 0", Point(x, y + oy));
-    FD0PathEdit = new uiTextEdit(mainFrame, item->disk[0], Point(60, y), Size(260, hh));
-    browseFD0Button = new uiButton(mainFrame, "...", Point(322, y), Size(20, hh));
-    browseFD0Button->onClick = [&]() { browseFilename(FD0PathEdit); };
-
-
-    y += dy;
-
-    // floppy 1
-    new uiStaticLabel(mainFrame, "Floppy 1", Point(x, y + oy));
-    FD1PathEdit = new uiTextEdit(mainFrame, item->disk[1], Point(60, y), Size(260, hh));
-    browseFD1Button = new uiButton(mainFrame, "...", Point(322, y), Size(20, hh));
-    browseFD1Button->onClick = [&]() { browseFilename(FD1PathEdit); };
-
-    y += dy;
-
-    // HDD 0
-    new uiStaticLabel(mainFrame, "HDD 0", Point(x, y + oy));
-    HD0PathEdit = new uiTextEdit(mainFrame, item->disk[2], Point(60, y), Size(260, hh));
-    browseHD0Button = new uiButton(mainFrame, "...", Point(322, y), Size(20, hh));
-    browseHD0Button->onClick = [&]() { browseFilename(HD0PathEdit); };
-    new uiStaticLabel(mainFrame, "Cyls", Point(350, y - 13));
-    HD0CylEdit  = new uiTextEdit(mainFrame, "", Point(350, y), Size(34, hh));
-    HD0CylEdit->setTextFmt("%hu", item->cylinders[2]);
-    new uiStaticLabel(mainFrame, "Head", Point(385, y - 13));
-    HD0HdsEdit  = new uiTextEdit(mainFrame, "", Point(385, y), Size(34, hh));
-    HD0HdsEdit->setTextFmt("%hu", item->heads[2]);
-    new uiStaticLabel(mainFrame, "Sect", Point(420, y - 13));
-    HD0SecEdit  = new uiTextEdit(mainFrame, "", Point(420, y), Size(34, hh));
-    HD0SecEdit->setTextFmt("%hu", item->sectors[2]);
-
-    y += dy;
-
-    // HDD 1
-    new uiStaticLabel(mainFrame, "HDD 1", Point(x, y + oy));
-    HD1PathEdit = new uiTextEdit(mainFrame, item->disk[3], Point(60, y), Size(260, hh));
-    browseHD1Button = new uiButton(mainFrame, "...", Point(322, y), Size(20, hh));
-    browseHD1Button->onClick = [&]() { browseFilename(HD1PathEdit); };
-    HD1CylEdit  = new uiTextEdit(mainFrame, "", Point(350, y), Size(34, hh));
-    HD1CylEdit->setTextFmt("%hu", item->cylinders[3]);
-    HD1HdsEdit  = new uiTextEdit(mainFrame, "", Point(385, y), Size(34, hh));
-    HD1HdsEdit->setTextFmt("%hu", item->heads[3]);
-    HD1SecEdit  = new uiTextEdit(mainFrame, "", Point(420, y), Size(34, hh));
-    HD1SecEdit->setTextFmt("%hu", item->sectors[3]);
-
-    y += dy;
-
-    // boot drive selection
-    new uiStaticLabel(mainFrame, "Boot Drive", Point(x, y + oy));
-    bootDriveComboBox = new uiComboBox(mainFrame, Point(60, y), Size(60, hh), 50);
-    bootDriveComboBox->items().append("Floppy 0");
-    bootDriveComboBox->items().append("Floppy 1");
-    bootDriveComboBox->items().append("HDD 0");
-    bootDriveComboBox->items().append("HDD 1");
-    bootDriveComboBox->selectItem(item->bootDrive);
-
-    // conventional memory size selection (same row, to the right of the boot drive)
-    new uiStaticLabel(mainFrame, "Memory", Point(150, y + oy));
-    ramSizeComboBox = new uiComboBox(mainFrame, Point(205, y), Size(70, hh), 80);
-    for (int kb = 64; kb <= 704; kb += 64)
-      ramSizeComboBox->items().appendFmt("%d KB", kb);
-    ramSizeComboBox->selectItem(item->ramSizeKB / 64 - 1);
-
-    // Video adapter. The CGA/Hercules path is the original one and stays the default; EGA is a
-    // separate path that needs a real EGA BIOS option ROM to drive it.
-    new uiStaticLabel(mainFrame, "Video", Point(290, y + oy));
-    videoAdapterComboBox = new uiComboBox(mainFrame, Point(330, y), Size(120, hh), 60);
-    videoAdapterComboBox->items().append("CGA / Hercules");
-    videoAdapterComboBox->items().append("EGA (BIOS ROM)");
-    videoAdapterComboBox->selectItem(item->videoAdapter ? 1 : 0);
-
-    // Serial debug console. Off unless asked for. It owns the USB serial pins, which COM1 would
-    // otherwise use, but it no longer excludes a COM port: see the routing combo below.
-    debugConsoleCheckBox = new uiCheckBox(mainFrame, Point(60, y + dy), Size(hh, hh), uiCheckBoxKind::CheckBox);
-    debugConsoleCheckBox->setChecked(item->debugConsole);
-    new uiStaticLabel(mainFrame, "Serial debug console", Point(80, y + dy + oy));
-
-    // Which emulated COM port, if any, reaches the host over the USB serial. With the debug
-    // console off the port takes the UART pins directly; with it on the console carries the port
-    // in software, so a terminal or a file transfer and the debugger all work at once. The
-    // debugger's "u" command changes this while the machine runs.
-    new uiStaticLabel(mainFrame, "USB serial", Point(265, y + dy + oy));
-    usbSerialComboBox = new uiComboBox(mainFrame, Point(330, y + dy), Size(120, hh), 60);
-    usbSerialComboBox->items().append("not connected");
-    usbSerialComboBox->items().append("COM1");
-    usbSerialComboBox->items().append("COM2");
-    usbSerialComboBox->selectItem(item->effectiveUsbSerial());
-
-    // bottom buttons
-
-    y = mainFrame->clientSize().height - 8;
-
-    // Save Button
-    saveButton = new uiButton(mainFrame, "Save", Point(mainFrame->clientSize().width - 75, y), Size(70, hh));
-    saveButton->onClick = [&]() {
-      saveAndQuit();
-    };
-
-    // Cancel Button
-    cancelButton = new uiButton(mainFrame, "Cancel", Point(mainFrame->clientSize().width - 155, y), Size(70, hh));
-    cancelButton->onClick = [&]() {
-      justQuit();
-    };
-
-    // Create Disk Image Button
-    createImageButton = new uiButton(mainFrame, "Create Disk", Point(10, y), Size(90, hh));
-    createImageButton->onClick = [&]() {
-      createDiskImage();
-    };
-
-    setActiveWindow(mainFrame);
-  }
-
-
-  void browseFilename(uiTextEdit * edit) {
-    unique_ptr<char[]> dir(new char[MAXVALUELENGTH + 1] { 0 } );
-    unique_ptr<char[]> filename(new char[MAXVALUELENGTH + 1]);
-    strcpy(filename.get(), edit->text());
-    strcpy(dir.get(), SD_MOUNT_PATH);   // where browsing starts when there is no path yet
-    // is URL?
-    if (strncmp("://", filename.get() + 4, 3)) {
-      // No. Split any directory part off into "dir". A stored path is either absolute
-      // (ie "/spiffs/rescue.img", an image in flash) or relative to the SD card mount.
-      auto p = strrchr(filename.get(), '/');
-      if (p) {
-        if (filename.get()[0] == '/') {
-          // already absolute: take the directory part exactly as it is
-          dir.get()[0] = 0;
-          strncat(dir.get(), filename.get(), p - filename.get());
-          if (dir.get()[0] == 0)
-            strcpy(dir.get(), "/");     // the file sits in the filesystem root
-        } else {
-          strcat(dir.get(), "/");
-          strncat(dir.get(), filename.get(), p - filename.get());
-        }
-        memmove(filename.get(), p + 1, strlen(p + 1) + 1);
-      }
-    }
-    if (fileDialog("Select drive image", dir.get(), MAXVALUELENGTH, filename.get(), MAXVALUELENGTH, "OK", "Cancel") == uiMessageBoxResult::ButtonOK) {
-      // Store the full path. Images may live on the SD card or in the flash filesystem, so the
-      // configuration must not assume a mount point: the old code skipped a hardcoded four
-      // characters to "bypass /SD/", which silently turned "/spiffs/rescue.img" into
-      // "ffs/rescue.img". Relative paths in existing config files still work, see setDriveImage().
-      edit->setTextFmt("%s/%s", dir.get(), filename.get());
-      edit->repaint();
-    }
-  }
-
-
-  void saveAndQuit() {
-    // get fields
-    item->setDesc(descEdit->text());
-    item->setDisk(0, FD0PathEdit->text());
-    item->setDisk(1, FD1PathEdit->text());
-    item->setDisk(2, HD0PathEdit->text());
-    item->setDisk(3, HD1PathEdit->text());
-    item->cylinders[2] = atoi(HD0CylEdit->text());
-    item->heads[2]     = atoi(HD0HdsEdit->text());
-    item->sectors[2]   = atoi(HD0SecEdit->text());
-    item->cylinders[3] = atoi(HD1CylEdit->text());
-    item->heads[3]     = atoi(HD1HdsEdit->text());
-    item->sectors[3]   = atoi(HD1SecEdit->text());
-    item->bootDrive    = bootDriveComboBox->selectedItem();
-    item->ramSizeKB    = (ramSizeComboBox->selectedItem() + 1) * 64;
-    item->debugConsole = debugConsoleCheckBox->checked();
-    // saved explicitly once the dialogue has been used, so the file records the choice
-    item->setUsbSerial(usbSerialComboBox->selectedItem() == 2 ? "com2" :
-                      (usbSerialComboBox->selectedItem() == 1 ? "com1" : "off"));
-    item->videoAdapter = videoAdapterComboBox->selectedItem() > 0 ? 1 : 0;
-
-    // Warn when the selected boot drive has no image assigned. The boot drive defaults to Floppy 0,
-    // so filling in just a hard disk and pressing Save silently builds a machine that cannot boot:
-    // the BIOS asks the empty drive for a boot sector, gets an error, and jumps to 0000:7C00 anyway,
-    // which looks like a dead machine rather than a reported failure. Only a warning, not a refusal,
-    // because booting a floppy mounted later via the SYSREQ menu is legitimate.
-    if (!item->disk[item->bootDrive] || strlen(item->disk[item->bootDrive]) == 0) {
-      InputBox ib(this);
-      if (ib.messageFmt("Warning", "Cancel", "Save anyway",
-                        "Boot drive %s has no disk image assigned, the machine will not boot.",
-                        bootDriveComboBox->items().get(item->bootDrive)) != InputResult::Enter)
-        return;   // back to the dialog so the boot drive or the image can be corrected
-    }
-
-    // save to file
-    saveMachineConfiguration(mconf);
-
-    justQuit();
-  }
-
-
-  void justQuit() {
-    rootWindow()->frameProps().fillBackground = false;
-    quit(0);
-  }
-
-
-  void createDiskImage() {
-    InputBox ib(this);
-
-    int s = ib.menu("Create Disk Image", "Select Disk Size", "Floppy 320K (FAT12);"         // 0
-                                                             "Floppy 360K (FAT12);"         // 1
-                                                             "Floppy 720K (FAT12);"         // 2
-                                                             "Floppy 1.2M (FAT12);"         // 3
-                                                             "Floppy 1.44M (FAT12);"        // 4
-                                                             "Floppy 2.88M (FAT12);"        // 5
-                                                             "Hard Disk (Unformatted)");    // 6
-    int hdSize = 0;
-    if (s == 6) {
-      // set hard disk size
-      char str[4] = "10";
-      if (ib.textInput("Hard Disk Size", "Specify Hard Disk size in Megabytes", str, 3) == InputResult::Enter)
-        hdSize = atoi(str);
-      else
-        return;
-      if (hdSize <= 0 || hdSize > 512) {
-        ib.message("Error", "Invalid Hard Disk Size!");
-        return;
-      }
-    } else if (s < 0 || s > 6)
-      return;
-
-    // set filename
-    unique_ptr<char[]> dir(new char[MAXVALUELENGTH + 1]      { '/', 'S', 'D', 0 } );
-    unique_ptr<char[]> filename(new char[MAXVALUELENGTH + 1] { 'n', 'e', 'w', 'i', 'm', 'a', 'g', 'e', '.', 'i', 'm', 'g', 0 });
-    if (fileDialog("Image Filename", dir.get(), MAXVALUELENGTH, filename.get(), MAXVALUELENGTH, "OK", "Cancel") != uiMessageBoxResult::ButtonOK)
-      return;
-
-    // create the image
-    if (s == 6) {
-      // Hard Disk
-      ib.progressBox("", "Abort", true, 380, [&](fabgl::ProgressForm * form) {
-        auto buf = (uint8_t*) SOC_EXTRAM_DATA_LOW; // use PSRAM as buffer
-        constexpr int BUFSIZE = 32768;
-        memset(buf, 0, BUFSIZE);
-        auto file = FileBrowser(dir.get()).openFile(filename.get(), "wb");
-        if (!file) {
-          form->update(0, "Cannot create %s", filename.get());
-          return;
-        }
-        const int totSize = hdSize * 1048576;
-        int prevPerc = -1;
-        for (int sz = totSize; sz > 0; ) {
-          int written = fwrite(buf, 1, imin(BUFSIZE, sz), file);
-          if (written <= 0)
-            break;    // out of space or write error: don't spin forever
-          sz -= written;
-          // Refreshing the progress form is expensive: the label is auto-sized (so every update
-          // reshapes the window) and drawing it queues one primitive per character, a queue which
-          // is only drained once per vertical sync. Updating it per chunk pins this loop to the
-          // 60Hz refresh rate instead of the card speed, so only refresh when the percentage
-          // actually changes (the text carries the byte count, so it always differs otherwise).
-          int perc = (int)((double)(totSize - sz) / totSize * 100);
-          if (perc != prevPerc) {
-            prevPerc = perc;
-            if (!form->update(perc, "Writing %s (%d / %d bytes)", filename.get(), (totSize - sz), totSize))
-              break;
-          }
-        }
-        fclose(file);
-      });
-    } else {
-      // FAT Formatted Floppy Disk
-      createFATFloppyImage(&ib, s, dir.get(), filename.get());
-    }
-
-  }
-
-};
-
-
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // helpers
 
 
@@ -614,48 +279,6 @@ void saveMachineConfiguration(MachineConf * mconf)
 }
 
 
-void editConfigDialog(InputBox * ibox, MachineConf * mconf, int idx)
-{
-  ConfigDialog app;
-  app.mconf           = mconf;
-  app.item            = mconf->getItem(idx);
-  app.backgroundColor = ibox->backgroundColor();
-  app.run(ibox->getDisplayController());
-}
-
-
-void newConfigDialog(InputBox * ibox, MachineConf * mconf, int idx)
-{
-  auto newItem = new MachineConfItem;
-  newItem->setDesc("New Configuration");
-  mconf->insertItem(idx, newItem);
-
-  ConfigDialog app;
-  app.mconf           = mconf;
-  app.item            = newItem;
-  app.backgroundColor = ibox->backgroundColor();
-  app.run(ibox->getDisplayController());
-}
-
-
-void delConfigDialog(InputBox * ibox, MachineConf * mconf, int idx)
-{
-  if (idx > -1 && ibox->message("Please confirm", "Remove Configuration?", "No", "Yes") == InputResult::Enter) {
-    mconf->deleteItem(idx);
-    saveMachineConfiguration(mconf);
-  }
-}
-
-
-void drawInfo(Canvas * canvas)
-{
-  canvas->setPenColor(RGB888(0, 255, 0));
-  canvas->drawText(120, 5, "E S P 3 2   P C   E M U L A T O R");
-  canvas->drawText(93, 20, "www.fabgl.com - by Fabrizio Di Vittorio");
-  canvas->drawText(65, 35, "Modified by Alexandra Bastet Stehr - lionscade.de");
-}
-
-
 // Create FAT formatted floppy image
 // diskType:
 //   0 = 320
@@ -665,7 +288,7 @@ void drawInfo(Canvas * canvas)
 //   4 = 1440
 //   5 = 2880
 // directory: absolute path (includes mounting point, ie "/SD/..."
-bool createFATFloppyImage(InputBox * ibox, int diskType, char const * directory, char const * filename)
+bool createFATFloppyImage(TextUI * ui, int diskType, char const * directory, char const * filename)
 {
   // boot sector for: 320K, 360K, 720K, 1440K, 2880K
   static const uint8_t BOOTSECTOR_WIN[512] = {
@@ -770,11 +393,17 @@ bool createFATFloppyImage(InputBox * ibox, int diskType, char const * directory,
     memset(sectbuf, 0xf6, 512);
     fseek(file, 0, SEEK_SET);
 
-    ibox->progressBox("", "Abort", true, 380, [&](fabgl::ProgressForm * form) {
+    ui->progress("Create Disk Image", true, [&](TextUI::Progress & p) {
+      int prevPerc = -1;
       for (int i = 0; i < SIZES[diskType]; i += 512) {
         fwrite(sectbuf, 1, 512, file);
-        if (!form->update((int)((double)i / SIZES[diskType] * 100), "Formatting %s (%d / %d bytes)", filename, i, SIZES[diskType]))
-          break;
+        // redraw only when the bar moves, a 2.88M image is 5760 sectors
+        int perc = (int)((double)i / SIZES[diskType] * 100);
+        if (perc != prevPerc) {
+          prevPerc = perc;
+          if (!p.update(perc, "Formatting %s  %d / %d KB", filename, i >> 10, SIZES[diskType] >> 10))
+            break;
+        }
       }
     });
 

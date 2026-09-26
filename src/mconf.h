@@ -83,6 +83,7 @@ Boot from disk1.img located inside "msdos3" folder:
 #include <string.h>
 
 #include "bios.h"
+#include "textui.h"
 
 
 #define SD_MOUNT_PATH         "/SD"
@@ -253,12 +254,5 @@ void loadMachineConfiguration(MachineConf * mconf);
 
 void saveMachineConfiguration(MachineConf * mconf);
 
-void editConfigDialog(InputBox * ibox, MachineConf * mconf, int idx);
-
-void newConfigDialog(InputBox * ibox, MachineConf * mconf, int idx);
-
-void delConfigDialog(InputBox * ibox, MachineConf * mconf, int idx);
-
-void drawInfo(Canvas * canvas);
- 
-bool createFATFloppyImage(InputBox * ibox, int diskType, char const * directory, char const * filename);
+// diskType: 0 = 320K, 1 = 360K, 2 = 720K, 3 = 1.2M, 4 = 1.44M, 5 = 2.88M
+bool createFATFloppyImage(TextUI * ui, int diskType, char const * directory, char const * filename);
