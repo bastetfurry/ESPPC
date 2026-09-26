@@ -27,6 +27,9 @@
 #include "machine.h"
 #include "esp_timer.h"
 
+
+static_assert(EGA_BANK_ENTRIES * sizeof(uint32_t) == CGA_BORROWED_SIZE, "a CGA mode borrows exactly one EGA plane bank");
+
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -104,6 +107,7 @@ Machine::Machine() :
     m_disk(),
     m_diskChanged(),
     m_frameBuffer(nullptr),
+    m_CGABorrowed(nullptr),
     m_bootDrive(0),
     m_sysReqCallback(nullptr),
     m_baseDir(nullptr),
@@ -195,6 +199,7 @@ void Machine::init()
       m_EGA.reset();
       m_EGA.clearVRAM();
       m_EGAActive = true;
+      m_CGABorrowed = nullptr;     // the planes are the EGA's again
       printf("EGA BIOS: planar memory ready, internal heap free %d\n",
              heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     } else {
@@ -412,6 +417,7 @@ void Machine::reset()
       m_EGA.reset();
       m_EGA.clearVRAM();
       m_EGAActive = true;
+      m_CGABorrowed = nullptr;     // the planes are the EGA's again
     } else {
       // no room: come back as a plain CGA machine rather than with no frame buffer at all
       printf("EGA BIOS: no room for planar memory after reset, falling back to CGA\n");
@@ -660,8 +666,13 @@ void Machine::setCGAMode()
   // the scanline ISR. Any stray write to 0x3d8/0x3d9 from the guest would then crash the board.
   // Mode changes go through the BIOS hook, which tears EGA down first, so ignoring these here is
   // safe as well as necessary.
-  if (m_EGAActive || !s_videoMemory)
+  if (m_EGAActive || !(s_videoMemory || m_CGABorrowed))
     return;
+
+  // B8000 in whichever buffer is standing in for the CGA's memory. The borrowed one is 16 KB, as
+  // on a real CGA, so the start address wraps within it.
+  uint8_t * cga = m_CGABorrowed ? m_CGABorrowed + (m_CGAMemoryOffset & (CGA_BORROWED_SIZE - 1))
+                                : s_videoMemory + 0x8000 + m_CGAMemoryOffset;
 
   if ((m_CGAModeReg & CGA_MODECONTROLREG_ENABLED) == 0) {
 
@@ -673,7 +684,7 @@ void Machine::setCGAMode()
 
     // 40 column text mode
     //printf("CGA, 40 columns text mode\n");
-    m_frameBuffer = s_videoMemory + 0x8000 + m_CGAMemoryOffset;
+    m_frameBuffer = cga;
     m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_40x25_16Colors);
     m_graphicsAdapter.setBit7Blink(m_CGAModeReg & CGA_MODECONTROLREG_BIT7BLINK);
@@ -683,7 +694,7 @@ void Machine::setCGAMode()
 
     // 80 column text mode
     //printf("CGA, 80 columns text mode\n");
-    m_frameBuffer = s_videoMemory + 0x8000 + m_CGAMemoryOffset;
+    m_frameBuffer = cga;
     m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_80x25_16Colors);
     m_graphicsAdapter.setBit7Blink(m_CGAModeReg & CGA_MODECONTROLREG_BIT7BLINK);
@@ -693,7 +704,7 @@ void Machine::setCGAMode()
 
     // 320x200 graphics
     //printf("CGA, 320x200 graphics mode\n");
-    m_frameBuffer = s_videoMemory + 0x8000 + m_CGAMemoryOffset;
+    m_frameBuffer = cga;
     m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_320x200_4Colors);
     int paletteIndex = (bool)(m_CGAColorReg & CGA_COLORCONTROLREG_PALETTESEL) * 2 + (bool)(m_CGAColorReg & CGA_COLORCONTROLREG_HIGHINTENSITY);
@@ -705,7 +716,7 @@ void Machine::setCGAMode()
 
     // 640x200 graphics
     //printf("CGA, 640x200 graphics mode\n");
-    m_frameBuffer = s_videoMemory + 0x8000 + m_CGAMemoryOffset;
+    m_frameBuffer = cga;
     m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_640x200_2Colors);
     m_graphicsAdapter.setPCGraphicsForegroundColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
@@ -885,6 +896,7 @@ bool Machine::setEGAMode(int biosMode)
     }
 
     m_EGAActive = true;
+    m_CGABorrowed = nullptr;     // the planes are the EGA's again
     m_EGA.reset();
     m_EGA.clearVRAM();
 
@@ -993,6 +1005,7 @@ bool Machine::setEGAMode(int biosMode)
   }
 
   m_EGAActive = true;
+  m_CGABorrowed = nullptr;     // the planes are the EGA's again
 
   m_EGA.reset();
   m_EGA.clearVRAM();
@@ -1040,12 +1053,22 @@ void Machine::leaveEGAMode()
     m_EGA.freeVRAM();
   m_EGAActive = false;
 
-  if (!s_videoMemory)
-    s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
-  if (s_videoMemory)
-    memset(s_videoMemory, 0, VIDEOMEMSIZE);
-
-  m_frameBuffer = s_videoMemory;
+  if (m_egaBiosLoaded && m_EGA.hasVRAM()) {
+    // CGA modes on the EGA machine (4, 5, 6) borrow the first plane bank as their video RAM
+    // rather than allocating the 64 KB CGA/Hercules buffer, which cannot be had with the planes
+    // resident: the allocation failed quietly, setCGAMode() found no buffer, and the monitor lost
+    // its signal. A bank is 16 KB, exactly a real CGA's memory at B8000 (mirrored at BC000), and
+    // the planes are idle until the next EGA mode set, which clears them.
+    m_CGABorrowed = (uint8_t*) m_EGA.banks()[0];
+    memset(m_CGABorrowed, 0, CGA_BORROWED_SIZE);
+    m_frameBuffer = m_CGABorrowed;
+  } else {
+    if (!s_videoMemory)
+      s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    if (s_videoMemory)
+      memset(s_videoMemory, 0, VIDEOMEMSIZE);
+    m_frameBuffer = s_videoMemory;
+  }
 
   // the caller (the BIOS mode set) programs the CGA registers next, which picks the mode back up
 }
@@ -1691,6 +1714,11 @@ void Machine::writeVideoMemory8(void * context, int address, uint8_t value)
     m->m_EGA.write8(address - m->m_EGA.mapBase(), value);
     return;
   }
+  if (m->m_CGABorrowed) {
+    if (address >= 0xb8000)
+      m->m_CGABorrowed[(address - 0xb8000) & (CGA_BORROWED_SIZE - 1)] = value;
+    return;
+  }
   if (address >= 0xb0000 && s_videoMemory)
     s_videoMemory[address - 0xb0000] = value;
 }
@@ -1703,6 +1731,12 @@ void Machine::writeVideoMemory16(void * context, int address, uint16_t value)
     m->m_EGA.write16(address - m->m_EGA.mapBase(), value);
     return;
   }
+  if (m->m_CGABorrowed) {
+    // byte by byte: a word at the end of the 16 KB wraps to its start, as the CGA's memory does
+    writeVideoMemory8(context, address, (uint8_t) value);
+    writeVideoMemory8(context, address + 1, (uint8_t)(value >> 8));
+    return;
+  }
   if (address >= 0xb0000 && s_videoMemory)
     *(uint16_t*)(s_videoMemory + address - 0xb0000) = value;
 }
@@ -1713,6 +1747,8 @@ uint8_t Machine::readVideoMemory8(void * context, int address)
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd())
     return m->m_EGA.read8(address - m->m_EGA.mapBase());
+  if (m->m_CGABorrowed)
+    return address >= 0xb8000 ? m->m_CGABorrowed[(address - 0xb8000) & (CGA_BORROWED_SIZE - 1)] : 0xff;
   if (address >= 0xb0000 && s_videoMemory)
     return s_videoMemory[address - 0xb0000];
   return 0xff;
@@ -1724,6 +1760,8 @@ uint16_t Machine::readVideoMemory16(void * context, int address)
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd())
     return m->m_EGA.read16(address - m->m_EGA.mapBase());
+  if (m->m_CGABorrowed)
+    return readVideoMemory8(context, address) | ((uint16_t) readVideoMemory8(context, address + 1) << 8);
   if (address >= 0xb0000 && s_videoMemory)
     return *(uint16_t*)(s_videoMemory + address - 0xb0000);
   return 0xffff;

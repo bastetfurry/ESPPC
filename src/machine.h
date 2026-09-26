@@ -48,6 +48,7 @@
 
 #define RAM_SIZE             1048576    // must correspond to bios MEMSIZE
 #define VIDEOMEMSIZE         65536
+#define CGA_BORROWED_SIZE    16384      // a real CGA's video RAM, and one EGA plane bank
 
 // maximum number of serial ports
 #define SERIALPORTS          2
@@ -365,6 +366,9 @@ private:
   static uint8_t *         s_memory;
   static uint8_t *         s_videoMemory;
   uint8_t *                m_frameBuffer;
+  // On the EGA machine, the plane bank a CGA mode (4, 5, 6) uses as its 16 KB of video RAM while
+  // the EGA is not active; null otherwise. See leaveEGAMode().
+  uint8_t *                m_CGABorrowed;
 
   // 8259 Programmable Interrupt Controllers
   PIC8259                  m_PIC8259A;  // master
