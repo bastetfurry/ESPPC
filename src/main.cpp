@@ -662,7 +662,7 @@ void sysReqCallback()
 
 void setup()
 {
-  Serial.begin(115200); delay(500); printf("\n\n\nReset\n\n");// DEBUG ONLY
+  Serial.begin(115200); delay(500);
 
 
   disableCore0WDT();
