@@ -437,8 +437,9 @@ static void drawSetupDetails(MachineConfItem * c)
 }
 
 
-// The selection screen. countdown > 0 boots the highlighted machine after that many seconds
-// unless a key is pressed first, as the old InputBox did with setAutoOK().
+// The selection screen. countdown > 0 boots the highlighted machine after that many seconds unless
+// a key is pressed first (the Auto Boot setting); 0 or -1 waits. Auto Boot "immediately" does not
+// come here at all unless DEL was pressed, see setup().
 static SetupAction selectMachine(MachineConf & mconf, int & idx, int countdown)
 {
   int count = 0;
@@ -708,6 +709,8 @@ void setup()
     preferences.getString("NtpServer", hostSettings.ntpServer, sizeof(hostSettings.ntpServer));
   if (preferences.isKey("TimeZone"))
     preferences.getString("TimeZone", hostSettings.timeZone, sizeof(hostSettings.timeZone));
+  hostSettings.autoBootSeconds = preferences.isKey("AutoBoot") ? preferences.getInt("AutoBoot")
+                                                               : HostSettings::DEFAULT_AUTOBOOT;
 
   // The machine exists from here on so the setup screens can borrow its video adapter; nothing in
   // it runs until machine->run() below, and TextUI::end() hands the adapter back unconfigured.
@@ -715,6 +718,10 @@ void setup()
 
   ui.begin(machine->graphicsAdapter());
   ui.postBegin();
+
+  // With the machine list skipped, DEL during the POST is the way into it, as on a BIOS
+  if (hostSettings.autoBootSeconds == 0)
+    ui.postFooter("Press DEL to enter SETUP");
 
   // we need PSRAM for this app, but we will handle it manually, so please DO NOT enable PSRAM on your development env
   #ifdef BOARD_HAS_PSRAM
@@ -770,9 +777,32 @@ void setup()
 
   int idx = preferences.getInt("dconf", 0);
 
-  for (int countdown = 6; ; countdown = 0) {
+  // Auto boot "immediately" skips the list unless DEL is pressed. As on a BIOS, the POST holds for
+  // a moment to give the chance: the POST before it can be over in a second (after the NTP
+  // restart), and its progress boxes empty the key buffer when they open, so a DEL pressed early
+  // may be gone. One still queued counts as well.
+  bool skipList = false;
+  if (hostSettings.autoBootSeconds == 0) {
+    skipList = true;
+    int64_t until = esp_timer_get_time() + 2000000;
+    TextUI::Key k;
+    while (skipList) {
+      int64_t left = until - esp_timer_get_time();
+      if (!ui.getKey(&k, left > 0 ? (int)(left / 1000) : 0))
+        break;
+      if (k.vk == VirtualKey::VK_DELETE || k.vk == VirtualKey::VK_KP_DELETE)
+        skipList = false;
+    }
+  }
+
+  // the countdown only runs on the first visit, not after coming back from a setup page
+  for (int countdown = hostSettings.autoBootSeconds; ; countdown = -1) {
 
     loadMachineConfiguration(&mconf);
+
+    if (skipList && mconf.getItem(idx))
+      break;                                   // the saved selection; if it is gone, the list shows
+    skipList = false;
 
     SetupAction action = selectMachine(mconf, idx, countdown);
     if (action == SetupAction::Boot)
@@ -806,6 +836,7 @@ void setup()
         if (setupAdvancedSettings(ui, hostSettings)) {
           preferences.putString("NtpServer", hostSettings.ntpServer);
           preferences.putString("TimeZone", hostSettings.timeZone);
+          preferences.putInt("AutoBoot", hostSettings.autoBootSeconds);
           applyTimeZone();
         }
         break;
@@ -828,6 +859,7 @@ void setup()
     free(postScreen);
   } else
     ui.postBegin();
+  ui.postFooter("");                           // "Press DEL" is past its moment
 
   ui.postItem("Machine");
   ui.postResult(conf->desc, TUI_POST_BRIGHT);

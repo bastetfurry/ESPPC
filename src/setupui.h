@@ -32,8 +32,10 @@ void setupCreateDiskImage(TextUI & ui);
 struct HostSettings {
   static constexpr char const * DEFAULT_NTP_SERVER = "pool.ntp.org";
   static constexpr char const * DEFAULT_TIME_ZONE  = "CET-1CEST,M3.5.0,M10.5.0/3";   // POSIX TZ
+  static constexpr int          DEFAULT_AUTOBOOT   = 6;
   char ntpServer[64];
   char timeZone[64];      // a POSIX TZ string, as setenv("TZ") takes it; empty = the default
+  int  autoBootSeconds;   // machine selection countdown: -1 = wait, 0 = boot at once, else seconds
 };
 
 // The "Advanced Settings" page. Returns true when the user saved; settings holds the new values

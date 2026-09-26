@@ -309,13 +309,17 @@ bool TextUI::getKey(Key * key, int timeoutMS)
   while (true) {
     int wait = -1;
     if (until >= 0) {
+      // A timeout of 0 means "is there a key?": the queue is still read once, without waiting.
+      // Returning before reading it made every such poll report no key, so Esc could never abort a
+      // progress box and DEL never reached the POST.
       int64_t left = until - esp_timer_get_time();
-      if (left <= 0)
-        return false;
-      wait = (int)(left / 1000) + 1;
+      wait = left > 0 ? (int)(left / 1000) + 1 : 0;
     }
-    if (!kbd->getNextVirtualKey(&item, wait))
-      continue;                       // timed out: the loop above decides
+    if (!kbd->getNextVirtualKey(&item, wait)) {
+      if (until >= 0 && esp_timer_get_time() >= until)
+        return false;
+      continue;                       // woke early: wait for the rest
+    }
     if (!item.down)
       continue;                       // presses only
     key->vk    = item.vk;

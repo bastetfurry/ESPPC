@@ -903,15 +903,16 @@ void trimSpaces(char * buf)
 
 bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
 {
-  enum class Kind { Text, TimeZone };
+  enum class Kind { Text, TimeZone, AutoBoot };
 
   struct Item {
     char const * label;
     Kind         kind;
-    char *       value;         // the setting's buffer, edited in place
+    char *       value;         // the setting's buffer, edited in place (text kinds)
     int          maxLength;
     char const * whenEmpty;     // what an empty value means
     char const * help;
+    int *        number;        // the setting (AutoBoot)
   };
 
   HostSettings edit = settings;
@@ -919,10 +920,14 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
   Item const ITEMS[] = {
     { "NTP Server", Kind::Text, edit.ntpServer, (int) sizeof(edit.ntpServer) - 1, HostSettings::DEFAULT_NTP_SERVER,
       "Time server asked for the date and time at a cold boot, when Wi-Fi is configured. Empty "
-      "means pool.ntp.org. Takes effect at the next power on." },
+      "means pool.ntp.org. Takes effect at the next power on.", nullptr },
     { "Time Zone", Kind::TimeZone, edit.timeZone, (int) sizeof(edit.timeZone) - 1, HostSettings::DEFAULT_TIME_ZONE,
       "Local time for the clock the guest sees, daylight saving included. Pick one, or Custom "
-      "for a POSIX TZ string such as CET-1CEST,M3.5.0,M10.5.0/3. Takes effect when saved." },
+      "for a POSIX TZ string such as CET-1CEST,M3.5.0,M10.5.0/3. Takes effect when saved.", nullptr },
+    { "Auto Boot", Kind::AutoBoot, nullptr, 0, nullptr,
+      "Countdown before the highlighted machine boots on its own, 1-99 seconds. Immediately (0) "
+      "skips the machine list: press DEL during the POST to get to it. Disabled (-1) waits for "
+      "a key. +/- steps.", &edit.autoBootSeconds },
   };
   constexpr int COUNT = sizeof(ITEMS) / sizeof(ITEMS[0]);
 
@@ -946,7 +951,20 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
   while (true) {
 
     for (int i = 0; i < COUNT; ++i) {
-      char const * v = ITEMS[i].value[0] ? ITEMS[i].value : ITEMS[i].whenEmpty;
+      char numText[16];
+      char const * v;
+      if (ITEMS[i].kind == Kind::AutoBoot) {
+        int n = *ITEMS[i].number;
+        if (n < 0)
+          v = "Disabled";
+        else if (n == 0)
+          v = "Immediately";
+        else {
+          snprintf(numText, sizeof(numText), "%d s", n);
+          v = numText;
+        }
+      } else
+        v = ITEMS[i].value[0] ? ITEMS[i].value : ITEMS[i].whenEmpty;
       if (ITEMS[i].kind == Kind::TimeZone) {
         int z = findTimeZone(v);
         if (z >= 0)
@@ -959,10 +977,11 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
     }
     wrapText(ui, 54, 5, 24, 9, ITEMS[sel].help, TUI_SCREEN);
     // the full value where the field is too short, and the TZ string behind a named zone
-    {
+    if (ITEMS[sel].value) {
       char const * v = ITEMS[sel].value[0] ? ITEMS[sel].value : ITEMS[sel].whenEmpty;
       wrapText(ui, 54, 15, 24, 4, v, TUI_DIM);
-    }
+    } else
+      wrapText(ui, 54, 15, 24, 4, "", TUI_DIM);
 
     TextUI::Key k;
     ui.getKey(&k);
@@ -971,6 +990,28 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
       sel = imax(0, sel - 1);
     else if (k.vk == VirtualKey::VK_DOWN || k.vk == VirtualKey::VK_KP_DOWN)
       sel = imin(COUNT - 1, sel + 1);
+    else if (ITEMS[sel].kind == Kind::AutoBoot && (k.ascii == '+' || k.ascii == '-' ||
+             k.vk == VirtualKey::VK_PAGEUP || k.vk == VirtualKey::VK_PAGEDOWN ||
+             k.vk == VirtualKey::VK_KP_PAGEUP || k.vk == VirtualKey::VK_KP_PAGEDOWN ||
+             k.vk == VirtualKey::VK_LEFT || k.vk == VirtualKey::VK_RIGHT)) {
+      int step = (k.ascii == '+' || k.vk == VirtualKey::VK_PAGEDOWN || k.vk == VirtualKey::VK_KP_PAGEDOWN ||
+                  k.vk == VirtualKey::VK_RIGHT) ? 1 : -1;
+      *ITEMS[sel].number = imax(-1, imin(99, *ITEMS[sel].number + step));
+      modified = true;
+    }
+    else if (isEnter(k.vk) && ITEMS[sel].kind == Kind::AutoBoot) {
+      char buf[8];
+      snprintf(buf, sizeof(buf), "%d", *ITEMS[sel].number);
+      if (ui.textInput(ITEMS[sel].label, "Seconds, 0 = immediately, -1 = disabled", buf, 3)) {
+        char * end;
+        long n = strtol(buf, &end, 10);
+        if (end != buf && n >= -1 && n <= 99) {
+          *ITEMS[sel].number = (int) n;
+          modified = true;
+        } else
+          ui.message(ITEMS[sel].label, "Enter a number from -1 to 99.");
+      }
+    }
     else if (isEnter(k.vk)) {
       Item const & it = ITEMS[sel];
       bool typeIt = (it.kind == Kind::Text);
