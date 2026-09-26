@@ -68,9 +68,7 @@ extern "C" {
 
 
 
-using std::unique_ptr;
 
-using fabgl::StringList;
 using fabgl::imin;
 using fabgl::imax;
 
@@ -89,7 +87,6 @@ void loop();
 
 
 Preferences   preferences;
-InputBox      ibox;      // the SysReq menu, until it moves to text
 TextUI        ui;
 Machine     * machine;
 
@@ -506,122 +503,160 @@ static void fatal(char const * text)
 }
 
 
+// The guest's own text screen behind the menu, so it opens like a notebook BIOS's on-screen
+// display over whatever was running. Graphics modes cannot be shown on a text screen; they get a
+// plain backdrop, and come back untouched when the menu closes.
+static void drawGuestBackdrop()
+{
+  auto ga  = machine->graphicsAdapter();
+  auto emu = ui.guestEmulation();
+
+  if (emu == GraphicsAdapter::Emulation::PC_Text_80x25_16Colors && ui.guestBuffer()) {
+    auto buf = ui.guestBuffer();
+    for (int i = 0; i < 80 * 25; ++i)
+      ui.put(i % 80, i / 80, buf[i * 2], ui.guestBlink() ? (buf[i * 2 + 1] & 0x7f) : buf[i * 2 + 1]);
+  } else if (emu == GraphicsAdapter::Emulation::PC_Text_EGA_80x25_16Colors && ga->egaTextColumns() == 80) {
+    // characters in plane 0 and attributes in plane 1, from the displayed page on
+    auto ega  = machine->ega();
+    auto base = ga->egaStartAddress();
+    for (int i = 0; i < 80 * 25; ++i) {
+      uint8_t attr = ega->planeByte(1, base + i);
+      ui.put(i % 80, i / 80, ega->planeByte(0, base + i), ui.guestBlink() ? (attr & 0x7f) : attr);
+    }
+  } else
+    ui.clear(TUI_POST);
+}
+
+
+// Mount or eject a floppy from the menu. The current image decides where the file picker opens:
+// a mounted path is either absolute (ie "/spiffs/rescue.img") or relative to the SD card mount.
+static void sysReqFloppy(int drive)
+{
+  static char const * ACTIONS[] = { "Insert Disk Image...", "Eject" };
+  char title[16];
+  snprintf(title, sizeof(title), "Floppy %c", 'A' + drive);
+
+  int a = ui.menu(title, nullptr, ACTIONS, 2, 0);
+  char const * cur = machine->diskFilename(drive);
+
+  if (a == 0) {
+    constexpr int MAXPATH = 256;
+    char * dir  = (char*) malloc(MAXPATH);
+    char * name = (char*) malloc(MAXPATH);
+    char * path = (char*) malloc(MAXPATH * 2);
+    if (dir && name && path) {
+      strcpy(dir, SD_MOUNT_PATH);
+      name[0] = 0;
+      if (cur && *cur) {
+        char const * sep = strrchr(cur, '/');
+        if (sep) {
+          if (cur[0] == '/')
+            snprintf(dir, MAXPATH, "%.*s", imax((int)(sep - cur), 1), cur);
+          else
+            snprintf(dir, MAXPATH, "%s/%.*s", SD_MOUNT_PATH, (int)(sep - cur), cur);
+          strlcpy(name, sep + 1, MAXPATH);
+        } else
+          strlcpy(name, cur, MAXPATH);
+      }
+      if (setupFileDialog(ui, "Insert Disk Image", dir, MAXPATH, name, MAXPATH, false)) {
+        // the full path: images may live on the SD card or in the flash file system
+        snprintf(path, MAXPATH * 2, "%s%s%s", dir, strcmp(dir, "/") ? "/" : "", name);
+        machine->setDriveImage(drive, path);
+      }
+    }
+    free(dir);
+    free(name);
+    free(path);
+  } else if (a == 1) {
+    if (cur && *cur) {
+      // nullptr closes the image and flags a media change, so the guest does not carry on with
+      // the old disk's cached contents
+      machine->setDriveImage(drive, nullptr);
+      snprintf(title, sizeof(title), "Floppy %c", 'A' + drive);
+      ui.message(title, "Disk ejected.");
+    } else
+      ui.message(title, "The drive is already empty.");
+  }
+}
+
+
+// SysReq (Alt+PrintScreen). Runs in the emulator task, so the guest is frozen for as long as the
+// menu is open. It borrows the machine's own video adapter and gives it back exactly as it was;
+// the guest's video memory, CGA or EGA, is never touched.
 void sysReqCallback()
 {
-  machine->graphicsAdapter()->enableVideo(false);
-
-  // The InputBox allocates a frame buffer of its own, about 50 KB for 500x400 at four colours.
-  // With the EGA planes resident the largest free internal block is nearer 14 KB, so that
-  // allocation cannot succeed and FabGL hangs on it instead of failing -- which is why this menu
-  // hung, seemingly at random, only once a guest had been in an EGA mode. Park the planes in
-  // PSRAM for the duration and put them back afterwards; the guest's screen is unaffected.
-  bool egaParked = machine->suspendEGA();
-
-  // Then pick a size that fits what is actually left. 500x400 at four colours is 50000 bytes and
-  // the largest contiguous internal block is routinely below that even at a fresh boot, which is
-  // the real reason this menu hung "at random": FabGL does not fail that allocation, it hangs on
-  // it. Measure first, and if even the small layout will not fit, say so and carry on rather than
-  // taking the whole emulator down.
-  size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-
-  if (largest < 35000) {
-    printf("SysReq: largest free internal block is %u bytes, too little for the menu\n",
-           (unsigned) largest);
-    if (egaParked)
-      machine->resumeEGA();
-    machine->graphicsAdapter()->enableVideo(true);
+  if (!ui.begin(machine->graphicsAdapter())) {
+    printf("SysReq: no memory for the menu\n");
     return;
   }
+  drawGuestBackdrop();
 
-  if (largest >= 55000)
-    ibox.begin(VGA_640x480_60Hz, 500, 400, 4);   // 50000 bytes
-  else
-    ibox.begin(VGA_640x480_60Hz, 400, 300, 4);   // 30000 bytes
+  enum { M_FDA, M_FDB, M_RESTART_GUEST, M_RESTART_HOST, M_RETURN, M_COUNT };
+  static char const * LABELS[M_COUNT] = { "Floppy A", "Floppy B", "Restart Guest", "Restart Host", "Return to Guest" };
 
-  int s = ibox.menu("", "Select a command", "Restart Host;Restart Guest;Mount Disk;Eject Floppy;Continue");
-  switch (s) {
+  constexpr int W = 50, H = 13;
+  constexpr int X = (80 - W) / 2, Y = (25 - H) / 2;
 
-    // Restart Emulator
-    case 0:
-      esp_restart();
-      break;
-      
-    // Restart Machine
-    case 1:
-      machine->trigReset();
-      break;
+  int sel = M_RETURN;
+  bool done = false;
 
-    // Mount Disk
-    case 2:
-    {
-      int s = ibox.menu("", "Select Drive", "Floppy A (fd0);Floppy B (fd1)");
-      if (s > -1) {
-        constexpr int MAXNAMELEN = 256;
-        unique_ptr<char[]> dir(new char[MAXNAMELEN + 1] { 0 } );
-        unique_ptr<char[]> filename(new char[MAXNAMELEN + 1] { 0 } );
+  while (!done) {
 
-        // fileSelector() wants the folder and the bare filename separately. The mounted path is
-        // either absolute (ie "/spiffs/rescue.img") or relative to the SD card mount and may
-        // include a folder. Split it so the selector opens where the disk actually lives.
-        strcpy(dir.get(), SD_MOUNT_PATH);
-        if (machine->diskFilename(s)) {
-          char const * curr = machine->diskFilename(s);
-          char const * sep  = strrchr(curr, '/');
-          if (sep) {
-            if (curr[0] == '/')
-              snprintf(dir.get(), MAXNAMELEN + 1, "%.*s", imax((int)(sep - curr), 1), curr);
-            else
-              snprintf(dir.get(), MAXNAMELEN + 1, "%s/%.*s", SD_MOUNT_PATH, (int)(sep - curr), curr);
-            strcpy(filename.get(), sep + 1);
-          } else
-            strcpy(filename.get(), curr);
-        }
+    ui.box(X, Y, W, H, TUI_DIALOG);
+    ui.text(X + (W - 24) / 2, Y, " PCEmulator System Menu ", TUI_DIALOG_HEAD);
 
-        if (ibox.fileSelector("Select Disk Image", "Image Filename", dir.get(), MAXNAMELEN, filename.get(), MAXNAMELEN) == InputResult::Enter) {
-          // Hand setDriveImage() the full path. Images may live on the SD card or in the flash
-          // filesystem, so nothing here may assume a mount point -- stripping a hardcoded "/SD/"
-          // would turn "/spiffs/rescue.img" into "ffs/rescue.img".
-          unique_ptr<char[]> path(new char[MAXNAMELEN * 2 + 2] { 0 } );
-          snprintf(path.get(), MAXNAMELEN * 2 + 2, "%s/%s", dir.get(), filename.get());
-          machine->setDriveImage(s, path.get());
-        }
+    for (int i = 0; i < M_COUNT; ++i) {
+      uint8_t a = (i == sel) ? TUI_DIALOG_SEL : TUI_DIALOG;
+      int row = Y + 2 + i + (i >= M_RESTART_GUEST ? 1 : 0);    // a gap after the drives
+      ui.text(X + 2, row, "", a, W - 4);
+      ui.text(X + 4, row, LABELS[i], a);
+      if (i <= M_FDB) {
+        char const * fn = machine->diskFilename(i);
+        char const * s  = (fn && *fn) ? strrchr(fn, '/') : nullptr;
+        ui.text(X + 16, row, "[", a);
+        ui.text(X + 17, row, (fn && *fn) ? (s ? s + 1 : fn) : "Empty", a, W - 21);
+        ui.text(X + W - 4, row, "]", a);
       }
-      break;
     }
+    ui.textf(X + 3, Y + H - 3, TUI_DIALOG, "Host memory free: %u KB",
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+    ui.text(X + 2, Y + H - 1, " \x18\x19:Select  Enter:OK  Esc:Return ", TUI_DIALOG_HEAD);
 
-    // Eject Floppy
-    case 3:
-    {
-      // list both drives with what is currently in them, so it is clear what is being ejected
-      StringList drives;
-      for (int d = 0; d < 2; ++d) {
-        char const * fn = machine->diskFilename(d);
-        drives.appendFmt("Floppy %c (fd%d): %s", 'A' + d, d, (fn && *fn) ? fn : "<empty>");
-      }
-      int d = ibox.menu("Eject Floppy", "Select drive to eject", &drives);
-      if (d > -1) {
-        char const * fn = machine->diskFilename(d);
-        if (fn && *fn) {
-          // passing nullptr closes the image and flags the drive as changed, so the guest
-          // sees a media change rather than carrying on with the old disk
-          machine->setDriveImage(d, nullptr);
-          ibox.messageFmt("", nullptr, "OK", "Floppy %c ejected.", 'A' + d);
-        } else
-          ibox.messageFmt("", nullptr, "OK", "Floppy %c is already empty.", 'A' + d);
-      }
-      break;
+    TextUI::Key k;
+    ui.getKey(&k);
+    switch (k.vk) {
+      case VirtualKey::VK_UP:   case VirtualKey::VK_KP_UP:   sel = (sel + M_COUNT - 1) % M_COUNT; break;
+      case VirtualKey::VK_DOWN: case VirtualKey::VK_KP_DOWN: sel = (sel + 1) % M_COUNT; break;
+      case VirtualKey::VK_ESCAPE:
+        done = true;
+        break;
+      case VirtualKey::VK_RETURN: case VirtualKey::VK_KP_ENTER:
+        switch (sel) {
+          case M_FDA:
+          case M_FDB:
+            sysReqFloppy(sel);
+            break;
+          case M_RESTART_GUEST:
+            if (ui.message("Restart Guest", "Restart the guest machine (Y/N)?", "No;Yes") == 1) {
+              machine->trigReset();
+              done = true;
+            }
+            break;
+          case M_RESTART_HOST:
+            if (ui.message("Restart Host", "Restart the whole emulator (Y/N)?", "No;Yes") == 1)
+              esp_restart();
+            break;
+          default:
+            done = true;
+            break;
+        }
+        break;
+      default:
+        break;
     }
-
-    // Continue
-    default:
-      break;
   }
 
-  ibox.end();
-  if (egaParked)
-    machine->resumeEGA();
-  PS2Controller::keyboard()->enableVirtualKeys(false, false); // don't use virtual keys
-  machine->graphicsAdapter()->enableVideo(true);
+  ui.end();
 }
 
 
@@ -636,8 +671,10 @@ void setup()
 
   preferences.begin("PCEmulator", false);
 
-  // save some space reducing the UI queue of the FabGL dialogs that are still in use
-  fabgl::BitmappedDisplayController::queueSize = 128;
+  // Every FabGL display controller gets a queue for drawing primitives, sized here. The emulator's
+  // VGADirectController renders scanlines itself and never queues one, and FabGL's GUI, which
+  // did, is gone. So the queue only costs internal RAM: keep it minimal.
+  fabgl::BitmappedDisplayController::queueSize = 4;
 
   // uncomment to clear preferences
   //preferences.clear();

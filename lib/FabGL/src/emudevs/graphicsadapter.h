@@ -150,6 +150,16 @@ public:
   int  egaCharHeight() const                               { return m_egaCharHeight; }
   int  egaTextColumns() const                              { return m_egaTextColumns; }
   uint8_t egaPaletteEntry(int i) const                     { return m_egaPalette[i & 15]; }
+
+  // PCEmulator: the state an overlay (the SysReq menu) has to put back exactly as it found it
+  uint8_t const * videoBuffer() const                      { return m_videoBuffer; }
+  int  cursorRow() const                                   { return m_cursorRow; }
+  int  cursorCol() const                                   { return m_cursorCol; }
+  int  cursorStart() const                                 { return m_cursorStart; }
+  int  cursorEnd() const                                   { return m_cursorEnd; }
+  bool cursorVisible() const                               { return m_cursorVisible; }
+  bool bit7Blink() const                                   { return m_bit7blink; }
+  uint32_t egaStartAddress() const                         { return m_egaStart; }
   // raw VGA byte the renderer would emit for attribute colour i, 0 if the table is missing
   uint16_t egaRawPair(int i) const                         { return m_egaPal2 ? m_egaPal2[(i & 15) * 0x11] : 0; }
 

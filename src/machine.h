@@ -220,12 +220,6 @@ public:
   // must fall back to the CGA path.
   bool setEGAMode(int biosMode);
 
-  // Park the EGA planes in PSRAM and hand their internal RAM back, then put them back exactly as
-  // they were. Anything that needs a big contiguous internal allocation while a mode is up has to
-  // do this first: the planes are 128 KB of internal RAM and leave very little behind them.
-  bool suspendEGA();
-  void resumeEGA();
-
   // Draw one character into the planes for an EGA graphics mode, at the BIOS cursor.
   // The BIOS asks for this because there is no linear frame buffer to poke in these modes.
   void egaDrawChar(uint8_t ch, uint8_t colour);
@@ -436,8 +430,6 @@ private:
   uint8_t                  m_EGAACColorPlaneEnable;  // AC register 0x12, incl. the status mux
   uint32_t                 m_EGAFramePos;            // raster position, in status register reads
   int64_t                  m_EGARetraceUs;           // esp_timer time the last vertical retrace began
-  uint32_t *               m_EGAPark;                // planes parked in PSRAM, null when resident
-  int                      m_EGAParkBanks;           // how many banks the mode addressed when parked
   int                      m_EGAStride;              // byte-columns per scanline, to re-register
   uint8_t                  m_EGAMiscOutput;
   uint8_t                  m_EGASwitches;     // EGA configuration DIP block, read via 0x3c2

@@ -79,6 +79,16 @@ bool TextUI::begin(GraphicsAdapter * adapter)
 {
   m_adapter = adapter;
 
+  m_saved.emulation     = adapter->emulation();
+  m_saved.buffer        = adapter->videoBuffer();
+  m_saved.cursorRow     = adapter->cursorRow();
+  m_saved.cursorCol     = adapter->cursorCol();
+  m_saved.cursorStart   = adapter->cursorStart();
+  m_saved.cursorEnd     = adapter->cursorEnd();
+  m_saved.cursorVisible = adapter->cursorVisible();
+  m_saved.blink         = adapter->bit7Blink();
+  m_saved.videoEnabled  = adapter->videoEnabled();
+
   // read by the scanline interrupt, so it has to be internal RAM
   if (!m_cells)
     m_cells = (uint8_t*) heap_caps_malloc(SCREENBYTES, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
@@ -103,10 +113,22 @@ void TextUI::end()
   if (!m_adapter)
     return;
   suspend();
-  // Hand the adapter back with no emulation selected, the state a fresh one is in, so the
-  // machine's first mode set configures everything itself.
+
+  // Through "no emulation" first: that releases the text mode's font copy, which a graphics mode
+  // coming back would otherwise leave allocated.
   m_adapter->setEmulation(GraphicsAdapter::Emulation::None);
-  m_adapter->setCursorVisible(false);
+
+  if (m_saved.emulation != GraphicsAdapter::Emulation::None) {
+    m_adapter->setEmulation(m_saved.emulation);
+    m_adapter->setVideoBuffer(m_saved.buffer);
+    // the shape builds a glyph from the mode's font, which only the CGA text modes have
+    if (m_saved.emulation == GraphicsAdapter::Emulation::PC_Text_80x25_16Colors ||
+        m_saved.emulation == GraphicsAdapter::Emulation::PC_Text_40x25_16Colors)
+      m_adapter->setCursorShape(m_saved.cursorStart, m_saved.cursorEnd);
+    m_adapter->setCursorPos(m_saved.cursorRow, m_saved.cursorCol);
+    m_adapter->setBit7Blink(m_saved.blink);
+  }
+  m_adapter->setCursorVisible(m_saved.emulation != GraphicsAdapter::Emulation::None && m_saved.cursorVisible);
   // The emulated 8042 turns virtual keys off anyway (i8042::init()), but from the emulator task,
   // where the deleted converter task's stack is only reclaimed once the idle task gets to run.
   // Doing it here, on the setup task, gives the memory back straight away.
@@ -115,6 +137,9 @@ void TextUI::end()
   vTaskDelay(20 / portTICK_PERIOD_MS);
   heap_caps_free(m_cells);
   m_cells   = nullptr;
+
+  if (m_saved.emulation != GraphicsAdapter::Emulation::None && m_saved.videoEnabled)
+    m_adapter->enableVideo(true);
   m_adapter = nullptr;
 }
 
@@ -432,9 +457,13 @@ int TextUI::menu(char const * title, char const * prompt, char const * const * i
 
   SavedScreen saved(this);
 
+  static char const * HELP = " \x18\x19:Move  Enter:Select  Esc:Cancel ";
+
+  // wide enough for the title, the prompt, every item and the key help in the bottom border
   int w = fabgl::imax(title ? (int) strlen(title) + 6 : 0, prompt ? (int) strlen(prompt) + 4 : 0);
   for (int i = 0; i < count; ++i)
     w = fabgl::imax(w, (int) strlen(items[i]) + 6);
+  w = fabgl::imax(w, (int) strlen(HELP) + 4);
   w = fabgl::imin(w, COLS - 4);
   int visible = fabgl::imin(count, 14);
   int top     = prompt ? 2 : 1;
@@ -450,7 +479,7 @@ int TextUI::menu(char const * title, char const * prompt, char const * const * i
   }
   if (prompt)
     text(x + 2, y + 1, prompt, TUI_DIALOG);
-  text(x + 2, y + h - 1, " \x18\x19:Move  Enter:Select  Esc:Cancel ", TUI_DIALOG_HEAD);
+  text(x + 2, y + h - 1, HELP, TUI_DIALOG_HEAD);
 
   int sel    = fabgl::imax(0, fabgl::imin(selected, count - 1));
   int scroll = fabgl::imax(0, sel - visible + 1);
@@ -498,8 +527,11 @@ bool TextUI::textInput(char const * title, char const * prompt, char * buf, int 
   SavedScreen saved(this);
 
   int fieldWidth = fabgl::imin(fabgl::imax(maxLength + 1, 20), COLS - 10);
+  static char const * HELP = " Enter:OK  Esc:Cancel ";
+
   int w = fabgl::imax(fieldWidth + 6, prompt ? (int) strlen(prompt) + 6 : 0);
   w = fabgl::imax(w, title ? (int) strlen(title) + 6 : 0);
+  w = fabgl::imax(w, (int) strlen(HELP) + 4);
   int h = 6;
   int x = (COLS - w) / 2;
   int y = (ROWS - h) / 2;
@@ -512,7 +544,7 @@ bool TextUI::textInput(char const * title, char const * prompt, char * buf, int 
   }
   if (prompt)
     text(x + 3, y + 1, prompt, TUI_DIALOG);
-  text(x + 2, y + h - 1, " Enter:OK  Esc:Cancel ", TUI_DIALOG_HEAD);
+  text(x + 2, y + h - 1, HELP, TUI_DIALOG_HEAD);
 
   int fx  = x + 3;
   int fy  = y + 3;

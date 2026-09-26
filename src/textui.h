@@ -66,10 +66,18 @@ public:
   TextUI();
   ~TextUI();
 
-  // takes over the adapter with a text screen of its own; end() gives it back unconfigured, so
-  // the machine can set whatever mode it needs from scratch
+  // Takes over the adapter with a text screen of its own, and end() gives it back in exactly the
+  // state it was found in: mode, buffer, cursor and blink. At power-on that state is "no
+  // emulation", so the machine sets up its first mode from scratch; over a running guest (the
+  // SysReq menu) the guest's display simply comes back. The guest's video memory is never touched.
   bool begin(fabgl::GraphicsAdapter * adapter);
   void end();
+
+  // what was on the adapter when begin() took it over, so an overlay can show the guest's text
+  // screen underneath itself
+  fabgl::GraphicsAdapter::Emulation guestEmulation() const  { return m_saved.emulation; }
+  uint8_t const * guestBuffer() const                       { return m_saved.buffer; }
+  bool guestBlink() const                                   { return m_saved.blink; }
 
   // step aside for something that drives the VGA output itself (the remaining FabGL dialogs), and
   // come back afterwards with the screen exactly as it was
@@ -136,7 +144,17 @@ private:
 
   struct SavedScreen;
 
+  struct AdapterState {
+    fabgl::GraphicsAdapter::Emulation emulation;
+    uint8_t const *                   buffer;
+    int                               cursorRow, cursorCol, cursorStart, cursorEnd;
+    bool                              cursorVisible;
+    bool                              blink;
+    bool                              videoEnabled;
+  };
+
   fabgl::GraphicsAdapter * m_adapter;
+  AdapterState             m_saved;
   uint8_t *                m_cells;
   bool                     m_active;
   int                      m_postRow;
