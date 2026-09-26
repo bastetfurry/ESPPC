@@ -7,6 +7,7 @@
  */
 
 
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_heap_caps.h"
@@ -43,25 +44,26 @@ EGA::~EGA()
 
 bool EGA::allocVRAM(int banks)
 {
-  if (banks != 1 && banks != 2 && banks != 4)
+  if (banks != 1 && banks != 2 && banks != 4 && banks != 8)
     banks = EGA_BANK_COUNT;
-
-  // release anything above what this mode needs
-  for (int i = banks; i < EGA_BANK_COUNT; ++i) {
-    if (m_bank[i]) {
-      heap_caps_free(m_bank[i]);
-      m_bank[i] = nullptr;
-    }
-  }
 
   m_bankMask   = (uint32_t)banks - 1;
   m_offsetMask = (uint32_t)banks * EGA_BANK_ENTRIES - 1;
 
-  for (int i = 0; i < banks; ++i) {
+  // Every bank is made resident whatever the mode addresses, and none is ever given back here.
+  // Sizing the allocation to the mode meant a switch from text (four banks) to graphics (eight)
+  // had to find four more 16 KB blocks at a point where the display driver's own buffers had
+  // just been reallocated into the holes: 85 KB free, but in pieces of 16372 bytes, twelve short.
+  // The EGA ROM's POST switches modes exactly like that, dropped to CGA, and failed its plane
+  // test with 1 long 3 short. Allocated once, early, the planes never have to be found again.
+  for (int i = 0; i < EGA_BANK_COUNT; ++i) {
     if (!m_bank[i]) {
       m_bank[i] = (uint32_t*) heap_caps_malloc(EGA_BANK_ENTRIES * sizeof(uint32_t),
                                                MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
       if (!m_bank[i]) {
+        printf("EGA: bank %d of %d failed, internal heap free %d (largest %d)\n", i, EGA_BANK_COUNT,
+               heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+               heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         freeVRAM();
         return false;
       }

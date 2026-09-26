@@ -781,7 +781,13 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Graphics_HGC_720x348(void * arg,
 // VRAM is banked so it can be allocated on a fragmented heap, so the byte-column offset is
 // resolved through the bank table on each iteration -- a shift, a load and a mask.
 
-#define EGA_RENDER_BANK(o)  (ga->m_egaBanks[((o) >> 13) & ga->m_egaBankMask][(o) & 8191])
+// These two must match EGA_BANK_SHIFT and EGA_BANK_ENTRIES in src/ega.h. They are constants
+// rather than values carried in the adapter because this indexes once per byte-column on the
+// scanline hot path.
+#define EGA_BANK_SHIFT_R   12
+#define EGA_BANK_INDEXMASK 4095
+
+#define EGA_RENDER_BANK(o)  (ga->m_egaBanks[((o) >> EGA_BANK_SHIFT_R) & ga->m_egaBankMask][(o) & EGA_BANK_INDEXMASK])
 
 
 void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_t * dest, int scanLine)
@@ -906,7 +912,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
 
     // fetched once per character, then used for every scanline in this call
     uint32_t o = (rowBase + col) & omask;
-    uint32_t w = banks[(o >> 13) & bmask][o & 8191];
+    uint32_t w = banks[(o >> EGA_BANK_SHIFT_R) & bmask][o & EGA_BANK_INDEXMASK];
 
     uint8_t ch   = (uint8_t) w;             // plane 0: character
     uint8_t attr = (uint8_t)(w >> 8);       // plane 1: attribute
@@ -933,7 +939,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
 
       // plane 2 holds the glyphs, 32 bytes per character -- rewrite it and the font changes
       uint32_t go   = ((uint32_t)ch * 32 + gr) & omask;
-      uint8_t  bits = (uint8_t)(banks[(go >> 13) & bmask][go & 8191] >> 16);
+      uint8_t  bits = (uint8_t)(banks[(go >> EGA_BANK_SHIFT_R) & bmask][go & EGA_BANK_INDEXMASK] >> 16);
 
       if (cursorHere && gr >= charHeight - 2)
         bits = 0xff;

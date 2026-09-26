@@ -394,7 +394,8 @@ void Machine::reset()
   m_MC146818.reset();
 
   // A warm boot (Ctrl+Alt+Del jumps to the reset vector) tears down whatever mode was up, so the
-  // adapter starts from the same place a cold boot does.
+  // adapter starts from the same place a cold boot does. On a machine with the EGA ROM this keeps
+  // the planes (see leaveEGAMode()), which the block below then reuses.
   leaveEGAMode();
 
   // On a machine with a real EGA BIOS that is not the CGA adapter: POST re-runs the video option
@@ -413,6 +414,7 @@ void Machine::reset()
       m_EGAActive = true;
     } else {
       // no room: come back as a plain CGA machine rather than with no frame buffer at all
+      printf("EGA BIOS: no room for planar memory after reset, falling back to CGA\n");
       s_videoMemory = (uint8_t*) heap_caps_malloc(VIDEOMEMSIZE, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
       m_frameBuffer = s_videoMemory;
       m_egaBiosLoaded = false;
@@ -868,17 +870,13 @@ bool Machine::suspendEGA()
   // the megabyte just past it is free for this.
   m_EGAPark = (uint32_t*) (s_memory + RAM_SIZE);
 
-  // Put back exactly what was there. A graphics mode allocates only the banks it needs -- two for
-  // mode 0Eh -- so re-allocating all four on resume would change the offset mask the renderer and
-  // the guest are working to.
+  // Every bank is resident, but the mode may address fewer of them (text uses four). Keep that
+  // count so resume puts back the same offset mask the renderer and the guest are working to.
   auto banks = m_EGA.banks();
-  m_EGAParkBanks = 0;
-  for (int b = 0; b < EGA_BANK_COUNT; ++b) {
-    if (!banks[b])
-      break;
-    memcpy(m_EGAPark + (size_t) b * EGA_BANK_ENTRIES, banks[b], EGA_BANK_ENTRIES * sizeof(uint32_t));
-    ++m_EGAParkBanks;
-  }
+  m_EGAParkBanks = (int) m_EGA.bankMask() + 1;
+  for (int b = 0; b < EGA_BANK_COUNT; ++b)
+    if (banks[b])
+      memcpy(m_EGAPark + (size_t) b * EGA_BANK_ENTRIES, banks[b], EGA_BANK_ENTRIES * sizeof(uint32_t));
 
   // stop the renderer before the memory goes away, and clear the pointer it guards on so a
   // scanline callback that is already in flight cannot follow a freed bank
@@ -902,10 +900,10 @@ void Machine::resumeEGA()
 
   if (m_EGA.allocVRAM(m_EGAParkBanks)) {
     auto banks = m_EGA.banks();
-    for (int b = 0; b < m_EGAParkBanks; ++b)
+    for (int b = 0; b < EGA_BANK_COUNT; ++b)
       if (banks[b])
         memcpy(banks[b], m_EGAPark + (size_t) b * EGA_BANK_ENTRIES, EGA_BANK_ENTRIES * sizeof(uint32_t));
-    printf("EGA: %d bank(s) restored from PSRAM\n", m_EGAParkBanks);
+    printf("EGA: planes restored from PSRAM, %d bank(s) addressed\n", m_EGAParkBanks);
     m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), m_EGAStride, m_EGA.bankMask(), m_EGA.offsetMask());
   } else {
     // the RAM did not come back, so there is nothing to show; say so rather than render garbage
@@ -934,12 +932,10 @@ bool Machine::setEGAMode(int biosMode)
       s_videoMemory = nullptr;
     }
 
-    // Two banks, not four. Text needs offsets 0..1999 for the character cells and 0..8191 for the
-    // font in plane 2, so 16384 byte-columns is ample -- and asking for all four meant that coming
-    // back from a graphics mode, which allocates only what it needs, had to find two more 32 KB
-    // blocks. With the planes already resident there is nowhere near that much left, so the text
-    // mode failed and the machine dropped to CGA for the rest of the session.
-    if (!m_EGA.allocVRAM(2)) {
+    // Text addresses four banks: offsets 0..1999 for the character cells and 0..8191 for the font
+    // in plane 2, so 16384 byte-columns is ample. The other four stay resident all the same; see
+    // EGA::allocVRAM() for why the planes are never handed back on a mode change.
+    if (!m_EGA.allocVRAM(4)) {
       // The CGA buffer has already been released at this point, so it has to come back before
       // the caller falls through to the CGA path -- otherwise that path renders from a null
       // pointer and the video stays dark with no clue as to why.
@@ -1008,7 +1004,7 @@ bool Machine::setEGAMode(int biosMode)
     default:   return false;
   }
 
-  // Always the full four banks.
+  // Always every bank, 128 KB.
   //
   // Sizing this to what one page of the mode needs looked like a free 64 KB in 640x200, and it
   // is wrong: a mode's displayed page is not all the memory software uses. Mode 0Eh has a page
@@ -1016,7 +1012,7 @@ bool Machine::setEGAMode(int biosMode)
   // software page-flips through them. With two banks everything past byte-column 16384 wrapped
   // onto page 0, which is what made Planet X3 glitch.
   //
-  // Four banks give 32768 byte-columns per plane, so two pages in mode 0Eh and four in 0Dh --
+  // All of them give 32768 byte-columns per plane, so two pages in mode 0Eh and four in 0Dh --
   // still half of a real EGA's 64 KB per plane, but enough for the double buffering software
   // actually does.
   constexpr int banks = EGA_BANK_COUNT;
@@ -1033,13 +1029,7 @@ bool Machine::setEGAMode(int biosMode)
     s_videoMemory = nullptr;
   }
 
-  // Start from nothing. allocVRAM() keeps the banks that are already resident and tops up, so
-  // coming here from EGA text, which holds two, this mode had to find its other two 32 KB blocks
-  // alongside them -- and with the largest free block around 47 KB the first fits and the second
-  // does not. Releasing them first turns that into four allocations out of roughly 174 KB. The
-  // contents are not worth keeping: a mode set clears the screen anyway.
-  m_EGA.freeVRAM();
-
+  // The planes normally stay resident from the text mode before, so this allocates nothing.
   if (!m_EGA.allocVRAM(banks)) {
     // Out of internal memory. allocVRAM() frees every bank on the way out, so by now the adapter
     // is holding an array of null pointers while it is still in an EGA emulation -- and this used
@@ -1110,7 +1100,11 @@ void Machine::leaveEGAMode()
 
   m_graphicsAdapter.enableVideo(false);
 
-  m_EGA.freeVRAM();
+  // With the EGA ROM fitted the card comes back -- its POST alone switches to mode 7 and back --
+  // so the planes stay resident rather than being hunted for again on a fragmented heap. Only a
+  // CGA machine that visited an EGA mode through our own BIOS gives them back.
+  if (!m_egaBiosLoaded)
+    m_EGA.freeVRAM();
   m_EGAActive = false;
 
   if (!s_videoMemory)

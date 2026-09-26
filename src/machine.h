@@ -431,7 +431,7 @@ private:
   uint8_t                  m_EGAACColorPlaneEnable;  // AC register 0x12, incl. the status mux
   uint32_t                 m_EGAFramePos;            // raster position, in status register reads
   uint32_t *               m_EGAPark;                // planes parked in PSRAM, null when resident
-  int                      m_EGAParkBanks;           // how many banks were resident when parked
+  int                      m_EGAParkBanks;           // how many banks the mode addressed when parked
   int                      m_EGAStride;              // byte-columns per scanline, to re-register
   uint8_t                  m_EGAMiscOutput;
   uint8_t                  m_EGASwitches;     // EGA configuration DIP block, read via 0x3c2

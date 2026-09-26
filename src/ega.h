@@ -18,9 +18,8 @@
   planes at once. The renderer wants the same layout, because a scanline needs all four planes of a
   byte-column together.
 
-  Memory is split into four banks of 32 KB so that it can be allocated on a fragmented heap. The
-  largest free internal block measured on the target board is about 110 KB, which is just under the
-  112 KB that mode 10h needs as a single allocation. Four 32 KB blocks always fit.
+  Memory is split into eight banks of 16 KB so that it can be allocated on a fragmented heap, and
+  it is allocated once and kept: see EGA::allocVRAM().
 
   Addressable offset range is 0..0x7FFF (32 K byte-columns per plane), which covers mode 10h's
   28000. A real EGA has 64 KB per plane; the extra is off-screen memory we cannot afford.
@@ -34,10 +33,19 @@
 #include <stddef.h>
 
 
-// bytes per bank and number of banks -- 4 * 8192 uint32 = 4 * 32 KB = 128 KB total
-#define EGA_BANK_ENTRIES  8192
-#define EGA_BANK_SHIFT    13
-#define EGA_BANK_COUNT    4
+// Bytes per bank and number of banks -- 8 * 4096 uint32 = 8 * 16 KB = 128 KB total, the same
+// amount as before in half sized pieces.
+//
+// The size matters more than the total. Internal RAM here is chopped up enough that the largest
+// free block sits around 47 KB with a mode running, so four 32 KB banks could not reliably be
+// placed: a mode change or coming back from the SysReq menu would find three and fail on the
+// fourth, leaving the machine with no video. Sixteen KB pieces fit the holes that actually exist.
+//
+// EGA_BANK_SHIFT and EGA_BANK_ENTRIES are mirrored in the renderers in graphicsadapter.cpp, which
+// index banks on the per scanline hot path and cannot afford a runtime divide. Change both.
+#define EGA_BANK_ENTRIES  4096
+#define EGA_BANK_SHIFT    12
+#define EGA_BANK_COUNT    8
 #define EGA_OFFSET_MASK   ((EGA_BANK_ENTRIES * EGA_BANK_COUNT) - 1)   // 0x7FFF
 
 
@@ -48,12 +56,13 @@ public:
   EGA();
   ~EGA();
 
-  // Allocates video memory in internal RAM, returns false if any allocation fails.
+  // Makes all EGA_BANK_COUNT banks resident in internal RAM (keeping any that already are) and
+  // sets the address masks for a mode that uses the first `banks` of them. Returns false, with
+  // everything freed, if the memory cannot be found.
   //
-  // banks must be 1, 2 or 4 so that the bank index can be masked rather than compared, and is
-  // chosen from what the mode actually needs: mode 0Dh addresses 8000 byte-columns, 0Eh 16000,
-  // and 0Fh/10h 28000. Allocating the worst case for every mode wasted 64 KB of internal RAM in
-  // 640x200, which is the mode a lot of EGA software actually uses.
+  // banks must be 1, 2, 4 or 8 so that the bank index can be masked rather than compared. It only
+  // narrows the addressing; the memory is always the full set, because reallocating it on mode
+  // changes is what fragmented the heap badly enough to lose it (see allocVRAM()).
   bool allocVRAM(int banks);
   void freeVRAM();
   bool hasVRAM()                                 { return m_bank[0] != nullptr; }
