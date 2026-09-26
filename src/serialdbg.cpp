@@ -898,6 +898,17 @@ void SerialDebug::cmdVideoState()
       ets_delay_us(50);
     }
     writeFmt("scanline ISR %s\r\n", moved ? "running" : "STOPPED");
+
+    // Timing since the last "v": the longest run, the shortest gap between runs (a short one means
+    // a run started late), and how many runs the DMA overtook -- each of those is a visible glitch.
+    using fabgl::VGADirectController;
+    uint32_t maxC = VGADirectController::s_isrMaxCycles, minP = VGADirectController::s_isrMinPeriod;
+    writeFmt("scanline ISR longest %u us, shortest gap %u us, overtaken by DMA %u (since last v)\r\n",
+             (unsigned)(maxC / 240), minP == 0xffffffff ? 0u : (unsigned)(minP / 240),
+             (unsigned) VGADirectController::s_isrOverruns);
+    VGADirectController::s_isrMaxCycles = 0;
+    VGADirectController::s_isrMinPeriod = 0xffffffff;
+    VGADirectController::s_isrOverruns  = 0;
   }
 
   // A picture that is generated correctly but shows black is usually the colour table: every

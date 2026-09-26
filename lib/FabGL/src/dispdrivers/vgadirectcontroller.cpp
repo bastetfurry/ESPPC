@@ -270,6 +270,12 @@ void VGADirectController::rawDrawBitmap_RGBA8888(int destX, int destY, Bitmap co
 }
 
 
+volatile uint32_t VGADirectController::s_isrMaxCycles  = 0;
+volatile uint32_t VGADirectController::s_isrMinPeriod  = 0xffffffff;
+volatile uint32_t VGADirectController::s_isrOverruns   = 0;
+volatile uint32_t VGADirectController::s_isrLastStart  = 0;
+
+
 void IRAM_ATTR VGADirectController::ISRHandler(void * arg)
 {
   #if FABGLIB_VGAXCONTROLLER_PERFORMANCE_CHECK
@@ -277,6 +283,10 @@ void IRAM_ATTR VGADirectController::ISRHandler(void * arg)
   #endif
 
   if (I2S1.int_st.out_eof) {
+
+    uint32_t isrStart = getCycleCount();
+    uint32_t period   = isrStart - s_isrLastStart;
+    s_isrLastStart    = isrStart;
 
     auto ctrl = (VGADirectController *) arg;
 
@@ -300,6 +310,18 @@ void IRAM_ATTR VGADirectController::ISRHandler(void * arg)
 
     if (s_scanLine >= viewPortHeight)
       s_VSync = true;
+
+    uint32_t took = getCycleCount() - isrStart;
+    if (took > s_isrMaxCycles)
+      s_isrMaxCycles = took;
+    // a gap spanning vertical blanking is long; the shortest one shows how late a run can start
+    if (period < s_isrMinPeriod && period > 1000)
+      s_isrMinPeriod = period;
+    // The half of the line buffer just rendered is the one the DMA reaches at its next end of
+    // buffer. If that has already happened, the DMA started sending it half written: a real
+    // glitch, however late the run started or however short the gap before it looked.
+    if ((volatile lldesc_t*) I2S1.out_eof_des_addr != desc)
+      ++s_isrOverruns;
 
   }
 

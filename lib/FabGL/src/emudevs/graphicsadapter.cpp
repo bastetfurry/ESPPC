@@ -619,6 +619,26 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_40x25_16Colors(void * arg, 
 }
 
 
+// PCEmulator: text mode pixel expansion, four pixels per 32 bit word. TEXT_NIBMASK[n] has 0xff in
+// the byte of every pixel whose bit is set in glyph nibble n (bit 3 = leftmost), with FabGL's
+// pairwise byte swizzle (pixel i lives in byte i ^ 2) already applied. A glyph row is then two
+// word stores, (fg & mask) | (bg & ~mask), instead of eight table lookups and eight byte stores.
+// The text renderers written the old way took about 245 us of a 244 us budget, so any extra load
+// on the other core (disk I/O in particular) made them overrun and the screen glitched.
+static const DRAM_ATTR uint32_t TEXT_NIBMASK[16] = {
+  0x00000000, 0x0000ff00, 0x000000ff, 0x0000ffff,
+  0xff000000, 0xff00ff00, 0xff0000ff, 0xff00ffff,
+  0x00ff0000, 0x00ffff00, 0x00ff00ff, 0x00ffffff,
+  0xffff0000, 0xffffff00, 0xffff00ff, 0xffffffff,
+};
+
+// The same for the 40 column modes, where every pixel is doubled: TEXT_PAIRMASK[v] covers two bits
+// of the glyph (bit 1 = left) as four pixels, one word.
+static const DRAM_ATTR uint32_t TEXT_PAIRMASK[4] = {
+  0x00000000, 0x0000ffff, 0xffff0000, 0xffffffff,
+};
+
+
 void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_80x25_16Colors(void * arg, uint8_t * dest, int scanLine)
 {
   auto ga = (GraphicsAdapter*) arg;
@@ -663,53 +683,26 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_80x25_16Colors(void * arg, 
     uint8_t bg = rawLUT[charAttr >> 4];
     uint8_t fg = blink ? bg : rawLUT[charAttr & 0xf];
 
-    const uint8_t colors[2] = { bg, fg };
+    uint32_t fgw = fg * 0x01010101u;
+    uint32_t bgw = bg * 0x01010101u;
 
     uint8_t const * charBitmapPtr = fontData + charIdx * CHARSIZEINBYTES;
+    uint8_t const * cursorBitmapPtr = (showCursor && textCol == cursorCol) ? ga->m_cursorGlyph + (charScanline * CHARWIDTHINBYTES) : nullptr;
 
     auto destptr = dest;
 
-    if (showCursor && textCol == cursorCol) {
-
-      uint8_t const * cursorBitmapPtr = ga->m_cursorGlyph + (charScanline * CHARWIDTHINBYTES);
-
-      for (int charRow = 0; charRow < LINES / 2; ++charRow) {
-
-        uint32_t charBitmap = *charBitmapPtr | *cursorBitmapPtr;
-
-        *(destptr + 0) = colors[(bool)(charBitmap & 0x20)];
-        *(destptr + 1) = colors[(bool)(charBitmap & 0x10)];
-        *(destptr + 2) = colors[(bool)(charBitmap & 0x80)];
-        *(destptr + 3) = colors[(bool)(charBitmap & 0x40)];
-        *(destptr + 4) = colors[(bool)(charBitmap & 0x02)];
-        *(destptr + 5) = colors[(bool)(charBitmap & 0x01)];
-        *(destptr + 6) = colors[(bool)(charBitmap & 0x08)];
-        *(destptr + 7) = colors[(bool)(charBitmap & 0x04)];
-
-        destptr += SCREENWIDTH;
-        charBitmapPtr += CHARWIDTHINBYTES;
+    for (int charRow = 0; charRow < LINES / 2; ++charRow) {
+      uint8_t charBitmap = *charBitmapPtr;
+      if (cursorBitmapPtr) {
+        charBitmap |= *cursorBitmapPtr;
         cursorBitmapPtr += CHARWIDTHINBYTES;
       }
-
-    } else {
-
-      for (int charRow = 0; charRow < LINES / 2; ++charRow) {
-
-        uint32_t charBitmap = *charBitmapPtr;
-
-        *(destptr + 0) = colors[(bool)(charBitmap & 0x20)];
-        *(destptr + 1) = colors[(bool)(charBitmap & 0x10)];
-        *(destptr + 2) = colors[(bool)(charBitmap & 0x80)];
-        *(destptr + 3) = colors[(bool)(charBitmap & 0x40)];
-        *(destptr + 4) = colors[(bool)(charBitmap & 0x02)];
-        *(destptr + 5) = colors[(bool)(charBitmap & 0x01)];
-        *(destptr + 6) = colors[(bool)(charBitmap & 0x08)];
-        *(destptr + 7) = colors[(bool)(charBitmap & 0x04)];
-
-        destptr += SCREENWIDTH;
-        charBitmapPtr += CHARWIDTHINBYTES;
-      }
-
+      uint32_t m0 = TEXT_NIBMASK[charBitmap >> 4];
+      uint32_t m1 = TEXT_NIBMASK[charBitmap & 0x0f];
+      ((uint32_t *) destptr)[0] = (fgw & m0) | (bgw & ~m0);
+      ((uint32_t *) destptr)[1] = (fgw & m1) | (bgw & ~m1);
+      destptr += SCREENWIDTH;
+      charBitmapPtr += CHARWIDTHINBYTES;
     }
 
     dest += 8;
@@ -834,19 +827,28 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_
   for (int line = 0; line < LINES; ++line) {
 
     uint32_t off = (ga->m_egaStart + (scanLine + line) * ga->m_egaStride) & ga->m_egaOffsetMask;
-    auto     d16 = (uint16_t*) (dest + line * SCREENWIDTH);
+    auto     d32 = (uint32_t*) (dest + line * SCREENWIDTH);
 
-    for (int col = 0; col < WIDTHINBYTES; ++col) {
-      uint32_t w = EGA_RENDER_BANK(off);
-      off = (off + 1) & ga->m_egaOffsetMask;
+    // A line is 80 consecutive byte-columns and a bank is EGA_BANK_INDEXMASK + 1 of them, so it
+    // lies in one bank or runs into the next exactly once (the offset mask can also wrap it back
+    // to the start, which is the same case). Resolving the bank per run rather than per column,
+    // and storing two palette pairs as one word, took the longest call in Windows from 59 to
+    // 55 us, against 63.6 us between calls at 640x480.
+    for (int col = 0; col < WIDTHINBYTES; ) {
+      uint32_t idx = off & EGA_BANK_INDEXMASK;
+      int      run = fabgl::imin(WIDTHINBYTES - col, (int)(EGA_BANK_INDEXMASK + 1 - idx));
+      uint32_t const * src = &ga->m_egaBanks[(off >> EGA_BANK_SHIFT_R) & ga->m_egaBankMask][idx];
 
-      uint32_t i = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
+      for (int k = 0; k < run; ++k) {
+        uint32_t w = src[k];
+        uint32_t i = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
+        d32[0] = (uint32_t)P[i & 0xff]         | ((uint32_t)P[(i >> 8) & 0xff] << 16);
+        d32[1] = (uint32_t)P[(i >> 16) & 0xff] | ((uint32_t)P[i >> 24] << 16);
+        d32 += 2;
+      }
 
-      d16[0] = P[i & 0xff];
-      d16[1] = P[(i >> 8) & 0xff];
-      d16[2] = P[(i >> 16) & 0xff];
-      d16[3] = P[i >> 24];
-      d16 += 4;
+      col += run;
+      off  = (off + run) & ga->m_egaOffsetMask;
     }
   }
 }
@@ -949,42 +951,49 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
     if (blink)
       fg = bg;
 
-    const uint8_t colors[2] = { bg, fg };
-
     bool cursorHere = showCursor && col == cursorCol;
     uint8_t * out = dest + col * charWidth;
 
-    for (int i = 0; i < LINES; ++i) {
+    // Plane 2 holds the glyphs, 32 bytes per character -- rewrite it and the font changes. A
+    // character's 32 bytes never straddle a bank (banks are EGA_BANK_INDEXMASK + 1 entries, a
+    // multiple of 32), so the bank is resolved once and the rows are read through one pointer.
+    uint32_t go = ((uint32_t)ch * 32 + glyphRow) & omask;
+    uint32_t const * glyph = &banks[(go >> EGA_BANK_SHIFT_R) & bmask][go & EGA_BANK_INDEXMASK];
 
-      int gr = glyphRow + i;
+    if (charWidth == 8) {
 
-      // plane 2 holds the glyphs, 32 bytes per character -- rewrite it and the font changes
-      uint32_t go   = ((uint32_t)ch * 32 + gr) & omask;
-      uint8_t  bits = (uint8_t)(banks[(go >> EGA_BANK_SHIFT_R) & bmask][go & EGA_BANK_INDEXMASK] >> 16);
+      uint32_t fgw = fg * 0x01010101u;
+      uint32_t bgw = bg * 0x01010101u;
 
-      if (cursorHere && gr >= charHeight - 2)
-        bits = 0xff;
+      for (int i = 0; i < LINES; ++i) {
+        uint8_t bits = (uint8_t)(glyph[i] >> 16);
+        if (cursorHere && glyphRow + i >= charHeight - 2)
+          bits = 0xff;
+        uint32_t * p = (uint32_t *)(out + i * SCREENWIDTH);
+        uint32_t m0  = TEXT_NIBMASK[bits >> 4];
+        uint32_t m1  = TEXT_NIBMASK[bits & 0x0f];
+        p[0] = (fgw & m0) | (bgw & ~m0);
+        p[1] = (fgw & m1) | (bgw & ~m1);
+      }
 
-      uint8_t * p = out + i * SCREENWIDTH;
+    } else {
 
-      // FabGL's scanline byte order is swizzled in pairs, hence the ^2 on the pixel index
-      if (charWidth == 8) {
-        p[0 ^ 2] = colors[(bits >> 7) & 1];
-        p[1 ^ 2] = colors[(bits >> 6) & 1];
-        p[2 ^ 2] = colors[(bits >> 5) & 1];
-        p[3 ^ 2] = colors[(bits >> 4) & 1];
-        p[4 ^ 2] = colors[(bits >> 3) & 1];
-        p[5 ^ 2] = colors[(bits >> 2) & 1];
-        p[6 ^ 2] = colors[(bits >> 1) & 1];
-        p[7 ^ 2] = colors[bits & 1];
-      } else {
-        for (int k = 0; k < 8; ++k) {
-          uint8_t px = colors[(bits >> (7 - k)) & 1];
-          int x = k * 2;
-          p[x ^ 2]       = px;
-          p[(x + 1) ^ 2] = px;
+      // 40 columns: every pixel doubled. Half the characters but the same 640 pixels per line, so
+      // the same work -- this path is as tight as the 80 column one and gets the same treatment.
+      uint32_t fgw = fg * 0x01010101u;
+      uint32_t bgw = bg * 0x01010101u;
+
+      for (int i = 0; i < LINES; ++i) {
+        uint8_t bits = (uint8_t)(glyph[i] >> 16);
+        if (cursorHere && glyphRow + i >= charHeight - 2)
+          bits = 0xff;
+        uint32_t * p = (uint32_t *)(out + i * SCREENWIDTH);
+        for (int k = 0; k < 4; ++k) {
+          uint32_t m = TEXT_PAIRMASK[(bits >> (6 - 2 * k)) & 3];
+          p[k] = (fgw & m) | (bgw & ~m);
         }
       }
+
     }
   }
 }

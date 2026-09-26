@@ -163,6 +163,14 @@ public:
    */
   static bool VSync()                        { return s_VSync; }
 
+  // PCEmulator: scanline interrupt timing, in CPU cycles, read and reset by the debug monitor
+  // ("v"). An overrun is a run the DMA overtook: it was still rendering the line buffer the DMA had
+  // already begun to send out, which shows as a glitch on screen.
+  static volatile uint32_t s_isrMaxCycles;       // longest single run
+  static volatile uint32_t s_isrMinPeriod;       // shortest gap between two runs (start jitter)
+  static volatile uint32_t s_isrOverruns;        // runs the DMA overtook: visible glitches
+  static volatile uint32_t s_isrLastStart;
+
 private:
 
   void init();
