@@ -24,3 +24,16 @@ void setupFilesBrowser(TextUI & ui, char const * startDir);
 
 // Asks for a disk type and a filename, then writes the image.
 void setupCreateDiskImage(TextUI & ui);
+
+
+// Settings of the host rather than of a machine. main.cpp loads and saves them (Preferences, the
+// ESP32's NVS, next to the Wi-Fi credentials); the page below only edits them. Adding a setting
+// means a field here, a row in setupAdvancedSettings() and its load/save in main.cpp.
+struct HostSettings {
+  static constexpr char const * DEFAULT_NTP_SERVER = "pool.ntp.org";
+  char ntpServer[64];
+};
+
+// The "Advanced Settings" page. Returns true when the user saved; settings holds the new values
+// then, and is left alone otherwise.
+bool setupAdvancedSettings(TextUI & ui, HostSettings & settings);

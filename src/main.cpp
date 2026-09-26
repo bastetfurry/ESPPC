@@ -96,6 +96,15 @@ __NOINIT_ATTR static timeval savedTimeValue;
 
 
 static bool wifiConnected = false;
+
+// Host settings from the Advanced Settings page, kept in Preferences. Global because SNTP keeps a
+// pointer to the server name for as long as it runs.
+static HostSettings hostSettings;
+
+static char const * ntpServer()
+{
+  return hostSettings.ntpServer[0] ? hostSettings.ntpServer : HostSettings::DEFAULT_NTP_SERVER;
+}
 static bool downloadOK    = false;
 
 
@@ -226,7 +235,7 @@ void updateDateTime()
     bool synced = false;
     ui.progress("Date and Time", true, [&](TextUI::Progress & p) {
       sntp_setoperatingmode(SNTP_OPMODE_POLL);
-      sntp_setservername(0, (char*)"pool.ntp.org");
+      sntp_setservername(0, (char*) ntpServer());
       sntp_init();
       // sntp_get_sync_status() reports COMPLETED once and then resets itself, so the answer has to
       // be kept from the read that saw it; asking again afterwards always says it failed.
@@ -235,14 +244,17 @@ void updateDateTime()
           synced = true;
           break;
         }
-        if (!p.update(i * 100 / 12, "Getting date and time from pool.ntp.org..."))
+        if (!p.update(i * 100 / 12, "Getting date and time from %s...", ntpServer()))
           break;
         delay(500);
       }
       sntp_stop();
     });
-    ui.postResult(synced ? "Synchronised with pool.ntp.org" : "No answer from pool.ntp.org",
-                  synced ? TUI_POST_OK : TUI_POST_FAIL);
+    {
+      char r[80];
+      snprintf(r, sizeof(r), synced ? "Synchronised with %s" : "No answer from %s", ntpServer());
+      ui.postResult(r, synced ? TUI_POST_OK : TUI_POST_FAIL);
+    }
     // restart either way: the Wi-Fi stack is only fully gone after a reset, and the saved time
     // carries over it (see shutdownHandler())
     ui.message(nullptr, "Date and time updated.\nRestarting...", "OK", 2);
@@ -350,7 +362,7 @@ char const * getDisk(char const * url)
 
 // user pressed SYSREQ (ALT + PRINTSCREEN)
 // What the machine selection screen asks the caller to do next.
-enum class SetupAction { Boot, Edit, New, Remove, Files };
+enum class SetupAction { Boot, Edit, New, Remove, Files, Advanced };
 
 
 // last path component of a disk entry, which is what fits in the details panel
@@ -379,7 +391,7 @@ static void drawSetupFrame()
   // key help
   ui.frame(0, 20, 80, 5, TUI_SCREEN, true);
   ui.text(2, 21, "\x18\x19 PgUp PgDn : Select Machine      Enter : Boot        F4  : Browse Files", TUI_SCREEN);
-  ui.text(2, 22, "F2 : Edit     F3 : New     Del : Remove", TUI_SCREEN);
+  ui.text(2, 22, "F2 : Edit     F3 : New     Del : Remove                        F5  : Advanced Settings", TUI_SCREEN);
 }
 
 
@@ -487,6 +499,7 @@ static SetupAction selectMachine(MachineConf & mconf, int & idx, int countdown)
         if (count) return SetupAction::Remove;
         break;
       case VirtualKey::VK_F4:       return SetupAction::Files;
+      case VirtualKey::VK_F5:       return SetupAction::Advanced;
       default:                      break;
     }
     idx = fabgl::imax(0, idx);
@@ -684,6 +697,10 @@ void setup()
   // uncomment to clear preferences
   //preferences.clear();
 
+  // host settings, before anything that uses them (the clock is set during the POST below)
+  if (preferences.isKey("NtpServer"))    // asking for a missing key logs an error at every boot
+    preferences.getString("NtpServer", hostSettings.ntpServer, sizeof(hostSettings.ntpServer));
+
   // The machine exists from here on so the setup screens can borrow its video adapter; nothing in
   // it runs until machine->run() below, and TextUI::end() hands the adapter back unconfigured.
   machine = new Machine;
@@ -777,6 +794,10 @@ void setup()
         }
         break;
       }
+      case SetupAction::Advanced:
+        if (setupAdvancedSettings(ui, hostSettings))
+          preferences.putString("NtpServer", hostSettings.ntpServer);
+        break;
       case SetupAction::Files:
         setupFilesBrowser(ui, SD_MOUNT_PATH);
         break;

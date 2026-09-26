@@ -847,3 +847,91 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
   free(v);
   return saved;
 }
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Advanced Settings, in the manner of an Award "Advanced BIOS Features" page
+
+
+bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
+{
+  struct Item {
+    char const * label;
+    char *       value;         // text settings edit this buffer
+    int          maxLength;
+    char const * whenEmpty;     // what an empty value means, shown in its place
+    char const * help;
+  };
+
+  HostSettings edit = settings;
+
+  Item const ITEMS[] = {
+    { "NTP Server", edit.ntpServer, (int) sizeof(edit.ntpServer) - 1, HostSettings::DEFAULT_NTP_SERVER,
+      "Time server asked for the date and time at a cold boot, when Wi-Fi is configured. Empty "
+      "means pool.ntp.org. Takes effect at the next power on." },
+  };
+  constexpr int COUNT = sizeof(ITEMS) / sizeof(ITEMS[0]);
+
+  ui.clear(TUI_SCREEN);
+  ui.centre(0, "ESP32 PC Emulator Setup Utility", TUI_SCREEN);
+  ui.centre(1, "Advanced Settings", TUI_LABEL);
+  ui.frame(0, 2, 80, 18, TUI_SCREEN, true);
+  for (int y = 3; y < 19; ++y)
+    ui.put(52, y, 0xB3, TUI_SCREEN);
+  ui.put(52, 2, 0xD1, TUI_SCREEN);
+  ui.put(52, 19, 0xCF, TUI_SCREEN);
+  ui.text(58, 3, "Item Help", TUI_LABEL);
+  ui.frame(0, 20, 80, 5, TUI_SCREEN, true);
+  ui.text(2, 21, "\x18\x19:Move   Enter:Select", TUI_SCREEN);
+  ui.text(2, 22, "F10:Save & Exit   Esc:Exit", TUI_SCREEN);
+
+  int  sel      = 0;
+  bool modified = false;
+  bool saved    = false;
+
+  while (true) {
+
+    for (int i = 0; i < COUNT; ++i) {
+      ui.text(2, 3 + i, ITEMS[i].label, TUI_SCREEN, 20);
+      ui.text(22, 3 + i, "[", TUI_SCREEN);
+      ui.text(23, 3 + i, ITEMS[i].value[0] ? ITEMS[i].value : ITEMS[i].whenEmpty,
+              i == sel ? TUI_HILITE : TUI_LABEL, 26);
+      ui.text(49, 3 + i, "]", TUI_SCREEN);
+    }
+    wrapText(ui, 54, 5, 24, 13, ITEMS[sel].help, TUI_SCREEN);
+
+    TextUI::Key k;
+    ui.getKey(&k);
+
+    if (k.vk == VirtualKey::VK_UP || k.vk == VirtualKey::VK_KP_UP)
+      sel = imax(0, sel - 1);
+    else if (k.vk == VirtualKey::VK_DOWN || k.vk == VirtualKey::VK_KP_DOWN)
+      sel = imin(COUNT - 1, sel + 1);
+    else if (isEnter(k.vk)) {
+      char buf[128];
+      strlcpy(buf, ITEMS[sel].value, sizeof(buf));
+      if (ui.textInput(ITEMS[sel].label, nullptr, buf, imin(ITEMS[sel].maxLength, (int) sizeof(buf) - 1))) {
+        // no spaces in a host name; a blank entry means the default
+        char * s = buf;
+        while (*s == ' ')
+          ++s;
+        char * e = s + strlen(s);
+        while (e > s && e[-1] == ' ')
+          *--e = 0;
+        strlcpy(ITEMS[sel].value, s, ITEMS[sel].maxLength + 1);
+        modified = true;
+      }
+    } else if (k.vk == VirtualKey::VK_ESCAPE) {
+      if (!modified || ui.message("Exit", "Quit without saving (Y/N)?", "No;Yes") == 1)
+        break;
+    } else if (k.vk == VirtualKey::VK_F10) {
+      if (ui.message("Save & Exit", "Save settings and exit (Y/N)?", "No;Yes") == 1) {
+        settings = edit;
+        saved    = true;
+        break;
+      }
+    }
+  }
+
+  return saved;
+}
