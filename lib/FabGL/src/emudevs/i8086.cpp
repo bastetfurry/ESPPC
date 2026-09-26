@@ -856,7 +856,9 @@ static uint8_t optcodes[] = {
 };
 
 
-void i8086::step()
+// PCEmulator: in IRAM. It runs once per emulated instruction, and from flash it competes for the
+// cache with guest RAM in PSRAM, which both go through.
+void IRAM_ATTR i8086::step()
 {
 
   // Interrupts handling
@@ -1101,7 +1103,9 @@ void i8086::step()
 }
 
 
-void i8086::stepEx(uint8_t const * opcode_stream)
+// PCEmulator: in IRAM too, for the same reason as step(). This is the instruction interpreter
+// proper, about 21 KB, and the largest single piece of code in IRAM.
+void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
 {
   set_opcode(*opcode_stream);
 
