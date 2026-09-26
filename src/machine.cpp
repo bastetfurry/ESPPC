@@ -448,7 +448,9 @@ void Machine::run()
 }
 
 
-void Machine::runTask(void * pvParameters)
+// In IRAM: this loop, with tick() and the interrupt checks inlined, runs once per emulated
+// instruction around i8086::step(), which is in IRAM already.
+void IRAM_ATTR Machine::runTask(void * pvParameters)
 {
   auto m = (Machine*)pvParameters;
 
@@ -1707,7 +1709,9 @@ bool Machine::COM2Interrupt(PC8250 * source, void * context)
 // When the EGA is live it answers whichever CPU window its Graphics Controller claims -- A0000
 // for the graphics modes, B8000 for text -- so the routing follows the card rather than a fixed
 // split. Outside that window the CGA/Hercules buffer still applies, when it exists.
-void Machine::writeVideoMemory8(void * context, int address, uint8_t value)
+// The video memory callbacks run on every guest access to A0000-BFFFF, with the EGA planar engine
+// inlined into them, so they live in IRAM as well.
+void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t value)
 {
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd()) {
@@ -1724,7 +1728,7 @@ void Machine::writeVideoMemory8(void * context, int address, uint8_t value)
 }
 
 
-void Machine::writeVideoMemory16(void * context, int address, uint16_t value)
+void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t value)
 {
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd()) {
@@ -1742,7 +1746,7 @@ void Machine::writeVideoMemory16(void * context, int address, uint16_t value)
 }
 
 
-uint8_t Machine::readVideoMemory8(void * context, int address)
+uint8_t IRAM_ATTR Machine::readVideoMemory8(void * context, int address)
 {
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd())
@@ -1755,7 +1759,7 @@ uint8_t Machine::readVideoMemory8(void * context, int address)
 }
 
 
-uint16_t Machine::readVideoMemory16(void * context, int address)
+uint16_t IRAM_ATTR Machine::readVideoMemory16(void * context, int address)
 {
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd())
@@ -1768,7 +1772,19 @@ uint16_t Machine::readVideoMemory16(void * context, int address)
 }
 
 
-bool Machine::interrupt(void * context, int num)
+// Every software INT and hardware IRQ the guest takes comes through here, and nearly all of them
+// are none of the emulator's business: only INT FFh (the postbox) and the traps the BIOS makes from
+// its own segment are. So this front is in IRAM and decides with two compares, and the handling
+// itself stays in flash, in interruptHandler().
+bool IRAM_ATTR Machine::interrupt(void * context, int num)
+{
+  if (num != 0xff && i8086::CS() != BIOS_SEG)
+    return false;
+  return interruptHandler(context, num);
+}
+
+
+bool Machine::interruptHandler(void * context, int num)
 {
   auto m = (Machine*)context;
 

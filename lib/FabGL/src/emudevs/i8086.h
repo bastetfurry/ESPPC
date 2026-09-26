@@ -53,64 +53,69 @@ public:
 
   static void reset();
 
-  static void setAL(uint8_t value);
-  static void setAH(uint8_t value);
-  static void setBL(uint8_t value);
-  static void setBH(uint8_t value);
-  static void setCL(uint8_t value);
-  static void setCH(uint8_t value);
-  static void setDL(uint8_t value);
-  static void setDH(uint8_t value);
+  // PCEmulator: the register accessors are inline. They used to be out of line in i8086.cpp,
+  // which made every AL(), CS() or setAX() from the BIOS helpers and the machine's interrupt hook a
+  // real call into flash. The register file layout is the one i8086.cpp works on: 16 bit registers
+  // AX CX DX BX SP BP SI DI ES CS SS DS, the 8 bit ones overlaid on the first four.
 
-  static uint8_t AL();
-  static uint8_t AH();
-  static uint8_t BL();
-  static uint8_t BH();
-  static uint8_t CL();
-  static uint8_t CH();
-  static uint8_t DL();
-  static uint8_t DH();
+  static void setAL(uint8_t value)                        { s_regs[0] = value; }
+  static void setAH(uint8_t value)                        { s_regs[1] = value; }
+  static void setCL(uint8_t value)                        { s_regs[2] = value; }
+  static void setCH(uint8_t value)                        { s_regs[3] = value; }
+  static void setDL(uint8_t value)                        { s_regs[4] = value; }
+  static void setDH(uint8_t value)                        { s_regs[5] = value; }
+  static void setBL(uint8_t value)                        { s_regs[6] = value; }
+  static void setBH(uint8_t value)                        { s_regs[7] = value; }
 
-  static void setAX(uint16_t value);
-  static void setBX(uint16_t value);
-  static void setCX(uint16_t value);
-  static void setDX(uint16_t value);
-  static void setDI(uint16_t value);
-  static void setCS(uint16_t value);
-  static void setDS(uint16_t value);
-  static void setSS(uint16_t value);
-  static void setES(uint16_t value);
-  static void setIP(uint16_t value);
-  static void setSP(uint16_t value);
+  static uint8_t AL()                                     { return s_regs[0]; }
+  static uint8_t AH()                                     { return s_regs[1]; }
+  static uint8_t CL()                                     { return s_regs[2]; }
+  static uint8_t CH()                                     { return s_regs[3]; }
+  static uint8_t DL()                                     { return s_regs[4]; }
+  static uint8_t DH()                                     { return s_regs[5]; }
+  static uint8_t BL()                                     { return s_regs[6]; }
+  static uint8_t BH()                                     { return s_regs[7]; }
 
-  static uint16_t AX();
-  static uint16_t BX();
-  static uint16_t CX();
-  static uint16_t DX();
-  static uint16_t BP();
-  static uint16_t SI();
-  static uint16_t DI();
-  static uint16_t SP();
+  static void setAX(uint16_t value)                       { reg16(0)  = value; }
+  static void setCX(uint16_t value)                       { reg16(1)  = value; }
+  static void setDX(uint16_t value)                       { reg16(2)  = value; }
+  static void setBX(uint16_t value)                       { reg16(3)  = value; }
+  static void setSP(uint16_t value)                       { reg16(4)  = value; }
+  static void setDI(uint16_t value)                       { reg16(7)  = value; }
+  static void setES(uint16_t value)                       { reg16(8)  = value; }
+  static void setCS(uint16_t value)                       { reg16(9)  = value; }
+  static void setSS(uint16_t value)                       { reg16(10) = value; }
+  static void setDS(uint16_t value)                       { reg16(11) = value; }
+  static void setIP(uint16_t value)                       { s_regIP   = value; }
 
-  static uint16_t CS();
-  static uint16_t ES();
-  static uint16_t DS();
-  static uint16_t SS();
+  static uint16_t AX()                                    { return reg16(0); }
+  static uint16_t CX()                                    { return reg16(1); }
+  static uint16_t DX()                                    { return reg16(2); }
+  static uint16_t BX()                                    { return reg16(3); }
+  static uint16_t SP()                                    { return reg16(4); }
+  static uint16_t BP()                                    { return reg16(5); }
+  static uint16_t SI()                                    { return reg16(6); }
+  static uint16_t DI()                                    { return reg16(7); }
+  static uint16_t ES()                                    { return reg16(8); }
+  static uint16_t CS()                                    { return reg16(9); }
+  static uint16_t SS()                                    { return reg16(10); }
+  static uint16_t DS()                                    { return reg16(11); }
 
-  static bool flagIF();
-  static bool flagTF();
-  static bool flagCF();
-  static bool flagZF();
-  static bool flagOF();
-  static bool flagDF();
-  static bool flagSF();
-  static bool flagAF();
-  static bool flagPF();
+  // flags, in i8086.cpp's order: CF PF AF ZF SF TF IF DF OF
+  static bool flagCF()                                    { return s_flags[0]; }
+  static bool flagPF()                                    { return s_flags[1]; }
+  static bool flagAF()                                    { return s_flags[2]; }
+  static bool flagZF()                                    { return s_flags[3]; }
+  static bool flagSF()                                    { return s_flags[4]; }
+  static bool flagTF()                                    { return s_flags[5]; }
+  static bool flagIF()                                    { return s_flags[6]; }
+  static bool flagDF()                                    { return s_flags[7]; }
+  static bool flagOF()                                    { return s_flags[8]; }
 
-  static void setFlagZF(bool value);
-  static void setFlagCF(bool value);
+  static void setFlagCF(bool value)                       { s_flags[0] = value; }
+  static void setFlagZF(bool value)                       { s_flags[3] = value; }
 
-  static uint16_t IP();
+  static uint16_t IP()                                    { return s_regIP; }
 
   static bool halted()                                    { return s_halted; }
 
@@ -119,7 +124,16 @@ public:
   static void step();
 
 
+  // The register file i8086.cpp emulates on (regs8/regs16 there point at s_regs), IP and the
+  // flags. Public only because file level code in i8086.cpp works on them directly: everything
+  // else goes through the accessors above.
+  alignas(4) static uint8_t s_regs[48];
+  static uint16_t           s_regIP;
+  static uint8_t            s_flags[10];
+
 private:
+
+  static uint16_t & reg16(int index)                      { return ((uint16_t *) s_regs)[index]; }
 
   static uint8_t WMEM8(int addr, uint8_t value);
   static uint16_t WMEM16(int addr, uint16_t value);

@@ -318,6 +318,7 @@ private:
   static uint16_t readVideoMemory16(void * context, int address);
 
   static bool interrupt(void * context, int num);
+  static bool interruptHandler(void * context, int num);
 
   static void PITChangeOut(void * context, int timerIndex);
 

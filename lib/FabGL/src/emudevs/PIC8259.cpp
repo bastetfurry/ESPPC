@@ -153,7 +153,8 @@ uint8_t PIC8259::read(int addr)
 
 // ret: 0..7
 // 256 = no bit set
-int PIC8259::getHighestPriorityBitNum(uint8_t value)
+// PCEmulator: the interrupt path, from the devices' ticks and the machine's loop, is in IRAM
+int IRAM_ATTR PIC8259::getHighestPriorityBitNum(uint8_t value)
 {
   if (value) {
     for (int i = 0; i < 8; ++i)
@@ -165,7 +166,7 @@ int PIC8259::getHighestPriorityBitNum(uint8_t value)
 
 
 // set as pending interrupt the higher priority bit in M_IRR
-void PIC8259::setPendingInterrupt()
+void IRAM_ATTR PIC8259::setPendingInterrupt()
 {
   int highestInt   = getHighestPriorityBitNum(m_IRR & ~m_IMR);
   int servicingInt = getHighestPriorityBitNum(m_ISR);
@@ -179,7 +180,7 @@ void PIC8259::setPendingInterrupt()
 
 
 // Device->8259: a device reports interrupt to 8259
-bool PIC8259::signalInterrupt(int intnum)
+bool IRAM_ATTR PIC8259::signalInterrupt(int intnum)
 {
   //printf("PIC8259::signalInterrupt(%d)\n", intnum);
   bool success = false;
@@ -196,7 +197,7 @@ bool PIC8259::signalInterrupt(int intnum)
 
 
 // CPU->8259: CPU acks the pending interrupt to 8259
-void PIC8259::ackPendingInterrupt()
+void IRAM_ATTR PIC8259::ackPendingInterrupt()
 {
   //printf("PIC8259::ackPendingInterrupt(), pending IR = %d\n", m_pendingIR);
   int pendmsk = 1 << m_pendingIR;

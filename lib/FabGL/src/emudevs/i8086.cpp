@@ -107,11 +107,17 @@ namespace fabgl {
 
 
 // Global variable definitions
-static uint8_t    regs[48];
-static uint8_t    flags[10];
+// The register file, flags and IP are class members so the accessors in i8086.h can be inline;
+// the code below keeps its original names for them.
+alignas(4) uint8_t i8086::s_regs[48];
+uint16_t           i8086::s_regIP;
+uint8_t            i8086::s_flags[10];
+#define regs       i8086::s_regs
+#define flags      i8086::s_flags
+#define reg_ip     i8086::s_regIP
 static int32_t    regs_offset;
 static uint8_t    * regs8, i_mod_size, i_d, i_w, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en;
-static uint16_t   * regs16, reg_ip, seg_override;
+static uint16_t   * regs16, seg_override;
 static uint32_t   op_source, op_dest, set_flags_type;
 static int32_t    op_to_addr, op_from_addr;
 
@@ -315,310 +321,9 @@ static uint8_t * instr_table_lookup[] = {    rm_mode12_reg1,    // 0
 
 
 
-void i8086::setAL(uint8_t value)
-{
-  regs8[REG_AL] = value;
-}
-
-
-void i8086::setAH(uint8_t value)
-{
-  regs8[REG_AH] = value;
-}
-
-
-uint8_t i8086::AL()
-{
-  return regs8[REG_AL];
-}
-
-
-uint8_t i8086::AH()
-{
-  return regs8[REG_AH];
-}
-
-
-void i8086::setBL(uint8_t value)
-{
-  regs8[REG_BL] = value;
-}
-
-
-void i8086::setBH(uint8_t value)
-{
-  regs8[REG_BH] = value;
-}
-
-
-uint8_t i8086::BL()
-{
-  return regs8[REG_BL];
-}
-
-
-uint8_t i8086::BH()
-{
-  return regs8[REG_BH];
-}
-
-
-void i8086::setCL(uint8_t value)
-{
-  regs8[REG_CL] = value;
-}
-
-
-void i8086::setCH(uint8_t value)
-{
-  regs8[REG_CH] = value;
-}
-
-
-uint8_t i8086::CL()
-{
-  return regs8[REG_CL];
-}
-
-
-uint8_t i8086::CH()
-{
-  return regs8[REG_CH];
-}
-
-
-void i8086::setDL(uint8_t value)
-{
-  regs8[REG_DL] = value;
-}
-
-
-void i8086::setDH(uint8_t value)
-{
-  regs8[REG_DH] = value;
-}
-
-
-uint8_t i8086::DL()
-{
-  return regs8[REG_DL];
-}
-
-
-uint8_t i8086::DH()
-{
-  return regs8[REG_DH];
-}
-
-
-void i8086::setAX(uint16_t value)
-{
-  regs16[REG_AX] = value;
-}
-
-
-void i8086::setBX(uint16_t value)
-{
-  regs16[REG_BX] = value;
-}
-
-
-void i8086::setCX(uint16_t value)
-{
-  regs16[REG_CX] = value;
-}
-
-
-void i8086::setDX(uint16_t value)
-{
-  regs16[REG_DX] = value;
-}
-
-
-void i8086::setDI(uint16_t value)
-{
-  regs16[REG_DI] = value;
-}
-
-
-void i8086::setCS(uint16_t value)
-{
-  regs16[REG_CS] = value;
-}
-
-
-void i8086::setDS(uint16_t value)
-{
-  regs16[REG_DS] = value;
-}
-
-
-void i8086::setSS(uint16_t value)
-{
-  regs16[REG_SS] = value;
-}
-
-
-void i8086::setES(uint16_t value)
-{
-  regs16[REG_ES] = value;
-}
-
-
-void i8086::setIP(uint16_t value)
-{
-  reg_ip = value;
-}
-
-
-uint16_t i8086::IP()
-{
-  return reg_ip;
-}
-
-
-void i8086::setSP(uint16_t value)
-{
-  regs16[REG_SP] = value;
-}
-
-
-uint16_t i8086::AX()
-{
-  return regs16[REG_AX];
-}
-
-
-uint16_t i8086::BX()
-{
-  return regs16[REG_BX];
-}
-
-
-uint16_t i8086::CX()
-{
-  return regs16[REG_CX];
-}
-
-
-uint16_t i8086::DX()
-{
-  return regs16[REG_DX];
-}
-
-
-uint16_t i8086::BP()
-{
-  return regs16[REG_BP];
-}
-
-
-uint16_t i8086::SI()
-{
-  return regs16[REG_SI];
-}
-
-
-uint16_t i8086::DI()
-{
-  return regs16[REG_DI];
-}
-
-
-uint16_t i8086::SP()
-{
-  return regs16[REG_SP];
-}
-
-
-uint16_t i8086::CS()
-{
-  return regs16[REG_CS];
-}
-
-
-uint16_t i8086::ES()
-{
-  return regs16[REG_ES];
-}
-
-
-uint16_t i8086::DS()
-{
-  return regs16[REG_DS];
-}
-
-
-uint16_t i8086::SS()
-{
-  return regs16[REG_SS];
-}
-
-
-bool i8086::flagIF()
-{
-  return FLAG_IF;
-}
-
-
-bool i8086::flagTF()
-{
-  return FLAG_TF;
-}
-
-
-bool i8086::flagCF()
-{
-  return FLAG_CF;
-}
-
-
-bool i8086::flagZF()
-{
-  return FLAG_ZF;
-}
-
-bool i8086::flagOF()
-{
-  return FLAG_OF;
-}
-
-bool i8086::flagDF()
-{
-  return FLAG_DF;
-}
-
-bool i8086::flagSF()
-{
-  return FLAG_SF;
-}
-
-bool i8086::flagAF()
-{
-  return FLAG_AF;
-}
-
-bool i8086::flagPF()
-{
-  return FLAG_PF;
-}
-
-void i8086::setFlagZF(bool value)
-{
-  FLAG_ZF = value;
-}
-
-
-void i8086::setFlagCF(bool value)
-{
-  FLAG_CF = value;
-}
-
-
-
-
 // ret false if not acked
-bool i8086::IRQ(uint8_t interrupt_num)
+// PCEmulator: in IRAM, the machine's loop calls it whenever an interrupt is pending
+bool IRAM_ATTR i8086::IRQ(uint8_t interrupt_num)
 {
   if (!s_pendingIRQ) {
     s_pendingIRQ = true;
@@ -735,7 +440,8 @@ void set_opcode(uint8_t opcode)
 
 
 // Execute INT #interrupt_num on the emulated machine
-void i8086::pc_interrupt(uint8_t interrupt_num)
+// PCEmulator: in IRAM, taken on every software INT and hardware IRQ
+void IRAM_ATTR i8086::pc_interrupt(uint8_t interrupt_num)
 {
   // fab: interrupt can exit from halt state
   if (s_halted) {

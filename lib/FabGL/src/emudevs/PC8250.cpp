@@ -578,7 +578,8 @@ void PC8250::checkDCDChanged()
 }
 
 
-void PC8250::tick()
+// PCEmulator: in IRAM, ticked every fourth emulated instruction
+void IRAM_ATTR PC8250::tick()
 {
   // check for interrupts?
   if (m_IER) {

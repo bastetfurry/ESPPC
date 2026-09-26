@@ -189,7 +189,8 @@ void i8042::write(int address, uint8_t value)
 }
 
 
-void i8042::tick()
+// PCEmulator: in IRAM, ticked every 128th emulated instruction
+void IRAM_ATTR i8042::tick()
 {
   // something to receive from keyboard?
   if ((m_STATUS & STATUS_OBF) == 0 && m_keyboard->scancodeAvailable() && (m_commandByte & CMDBYTE_DISABLE_KEYBOARD) == 0) {
