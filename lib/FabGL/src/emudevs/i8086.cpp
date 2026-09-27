@@ -553,7 +553,7 @@ static uint8_t optcodes[] = {
    2,   2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2, // 70 - 7f
   22,  22,  0, 22,  0,  0,  0,  0, 21, 21, 21, 21,  0,  0, 18,  0, // 80 - 8f
    0,   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, // 90 - 9f
-   0,   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, // a0 - af
+   0,   0,  0,  0, 26, 26,  0,  0,  0,  0, 26, 26, 26, 26,  0,  0, // a0 - af
    10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, // b0 - bf
    0,   0,  0,  7,  0,  0, 25, 25,  0,  0,  0, 17,  0, 15,  0, 16, // c0 - cf
   23,  23,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, // d0 - df
@@ -1095,6 +1095,74 @@ void IRAM_ATTR i8086::step()
           if (rm.reg) regs8[rm.idx] = imm[0]; else WMEM8(rm.addr, imm[0]);
         }
         reg_ip += 1 + rm.len + (w ? 2 : 1);
+        return;
+      }
+
+      // MOVSB MOVSW (0xa4 0xa5), STOSB STOSW (0xaa 0xab), LODSB LODSW (0xac 0xad), with or without
+      // REP: the whole repetition in this one step, as stepEx did it. Without the decoding these
+      // took 525-725 host cycles each, measured; they are frequent in copy and fill loops.
+      case 26:
+      {
+        uint8_t  op   = *opcode_stream;
+        bool     w    = op & 1;
+        int      kind = op < 0xa6 ? 0 : (op < 0xac ? 1 : 2);     // MOVS, STOS, LODS
+        int32_t  seg  = seg_override_en ? seg_override : REG_DS;
+        int32_t  size = w ? 2 : 1;
+        int32_t  n    = rep_override_en ? regs16[REG_CX] : 1;
+
+        // REP MOVSB/STOSB forwards over plain RAM -- no video window, SI and DI not wrapping --
+        // straight through the pointers, strictly byte after byte like the 8086, so an overlapping
+        // copy repeats its pattern exactly as the loop below would
+        if (rep_override_en && !FLAG_DF && !w && kind < 2 && n > 0) {
+          uint32_t dst = 16 * regs16[REG_ES] + regs16[REG_DI];
+          uint32_t src = 16 * regs16[seg] + regs16[REG_SI];
+          bool plain = regs16[REG_DI] + n <= 0x10000 && dst + n <= (uint32_t) s_videoMemStart &&
+                       (kind == 1 || (regs16[REG_SI] + n <= 0x10000 && src + n <= (uint32_t) s_videoMemStart));
+          if (plain) {
+            uint8_t * d = s_memory + dst;
+            if (kind == 0) {
+              uint8_t const * s = s_memory + src;
+              for (int32_t i = 0; i < n; ++i)
+                d[i] = s[i];
+              regs16[REG_SI] += n;
+            } else {
+              uint8_t v = regs8[REG_AL];
+              for (int32_t i = 0; i < n; ++i)
+                d[i] = v;
+            }
+            PSRAM_WORKAROUND2;
+            regs16[REG_DI] += n;
+            regs16[REG_CX]  = 0;
+            ++reg_ip;
+            return;
+          }
+        }
+
+        int32_t d = FLAG_DF ? -size : size;
+        for (int32_t i = n; i; --i) {
+          if (w) {
+            uint16_t v = (kind == 1) ? regs16[REG_AX] : RMEM16(16 * regs16[seg] + regs16[REG_SI]);
+            if (kind < 2) {
+              WMEM16(16 * regs16[REG_ES] + regs16[REG_DI], v);
+              PSRAM_WORKAROUND2;
+            } else
+              regs16[REG_AX] = v;
+          } else {
+            uint8_t v = (kind == 1) ? regs8[REG_AL] : RMEM8(16 * regs16[seg] + regs16[REG_SI]);
+            if (kind < 2) {
+              WMEM8(16 * regs16[REG_ES] + regs16[REG_DI], v);
+              PSRAM_WORKAROUND2;
+            } else
+              regs8[REG_AL] = v;
+          }
+          if (kind != 1)
+            regs16[REG_SI] += d;
+          if (kind != 2)
+            regs16[REG_DI] += d;
+        }
+        if (rep_override_en)
+          regs16[REG_CX] = 0;
+        ++reg_ip;
         return;
       }
 
