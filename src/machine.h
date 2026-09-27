@@ -166,6 +166,10 @@ public:
   // A composite colour monitor on the CGA: with the colour burst on, the graphics modes show NTSC
   // artifact colours (160x200 in 16 colours) instead of their RGB picture. Must be called before
   // run(); only the CGA machine uses it.
+  // Silences all sound output (PC speaker, SN76496, Tandy DAC) and brings it back, for while the
+  // guest is frozen behind the system menu. Returns whether it was playing.
+  bool pauseSound(bool pause)                  { return m_soundGen.play(!pause); }
+
   void setComposite(bool value)                { m_composite = value; }
   bool composite() const                       { return m_composite; }
   bool compositeCapable() const                { return !m_tandy && !m_egaBiosLoaded; }

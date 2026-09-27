@@ -616,6 +616,9 @@ void sysReqCallback()
     printf("SysReq: no memory for the menu\n");
     return;
   }
+  // the guest is frozen while the menu is open, but the voices would hold whatever they last
+  // played, so the sound stops too
+  bool soundWasPlaying = machine->pauseSound(true);
   drawGuestBackdrop();
 
   enum { M_FDA, M_FDB, M_MONITOR, M_RESTART_GUEST, M_RESTART_HOST, M_RETURN, M_COUNT };
@@ -712,6 +715,8 @@ void sysReqCallback()
   // The menu had the adapter. TextUI puts the mode back, but let the CGA set itself up in full on
   // its next register write instead of relying on that alone.
   machine->invalidateCGAMode();
+  if (soundWasPlaying)
+    machine->pauseSound(false);
   // and apply a monitor change at once, rather than on the guest's next register write, which a
   // game that has set its mode may never make
   machine->refreshCGAGraphics();
