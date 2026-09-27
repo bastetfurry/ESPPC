@@ -550,13 +550,17 @@ void Machine::prepareVideoROM()
     *(uint16_t*)(bda + 0x10) = (*(uint16_t*)(bda + 0x10) & ~0x0030) | 0x0020;
     memset(bda + 0x87, 0, 4);       // 40:87..8A, EGA info, switches, feature, display combination
 
-    // A Tandy 1000 is recognised by two ROM bytes rather than by probing anything: the PC model
+    // A Tandy 1000 is recognised by ROM contents rather than by probing anything: the PC model
     // byte FFh at F000:FFFE, and 21h at F000:C000, the "!" of Tandy's copyright notice there. The
     // model byte was FCh (AT), which POST has just copied into place; F000:C000 is past the end of
     // this BIOS image, so it is free. The page register copy at 40:8A is what the Tandy BIOS keeps.
+    //
+    // Some software wants more than the one byte: Sierra's installers (KQ5's, 1991) scan F000:C000
+    // to C3FF for the word "Tandy", which on the real ROM is part of that copyright notice. So the
+    // "!" is followed by the name, which satisfies both kinds of check.
     if (m_tandy) {
       s_memory[0xffffe] = 0xff;
-      s_memory[0xfc000] = 0x21;
+      memcpy(s_memory + 0xfc000, "!Tandy", 7);      // with its terminating zero
       bda[0x8a]         = 0x3f;
     }
     return;
@@ -1634,24 +1638,32 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
       m->setCGAMode();
       break;
 
+    // Hercules (HGC). A Tandy 1000 has no monochrome adapter, so there nothing answers these, the
+    // same as on the read side: installers probe 3B4h/3B5h and 3BAh, and KQ5's found a Hercules.
     // Hercules (HGC) - CRT 6845 - register selection register
     case 0x3b4:
-      m->m_HGC6845SelectRegister = value;
+      if (!m->m_tandy)
+        m->m_HGC6845SelectRegister = value;
       break;
 
     // Hercules (HGC) - CRT 6845 - selected register write
     case 0x3b5:
-      m->setHGC6845Register(value);
+      if (!m->m_tandy)
+        m->setHGC6845Register(value);
       break;
 
     // Hercules (HGC) - Display Mode Control Port
     case 0x3b8:
+      if (m->m_tandy)
+        break;
       m->m_HGCModeReg = value;
       m->setHGCMode();
       break;
 
     // Hercules (HGC) - Configuration Switch
     case 0x3bf:
+      if (m->m_tandy)
+        break;
       m->m_HGCSwitchReg = value;
       m->setHGCMode();
       break;
@@ -1829,18 +1841,22 @@ uint8_t Machine::readPortHW(void * context, int address)
       // which is how every EGA mode set routine starts
       return m->egaInputStatus1();
 
-    // Hercules (HGC) - register selection register
+    // Hercules (HGC) - register selection register. Nothing there on a Tandy (see writePortHW()).
     case 0x3b4:
-      return 0x00;  // not readable
+      return m->m_tandy ? 0xff : 0x00;  // not readable
 
     // Hercules (HGC) - selected register read
     case 0x3b5:
+      if (m->m_tandy)
+        return 0xff;
       return m->m_HGC6845SelectRegister >= 14 && m->m_HGC6845SelectRegister < 16 ? m->m_HGC6845[m->m_HGC6845SelectRegister] : 0x00;
 
     // Hercules (HGC) - Display Status Port
     // real vertical sync is too fast for our slowly emulated 8086, so
     // here it is just a fake, just to allow programs that check it to keep going anyway.
     case 0x3ba:
+      if (m->m_tandy)
+        return 0xff;
       if (m->m_EGAActive)
         return m->egaInputStatus1();
       m->m_HGCVSyncQuery += 1;

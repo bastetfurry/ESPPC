@@ -19,7 +19,13 @@ only and cannot be probed.
 | F000:C000  | 21h   | free: the BIOS image ends around F000:4200 |
 
 Both can be patched from `Machine::prepareVideoROM()`, which runs after POST has copied `mem_top`,
-and only on a Tandy machine. The INT 15h C0h configuration table (bios.asm, `MODEL`) also reports
+and only on a Tandy machine.
+
+Some software wants more than the single byte. Sierra's installers (KQ5's INSTALL.EXE, 1991) scan
+**F000:C000-C3FF for the string "Tandy"**, which on the real ROM is part of the copyright notice
+there. We write `!Tandy` at F000:C000, which satisfies both checks. The same installer then probes
+for a monochrome adapter (CRTC register 0Fh read back at 3B4h/3B5h, bit 7 of 3BAh toggling), so a
+Tandy machine does not answer the Hercules ports either. The INT 15h C0h configuration table (bios.asm, `MODEL`) also reports
 the model; whether that matters is for the trace to show.
 
 ## Video memory
@@ -216,3 +222,19 @@ Still to do:
 - **BIOS text** (INT 10h AH=09h/0Ah/0Eh) in modes 8 and 9.
 - **SN76496 noise**: the shift rate and the periodic mode (FabGL's noise generator is plain white
   noise).
+
+## The SL/TL DAC (next)
+
+The Tandy 1000 SL/TL/RL add a DMA fed DAC to the PSSJ chip: ports C4h-C7h, DMA 1, IRQ 7. KQ5's
+TANDY.DRV ("Tandy 1000 SL, TL, HL, RL series") uses it **only through the BIOS**, with no port or
+DMA access of its own:
+
+- `INT 1Ah AH=81h`: detect. "Present" means AX comes back with the high nibble clear (the base
+  port, C4h), and CF set means busy. Our BIOS leaves AX = 81xxh today, so it answers "no DAC".
+- `AH=85h` reset, `AH=83h` play ES:BX, CX bytes, DX = clock divider (rate = 3579545 / DX),
+  AL = volume; `AH=84h` stop; `AH=82h` record.
+- End of a sample: the driver hooks INT 15h and waits for `AX=91FBh`, the "device done" callout,
+  which the BIOS issues from its IRQ 7 handler.
+
+So the DAC can be the BIOS calls on top of a small internal DMA fetcher; a full 8237 is only
+needed for software that programs the hardware directly.
