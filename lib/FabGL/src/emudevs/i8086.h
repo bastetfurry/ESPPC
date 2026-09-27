@@ -148,6 +148,7 @@ private:
   static uint8_t raiseDivideByZeroInterrupt();
 
   static void stepEx(uint8_t const * opcode_stream);
+  static bool stepExCold(uint8_t const * opcode_stream, uint16_t i_data0, uint16_t i_data2, int32_t & op_result);
 
 
   static void *             s_context;
