@@ -1112,7 +1112,7 @@ bool Machine::setTandyMode(int biosMode, bool clear)
   m_tandyPage = mode9 ? 0xf6 : 0x3f;
 
   if (clear)
-    memset(s_videoMemory + 0x8000, 0, mode9 ? 0x8000 : 0x4000);
+    memset(s_videoMemory, 0, mode9 ? 0x8000 : 0x4000);
 
   // array register 3 before the mode control register, so the mode comes up in 16 colours at once.
   // The array changed behind setCGAMode()'s back, so its cache must not skip the write below,
@@ -1150,10 +1150,10 @@ void Machine::setCGAMode()
   m_CGAMemoryOffsetCurrent = m_CGAMemoryOffset;
   m_CGAModeCurrentValid    = true;
 
-  // B8000 in whichever buffer is standing in for the CGA's memory. The borrowed one is 16 KB, as
-  // on a real CGA, so the start address wraps within it.
+  // B8000 in whichever buffer is standing in for the CGA's memory. A CGA has 16 KB, so the start
+  // address wraps within that; masking it also keeps the renderers inside the 32 KB buffer.
   uint8_t * cga = m_CGABorrowed ? m_CGABorrowed + (m_CGAMemoryOffset & (CGA_BORROWED_SIZE - 1))
-                                : s_videoMemory + 0x8000 + m_CGAMemoryOffset;
+                                : s_videoMemory + (m_CGAMemoryOffset & 0x3fff);
 
   if ((m_CGAModeReg & CGA_MODECONTROLREG_ENABLED) == 0) {
 
@@ -1187,7 +1187,7 @@ void Machine::setCGAMode()
     // (mode control bit 0) telling 320x200 (mode 9) from 160x200 (mode 8). Both are drawn from
     // B8000 as it stands: the page register is not modelled yet, and neither is the CRTC start
     // address, which would move the four banks independently (see docs/tandy.md).
-    m_frameBuffer = s_videoMemory + 0x8000;
+    m_frameBuffer = s_videoMemory;
     m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
     m_graphicsAdapter.setTandyPalette(m_tandyArray + 0x10, m_tandyArray[1]);
     m_graphicsAdapter.setEmulation((m_CGAModeReg & CGA_MODECONTROLREG_TEXT80)
@@ -1198,8 +1198,9 @@ void Machine::setCGAMode()
   } else if ((m_plantronics & 0x30) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS)) {
 
     // Plantronics ColorPlus: the two planes at B8000 and BC000. 320x200x16 has priority, as on the
-    // card; 640x200x4 takes its colours from the CGA registers exactly as mode 4/5 does.
-    m_frameBuffer = cga;
+    // card; 640x200x4 takes its colours from the CGA registers exactly as mode 4/5 does. The start
+    // offset is not applied: plane 1 has to stay 16 KB behind plane 0 inside the 32 KB buffer.
+    m_frameBuffer = m_CGABorrowed ? cga : s_videoMemory;
     m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
     if (m_plantronics & 0x10) {
       m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_Plantronics_320x200_16Colors);
@@ -2301,8 +2302,9 @@ bool Machine::COM2Interrupt(PC8250 * source, void * context)
 
 
 // The 0xA0000-0xAFFFF window belongs to the EGA when an EGA mode is up, and goes through the
-// planar engine. 0xB0000 upwards is the CGA buffer, which is released while EGA is
-// active -- hence the null checks, which also make a stray write during a mode change harmless.
+// planar engine. 0xB8000 upwards is the CGA buffer (B0000-B7FFF, where Hercules had its pages,
+// is empty), which is released while EGA is active -- hence the null checks, which also make a
+// stray write during a mode change harmless.
 
 // When the EGA is live it answers whichever CPU window its Graphics Controller claims -- A0000
 // for the graphics modes, B8000 for text -- so the routing follows the card rather than a fixed
@@ -2323,8 +2325,8 @@ void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t v
   }
   if (m->m_plantronicsSwap && address >= 0xb8000)
     address ^= 0x4000;
-  if (address >= 0xb0000 && s_videoMemory)
-    s_videoMemory[address - 0xb0000] = value;
+  if (address >= 0xb8000 && s_videoMemory)
+    s_videoMemory[address - 0xb8000] = value;
 }
 
 
@@ -2343,8 +2345,12 @@ void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t
   }
   if (m->m_plantronicsSwap && address >= 0xb8000)
     address ^= 0x4000;
-  if (address >= 0xb0000 && s_videoMemory)
-    *(uint16_t*)(s_videoMemory + address - 0xb0000) = value;
+  if (address >= 0xb8000 && s_videoMemory) {
+    if (address < 0xbffff)
+      *(uint16_t*)(s_videoMemory + address - 0xb8000) = value;
+    else
+      s_videoMemory[address - 0xb8000] = (uint8_t) value;    // the last byte: nothing past the end
+  }
 }
 
 
@@ -2357,8 +2363,8 @@ uint8_t IRAM_ATTR Machine::readVideoMemory8(void * context, int address)
     return address >= 0xb8000 ? m->m_CGABorrowed[(address - 0xb8000) & (CGA_BORROWED_SIZE - 1)] : 0xff;
   if (m->m_plantronicsSwap && address >= 0xb8000)
     address ^= 0x4000;
-  if (address >= 0xb0000 && s_videoMemory)
-    return s_videoMemory[address - 0xb0000];
+  if (address >= 0xb8000 && s_videoMemory)
+    return s_videoMemory[address - 0xb8000];
   return 0xff;
 }
 
@@ -2372,8 +2378,9 @@ uint16_t IRAM_ATTR Machine::readVideoMemory16(void * context, int address)
     return readVideoMemory8(context, address) | ((uint16_t) readVideoMemory8(context, address + 1) << 8);
   if (m->m_plantronicsSwap && address >= 0xb8000)
     address ^= 0x4000;
-  if (address >= 0xb0000 && s_videoMemory)
-    return *(uint16_t*)(s_videoMemory + address - 0xb0000);
+  if (address >= 0xb8000 && s_videoMemory)
+    return address < 0xbffff ? *(uint16_t*)(s_videoMemory + address - 0xb8000)
+                             : (uint16_t)(s_videoMemory[address - 0xb8000] | 0xff00);
   return 0xffff;
 }
 

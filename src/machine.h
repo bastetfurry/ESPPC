@@ -50,7 +50,10 @@
 #define SPIFFS_MOUNT_PATH    "/spiffs"
 
 #define RAM_SIZE             1048576    // must correspond to bios MEMSIZE
-#define VIDEOMEMSIZE         65536
+// The CGA machine's video memory, B8000-BFFFF: 16 KB for the CGA itself, the second 16 KB for the
+// Plantronics' plane 1 and the Tandy's 32 KB modes. It was 64 KB from B0000 while Hercules (two
+// 32 KB pages) was still supported.
+#define VIDEOMEMSIZE         32768
 #define PORTTRACE_ENTRIES    512        // debug monitor port trace, see Machine::armPortTrace()
 #define CGA_BORROWED_SIZE    16384      // a real CGA's video RAM, and one EGA plane bank
 
