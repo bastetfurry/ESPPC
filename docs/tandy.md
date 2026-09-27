@@ -223,18 +223,38 @@ Still to do:
 - **SN76496 noise**: the shift rate and the periodic mode (FabGL's noise generator is plain white
   noise).
 
-## The SL/TL DAC (next)
+## The SL/TL DAC
 
-The Tandy 1000 SL/TL/RL add a DMA fed DAC to the PSSJ chip: ports C4h-C7h, DMA 1, IRQ 7. KQ5's
-TANDY.DRV ("Tandy 1000 SL, TL, HL, RL series") uses it **only through the BIOS**, with no port or
-DMA access of its own:
+The Tandy 1000 SL/TL/RL add a DMA fed DAC to the PSSJ chip: ports C4h-C7h, DMA 1, IRQ 7. It is a
+per-machine option ("tandydac 1", needs the sound chip). Software reaches it two ways, and both are
+emulated (src/tandydac.*):
+
+**Through the BIOS** (KQ5's TANDY.DRV, "Tandy 1000 SL, TL, HL, RL series"):
 
 - `INT 1Ah AH=81h`: detect. "Present" means AX comes back with the high nibble clear (the base
-  port, C4h), and CF set means busy. Our BIOS leaves AX = 81xxh today, so it answers "no DAC".
+  port, C4h); CF set means busy. Without the DAC the call fails as before.
 - `AH=85h` reset, `AH=83h` play ES:BX, CX bytes, DX = clock divider (rate = 3579545 / DX),
-  AL = volume; `AH=84h` stop; `AH=82h` record.
-- End of a sample: the driver hooks INT 15h and waits for `AX=91FBh`, the "device done" callout,
-  which the BIOS issues from its IRQ 7 handler.
+  AL = volume; `AH=84h` stop (still with the callout, like the real BIOS); `AH=82h` record is
+  refused.
+- End of a block: the BIOS points IRQ 7 at its own handler for the block, keeping the old vector.
+  When the block has been heard, the handler restores the vector and issues `INT 15h AX=91FBh`,
+  the "device done" callout the driver hooks INT 15h for.
 
-So the DAC can be the BIOS calls on top of a small internal DMA fetcher; a full 8237 is only
-needed for software that programs the hardware directly.
+**Directly** (a MOD player, traced 2026-09-27): INT 1Ah AX=8100h only to find the port, then
+
+    out 0Ah <= 05, 0Bh <= 59h, 0Ch, 03h count, 02h address, 83h page, 0Ah <= 01   (DMA 1, auto-init)
+    out C6h <= divider low, C7h <= high, C4h <= 17h then 1Fh                      (playback, DMA on)
+    in C7h, out C7h <= (low 5 bits kept) | volume << 5                             (amplitude)
+
+and it then polls DMA channel 1's current address (port 02h) to mix behind the play position. So
+the machine has a minimal 8237 when the DAC is fitted: all four channels' registers, the flip-flop,
+masks, modes, status and page registers, with only channel 1 moving. Its current address and count
+follow what the DAC has actually played. The DAC's registers read back (the player relies on C7h
+doing so), playback runs while C4h says playback with DMA and channel 1 is unmasked, and every
+terminal count flags C4h bit 3 (cleared by reading C4h) and raises IRQ 7.
+
+Samples are copied from guest RAM into a 2 KB ring by the emulator task, only about 15 ms ahead of
+playback, because players mix into the part of their buffer that has just been played.
+
+Not modelled: C5h (direct output and the ADC), recording, DMA channels other than 1 transferring,
+and the demand/block DMA modes (everything is played as single transfers at the DAC's rate).

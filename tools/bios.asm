@@ -291,6 +291,11 @@ boot:
   mov  ah, 0x0d
   emu_helper
 
+  ; Tell the emulator where the Tandy DAC's IRQ 7 handler is, for when it has a block playing.
+  mov  ah, 0x12
+  mov  dx, tandy_dac_irq
+  emu_helper
+
   push ds
   push es
 
@@ -3511,9 +3516,46 @@ int1a:
   cmp   ah, 0x07
   je    int1a_07  ; Reset Real-Time Clock Alarm
 
+  ; AH=81h..85h: the Tandy 1000 SL/TL sound calls (DAC detect, record, play, stop, reset). The
+  ; emulator answers them, or reports them unsupported like below when the machine has no DAC.
+  ; AH is needed for the helper call, so the caller's AX goes across in SI.
+  cmp   ah, 0x81
+  jb    int1a_unsupported
+  cmp   ah, 0x85
+  ja    int1a_unsupported
+  push  si
+  mov   si, ax
+  mov   ah, 0x10
+  emu_helper
+  pop   si
+  emu_iret_replace_CF
+  iret
+
   ; unsupported function
+int1a_unsupported:
   stc
   emu_iret_replace_CF
+  iret
+
+
+; IRQ 7 while the Tandy DAC has a block playing (the emulator points the vector here and back).
+; When the block has ended, the emulator restores the previous vector, and this issues INT 15h
+; AX=91FBh, the "device done" callout that the Tandy BIOS makes and that sound drivers hook to
+; learn a sample has finished. Any other IRQ 7 is only acknowledged.
+tandy_dac_irq:
+  push  ax
+  mov   ah, 0x11
+  emu_helper                ; AL = 1: a block has ended
+  push  ax
+  mov   al, 0x20
+  out   0x20, al            ; EOI
+  pop   ax
+  test  al, al
+  jz    tandy_dac_irq_done
+  mov   ax, 0x91fb
+  int   0x15
+tandy_dac_irq_done:
+  pop   ax
   iret
 
   ; success (AH = 0x00, CF = 0)

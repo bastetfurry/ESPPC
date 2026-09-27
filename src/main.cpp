@@ -428,7 +428,7 @@ static void drawSetupDetails(MachineConfItem * c)
   ui.text(49, 14, "USB Serial", TUI_LABEL);
   ui.text(61, 14, USB[c->effectiveUsbSerial() % 3], TUI_VALUE);
   ui.text(49, 15, "Tandy Sound", TUI_LABEL);
-  ui.text(61, 15, (c->tandySound || c->videoAdapter == 2) ? "Enabled" : "Disabled", TUI_VALUE);
+  ui.text(61, 15, !(c->tandySound || c->videoAdapter == 2) ? "Disabled" : (c->tandyDAC ? "With DAC" : "Enabled"), TUI_VALUE);
 
   // a disk given as a URL is fetched on boot if the SD card does not have it yet
   for (int i = 0; i < DISKCOUNT; ++i)
@@ -929,6 +929,10 @@ void setup()
   if (conf->tandySound && conf->videoAdapter != 2) {
     printf("Sound: SN76496 at C0h\n");
     machine->setTandySound(true);
+  }
+  if (conf->tandyDAC && (conf->tandySound || conf->videoAdapter == 2)) {
+    printf("Sound: Tandy SL/TL DAC through INT 1Ah\n");
+    machine->setTandyDAC(true);
   }
   
   // COM1 uses pins 3/1, the same pins as the USB serial console: attaching it makes UART2 take

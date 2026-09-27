@@ -199,6 +199,8 @@ void MachineConf::loadFromFile(FILE * file)
       item->setEgaRom(value);
     else if (strcmp("tandysound", tag) == 0)
       item->setTandySound(value);
+    else if (strcmp("tandydac", tag) == 0)
+      item->setTandyDAC(value);
     else if (tag[0])
       // Say so rather than ignoring it. A mistyped or over-long tag otherwise looks exactly
       // like a feature that does not work.
@@ -249,6 +251,8 @@ void MachineConf::saveToFile(FILE * file)
     // only written when on, like enabledebug; the Tandy video has the chip regardless
     if (item->tandySound && item->videoAdapter != 2)
       fputs("tandysound 1 ", file);
+    if (item->tandyDAC)
+      fputs("tandydac 1 ", file);
     fputs("\r\n", file);
   }
 }

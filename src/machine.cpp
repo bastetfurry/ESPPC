@@ -115,6 +115,17 @@ Machine::Machine() :
     m_CGAModeCurrentValid(false),
     m_tandy(false),
     m_tandySound(false),
+    m_tandyDACRequested(false),
+    m_dacStubIP(0),
+    m_dacSavedVector(0),
+    m_dacHooked(false),
+    m_dacBlockEnded(false),
+    m_dacMode(0),
+    m_dacDivider(0),
+    m_dacAmplitude(0),
+    m_dacIrqFlag(false),
+    m_dmaFlipFlop(false),
+    m_dmaStatus(0),
     m_tandyArrayIndex(0),
     m_tandyPage(0x3f),
     m_EGAActive(false),
@@ -201,6 +212,8 @@ void Machine::init()
   m_soundGen.attach(&m_sinWaveGen);
   if (tandySound())
     m_sn76496.attach(&m_soundGen);
+  if (tandyDAC())
+    m_tandyDAC.attach(&m_soundGen);
 
   m_i8042.init();
   m_i8042.setCallbacks(this, keyboardInterrupt, mouseInterrupt, resetMachine, sysReq);
@@ -373,6 +386,19 @@ void Machine::reset()
   m_tandyPage       = 0x3f;
   if (tandySound())
     m_sn76496.reset();
+  // POST rebuilds the vector table, so whatever the DAC had hooked is gone anyway
+  m_tandyDAC.stop();
+  m_dacHooked     = false;
+  m_dacBlockEnded = false;
+  m_dacMode       = 0;
+  m_dacDivider    = 0;
+  m_dacAmplitude  = 0;
+  m_dacIrqFlag    = false;
+  memset(m_dma, 0, sizeof(m_dma));
+  for (int i = 0; i < 4; ++i)
+    m_dma[i].masked = true;
+  m_dmaFlipFlop   = false;
+  m_dmaStatus     = 0;
 
   m_HGCMemoryOffset = 0;
   m_HGCModeReg      = 0;
@@ -610,6 +636,16 @@ void Machine::tick()
       
     if ((m_ticksCounter & 0x7f) == 0x7f) {
       m_PIT8253.tick();
+      // keep the DAC's ring topped up from guest RAM (this task is the one that may read it)
+      if (m_tandyDAC.busy()) {
+        bool dma = m_tandyDAC.dmaMode();
+        if (int ended = m_tandyDAC.pump(s_memory)) {
+          if (dma)
+            tandyDACTerminalCount(ended);
+          else
+            endTandyDACBlock();
+        }
+      }
       // run keyboard controller every PIT tick (just to not overload CPU with continous checks)
       m_i8042.tick();
     }
@@ -673,6 +709,287 @@ void Machine::setCGA6845Register(uint8_t value)
     }
 
   }
+}
+
+
+// INT 1Ah AH=81h..85h, the Tandy 1000 SL/TL BIOS sound calls. The caller's AX comes in separately
+// (bios.asm needs AH for the helper call); ES:BX, CX, DX are still the caller's. Results go back
+// in AX and CF, the way DOSBox's BIOS answers them.
+void Machine::tandyDACBios(uint16_t callerAX)
+{
+  if (!tandyDAC()) {
+    // no DAC: exactly what the BIOS answered before, an unsupported function
+    i8086::setAX(callerAX);
+    i8086::setFlagCF(1);
+    return;
+  }
+
+  switch (callerAX >> 8) {
+
+    // detect: the base port, which has the high nibble clear -- that is the test software makes --
+    // and CF set while a block is still playing
+    case 0x81:
+      i8086::setAX(0x00c4);
+      i8086::setFlagCF(m_tandyDAC.busy());
+      return;
+
+    // play ES:BX, CX bytes, DX = clock divider (12 bits), AL = volume 0..7. CF with AH = 0 when
+    // the previous block has not finished.
+    case 0x83:
+      if (m_tandyDAC.busy()) {
+        i8086::setAH(0);
+        i8086::setFlagCF(1);
+        return;
+      }
+      hookTandyDACIrq();
+      m_tandyDAC.start(((uint32_t)i8086::ES() << 4) + i8086::BX(), i8086::CX(),
+                       i8086::DX() & 0x0fff, callerAX & 0x07);
+      if (!m_tandyDAC.busy())
+        endTandyDACBlock();         // nothing to play: report it done at once
+      i8086::setAH(0);
+      i8086::setFlagCF(0);
+      return;
+
+    // stop. The real BIOS plays a few samples of silence, which ends in the usual IRQ and
+    // device-done callout; software may wait for that, so it is raised here too.
+    case 0x84:
+      m_tandyDAC.stop();
+      hookTandyDACIrq();
+      endTandyDACBlock();
+      i8086::setAH(0);
+      i8086::setFlagCF(0);
+      return;
+
+    // reset: silence, and forget any block, without a callout
+    case 0x85:
+      m_tandyDAC.stop();
+      unhookTandyDACIrq();
+      m_dacBlockEnded = false;
+      i8086::setAH(0);
+      i8086::setFlagCF(0);
+      return;
+
+    // record (AH=82h): there is no input, so refuse it rather than never finishing
+    default:
+      i8086::setAH(0);
+      i8086::setFlagCF(1);
+      return;
+  }
+}
+
+
+// 8237 DMA controller, the parts software uses to set up a transfer and to watch it.
+//   00h-07h  channel n address (2n) and count (2n+1), a byte at a time through the flip-flop
+//   08h      status (read: terminal count per channel, cleared by reading) / command (ignored)
+//   0Ah      single mask bit, 0Bh mode, 0Ch clear flip-flop, 0Dh master clear, 0Eh clear masks,
+//   0Fh      all mask bits
+//   87h/83h/81h/82h  page registers of channels 0/1/2/3
+// Only channel 1 ever moves: it is what the Tandy DAC plays from.
+void Machine::writeDMA(int port, uint8_t value)
+{
+  switch (port) {
+    case 0x00 ... 0x07:
+    {
+      auto & ch   = m_dma[port >> 1];
+      uint16_t & base = (port & 1) ? ch.baseCount : ch.baseAddr;
+      uint16_t & cur  = (port & 1) ? ch.curCount  : ch.curAddr;
+      base = m_dmaFlipFlop ? (uint16_t)((base & 0x00ff) | (value << 8)) : (uint16_t)((base & 0xff00) | value);
+      cur  = base;
+      m_dmaFlipFlop = !m_dmaFlipFlop;
+      break;
+    }
+    case 0x0a:
+      m_dma[value & 3].masked = value & 4;
+      break;
+    case 0x0b:
+      m_dma[value & 3].mode = value;
+      break;
+    case 0x0c:
+      m_dmaFlipFlop = false;
+      break;
+    case 0x0d:
+      m_dmaFlipFlop = false;
+      m_dmaStatus   = 0;
+      for (int i = 0; i < 4; ++i)
+        m_dma[i].masked = true;
+      break;
+    case 0x0e:
+      for (int i = 0; i < 4; ++i)
+        m_dma[i].masked = false;
+      break;
+    case 0x0f:
+      for (int i = 0; i < 4; ++i)
+        m_dma[i].masked = (value >> i) & 1;
+      break;
+    case 0x87: m_dma[0].page = value; break;
+    case 0x83: m_dma[1].page = value; break;
+    case 0x81: m_dma[2].page = value; break;
+    case 0x82: m_dma[3].page = value; break;
+    default:
+      return;     // 08h (command) and 09h (request) change nothing here
+  }
+  // a mask or channel 1 change can start or stop the DAC's transfer
+  updateTandyDACDMA();
+}
+
+
+uint8_t Machine::readDMA(int port)
+{
+  switch (port) {
+    case 0x00 ... 0x07:
+    {
+      int ch = port >> 1;
+      uint16_t v = (port & 1) ? m_dma[ch].curCount : m_dma[ch].curAddr;
+      // channel 1 while the DAC plays from it: where playback has got to
+      if (ch == 1 && m_tandyDAC.dmaMode()) {
+        uint32_t off = m_tandyDAC.dmaOffset();
+        v = (port & 1) ? (uint16_t)(m_dma[1].baseCount - off) : (uint16_t)(m_dma[1].baseAddr + off);
+      }
+      uint8_t b = m_dmaFlipFlop ? (v >> 8) : (v & 0xff);
+      m_dmaFlipFlop = !m_dmaFlipFlop;
+      return b;
+    }
+    case 0x08:
+    {
+      uint8_t s = m_dmaStatus;
+      m_dmaStatus = 0;
+      return s;
+    }
+    case 0x87: return m_dma[0].page;
+    case 0x83: return m_dma[1].page;
+    case 0x81: return m_dma[2].page;
+    case 0x82: return m_dma[3].page;
+    default:   return 0xff;
+  }
+}
+
+
+// The DAC's registers. C5h (direct output, and the ADC side) is not modelled.
+void Machine::writeTandyDACPort(int port, uint8_t value)
+{
+  switch (port) {
+    case 0xc4:
+      m_dacMode = value;
+      updateTandyDACDMA();
+      break;
+    case 0xc6:
+      m_dacDivider = (m_dacDivider & 0x0f00) | value;
+      if (m_tandyDAC.dmaMode())
+        m_tandyDAC.setDivider(m_dacDivider);
+      break;
+    case 0xc7:
+      m_dacDivider   = (m_dacDivider & 0x00ff) | ((value & 0x0f) << 8);
+      m_dacAmplitude = value >> 5;
+      if (m_tandyDAC.dmaMode()) {
+        m_tandyDAC.setDivider(m_dacDivider);
+        m_tandyDAC.setVolume(m_dacAmplitude);
+      }
+      break;
+  }
+}
+
+
+// Reading C4h acknowledges the terminal count interrupt, which is how the Tandy BIOS's handler
+// clears it. The divider and amplitude read back as written; software relies on that, reading C7h
+// to change the amplitude without disturbing the divider bits beside it.
+uint8_t Machine::readTandyDACPort(int port)
+{
+  switch (port) {
+    case 0xc4:
+    {
+      uint8_t v = (m_dacMode & 0x77) | (m_dacIrqFlag ? 0x08 : 0x00);
+      m_dacIrqFlag = false;
+      return v;
+    }
+    case 0xc6: return m_dacDivider & 0xff;
+    case 0xc7: return ((m_dacDivider >> 8) & 0x0f) | (m_dacAmplitude << 5);
+    default:   return 0xff;
+  }
+}
+
+
+// The DAC plays from DMA channel 1 while it is in playback mode (C4h bits 1-0 = 3) with DMA on
+// (bits 3-2 = 11) and the channel is unmasked. Leaving any of those stops it, and the channel's
+// current address and count keep where playback had got to.
+void Machine::updateTandyDACDMA()
+{
+  auto & ch  = m_dma[1];
+  bool  want = (m_dacMode & 0x03) == 0x03 && (m_dacMode & 0x0c) == 0x0c && !ch.masked && m_dacDivider;
+  if (want && !m_tandyDAC.dmaMode()) {
+    m_tandyDAC.startDMA(ch.page, ch.baseAddr, ch.baseCount, ch.mode & 0x10, m_dacDivider, m_dacAmplitude);
+  } else if (!want && m_tandyDAC.dmaMode()) {
+    uint32_t off = m_tandyDAC.dmaOffset();
+    ch.curAddr  = ch.baseAddr + off;
+    ch.curCount = ch.baseCount - off;
+    m_tandyDAC.stop();
+  }
+}
+
+
+// A block played from DMA channel 1 has reached its terminal count: flag it in the 8237's status
+// and the DAC's C4h, and raise IRQ 7. Without auto-init the transfer is over and the channel masks
+// itself, as the 8237 does.
+void Machine::tandyDACTerminalCount(int count)
+{
+  (void) count;
+  m_dmaStatus |= 0x02;
+  m_dacIrqFlag = true;
+  if (!m_tandyDAC.busy()) {
+    auto & ch   = m_dma[1];
+    ch.masked   = true;
+    ch.curAddr  = ch.baseAddr + ch.baseCount + 1;
+    ch.curCount = 0xffff;
+  }
+  m_PIC8259A.signalInterrupt(7);
+}
+
+
+// Point IRQ 7 at the BIOS's DAC handler for the length of a block, keeping whatever was there, and
+// unmask it at the PIC, as the Tandy BIOS does.
+void Machine::hookTandyDACIrq()
+{
+  auto vec = (uint16_t*)(s_memory + 0x0f * 4);
+  if (!m_dacHooked || vec[0] != m_dacStubIP || vec[1] != BIOS_SEG) {
+    if (!(vec[0] == m_dacStubIP && vec[1] == BIOS_SEG))
+      m_dacSavedVector = vec[0] | ((uint32_t)vec[1] << 16);
+    vec[0] = m_dacStubIP;
+    vec[1] = BIOS_SEG;
+  }
+  m_dacHooked = true;
+  writePortHW(this, 0x21, readPortHW(this, 0x21) & 0x7f);
+}
+
+
+void Machine::unhookTandyDACIrq()
+{
+  if (!m_dacHooked)
+    return;
+  auto vec = (uint16_t*)(s_memory + 0x0f * 4);
+  if (vec[0] == m_dacStubIP && vec[1] == BIOS_SEG) {
+    vec[0] = (uint16_t) m_dacSavedVector;
+    vec[1] = (uint16_t)(m_dacSavedVector >> 16);
+  }
+  m_dacHooked = false;
+}
+
+
+void Machine::endTandyDACBlock()
+{
+  m_dacBlockEnded = true;
+  m_PIC8259A.signalInterrupt(7);
+}
+
+
+// The BIOS IRQ 7 handler asks this. True when a block has ended: the vector goes back to what it
+// was, and the handler then issues INT 15h AX=91FBh, the device-done callout software waits for.
+// False for any other IRQ 7 (a spurious one), which it just acknowledges.
+bool Machine::tandyDACIrq()
+{
+  if (!m_dacBlockEnded)
+    return false;
+  m_dacBlockEnded = false;
+  unhookTandyDACIrq();
+  return true;
 }
 
 
@@ -1620,10 +1937,23 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
         m->m_tandyPage = value;
       break;
 
-    // SN76496, on the Tandy 1000 and on TNDY style sound cards
+    // SN76496, on the Tandy 1000 and on TNDY style sound cards. It decodes C0h-C7h, except next to
+    // the SL/TL DAC, which has C4h-C7h.
     case 0xc0 ... 0xc7:
-      if (m->tandySound())
+      if (address >= 0xc4 && m->tandyDAC())
+        m->writeTandyDACPort(address, value);
+      else if (m->tandySound())
         m->m_sn76496.write(value);
+      break;
+
+    // 8237 DMA controller and the page registers, only with the Tandy DAC (see Machine::writeDMA)
+    case 0x00 ... 0x0f:
+    case 0x81:
+    case 0x82:
+    case 0x83:
+    case 0x87:
+      if (m->tandyDAC())
+        m->writeDMA(address, value);
       break;
 
     // CGA - Mode Control Register
@@ -1724,6 +2054,16 @@ uint8_t Machine::readPortHW(void * context, int address)
   auto m = (Machine*)context;
 
   switch (address) {
+
+    // the Tandy DAC and the 8237 it needs (see writePortHW())
+    case 0xc4 ... 0xc7:
+      return m->tandyDAC() ? m->readTandyDACPort(address) : 0xff;
+    case 0x00 ... 0x0f:
+    case 0x81:
+    case 0x82:
+    case 0x83:
+    case 0x87:
+      return m->tandyDAC() ? m->readDMA(address) : 0xff;
 
     // PIC8259A
     case 0x0020:

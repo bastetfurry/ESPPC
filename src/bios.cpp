@@ -272,6 +272,23 @@ void BIOS::helpersEntry()
     // AH = 0x0E, is an EGA fitted?
     //   returns AL = 1 on a machine with the EGA BIOS ROM, AL = 0 on a CGA/Hercules machine
     //
+    // AH = 0x10, INT 1Ah AH=81h..85h, the Tandy SL/TL DAC calls. SI = the caller's AX.
+    //   returns AX and CF as the Tandy BIOS does (see Machine::tandyDACBios)
+    case 0x10:
+      m_machine->tandyDACBios(i8086::SI());
+      break;
+
+    // AH = 0x11, from the DAC's IRQ 7 handler: returns AL = 1 when a block has ended (the handler
+    // then issues the INT 15h AX=91FBh callout), AL = 0 for any other IRQ 7
+    case 0x11:
+      i8086::setAL(m_machine->tandyDACIrq() ? 1 : 0);
+      break;
+
+    // AH = 0x12, at POST: DX = offset of that IRQ 7 handler in the BIOS segment
+    case 0x12:
+      m_machine->setTandyDACStub(i8086::DX());
+      break;
+
     // AH = 0x0E, which adapter is fitted?
     //   returns AL = 0 CGA/Hercules, 1 EGA (the EGA BIOS ROM is loaded), 2 Tandy 1000
     //

@@ -40,6 +40,7 @@
 #include "bios.h"
 #include "serialdbg.h"
 #include "sn76496.h"
+#include "tandydac.h"
 #include "ega.h"
 
 
@@ -169,6 +170,17 @@ public:
   // setTandy() implies it. Must be called before run().
   void setTandySound(bool value)               { m_tandySound = value; }
   bool tandySound() const                      { return m_tandySound || m_tandy; }
+
+  // The Tandy 1000 SL/TL DAC next to the sound chip (see tandydac.h), reached through the BIOS,
+  // INT 1Ah AH=81h..85h. Needs the sound chip. Must be called before run().
+  void setTandyDAC(bool value)                 { m_tandyDACRequested = value; }
+  bool tandyDAC() const                        { return m_tandyDACRequested && tandySound(); }
+
+  // BIOS side of the DAC: INT 1Ah AH=81h..85h with the caller's AX (the other inputs are still in
+  // their registers), the IRQ 7 stub's question "has a block ended?", and where that stub is.
+  void tandyDACBios(uint16_t callerAX);
+  bool tandyDACIrq();
+  void setTandyDACStub(uint16_t offset)        { m_dacStubIP = offset; }
 
   // BIOS side of the Tandy: a mode set for BIOS modes 8 and 9 (returns false for any other mode,
   // after putting the video array back to its CGA state), and the palette calls INT 10h AH=10h.
@@ -345,6 +357,15 @@ private:
   void loadEGAFont(int charHeight);
   void setCGAMode();
   void writeTandyArray(uint8_t value);
+  void hookTandyDACIrq();
+  void writeDMA(int port, uint8_t value);
+  uint8_t readDMA(int port);
+  void writeTandyDACPort(int port, uint8_t value);
+  uint8_t readTandyDACPort(int port);
+  void updateTandyDACDMA();
+  void tandyDACTerminalCount(int count);
+  void unhookTandyDACIrq();
+  void endTandyDACBlock();
   void resetTandyArray();
   void setEGAAttributeReg(uint8_t value);
   void setEGADefaultPalette(bool line200);
@@ -462,6 +483,32 @@ private:
   uint8_t                  m_tandyArray[32];    // 3DEh: 1 mask, 2 border, 3 mode, 10h-1Fh palette
   uint8_t                  m_tandyPage;         // 3DFh, stored only: see docs/tandy.md
   SN76496                  m_sn76496;
+  bool                     m_tandyDACRequested;
+  TandyDAC                 m_tandyDAC;
+  uint16_t                 m_dacStubIP;         // BIOS IRQ 7 handler for the DAC, at F000:this
+  uint32_t                 m_dacSavedVector;    // the IRQ 7 vector it replaced
+  bool                     m_dacHooked;
+  bool                     m_dacBlockEnded;     // IRQ 7 raised for it, not yet handled
+
+  // The DAC's own registers, C4h-C7h, for software that programs it directly
+  uint8_t                  m_dacMode;           // C4h: bits 1-0 = 3 playback, bits 3-2 = 11 DMA on
+  uint16_t                 m_dacDivider;        // C6h, C7h bits 3-0: rate = 3579545 / divider
+  uint8_t                  m_dacAmplitude;      // C7h bits 7-5
+  bool                     m_dacIrqFlag;        // terminal count reached, C4h bit 3 on read
+
+  // A minimal 8237 DMA controller, on machines with the Tandy DAC only. The registers of all four
+  // channels are kept so software can program and read them, but only channel 1 moves, driven by
+  // the DAC's playback (see TandyDAC).
+  struct DMAChannel {
+    uint16_t baseAddr, baseCount;
+    uint16_t curAddr, curCount;
+    uint8_t  page;
+    uint8_t  mode;
+    bool     masked;
+  };
+  DMAChannel               m_dma[4];
+  bool                     m_dmaFlipFlop;       // false = the next byte is the low one
+  uint8_t                  m_dmaStatus;         // bits 3-0 terminal count reached, cleared on read
 
   // Hercules
   uint8_t                  m_HGC6845SelectRegister;

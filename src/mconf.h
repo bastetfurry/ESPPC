@@ -129,6 +129,7 @@ struct MachineConfItem {
   uint8_t           videoAdapter;             // "video": 0 = CGA/Hercules (default), 1 = EGA, 2 = Tandy 1000
   char            * egaRom;                   // "egarom": path to the EGA BIOS option ROM
   bool              tandySound;               // "tandysound": SN76496 at C0h without the Tandy video
+  bool              tandyDAC;                 // "tandydac": the SL/TL DAC, needs the sound chip
 
   MachineConfItem()
     : next(nullptr),
@@ -144,7 +145,8 @@ struct MachineConfItem {
       usbSerialSet(false),
       videoAdapter(0),
       egaRom(nullptr),
-      tandySound(false)
+      tandySound(false),
+      tandyDAC(false)
   {
   }
 
@@ -181,6 +183,13 @@ struct MachineConfItem {
   void setTandySound(char const * value)        {
     tandySound = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
                            value[0] == 't' || value[0] == 'T');
+  }
+
+  // "tandydac 1" adds the Tandy 1000 SL/TL's DAC, played through the BIOS (INT 1Ah AH=81h..85h).
+  // It sits next to the sound chip, so it only takes effect with Tandy video or "tandysound 1".
+  void setTandyDAC(char const * value)          {
+    tandyDAC = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
+                         value[0] == 't' || value[0] == 'T');
   }
 
   // "enabledebug 1" turns the serial debug console on. It is off unless asked for, because it
