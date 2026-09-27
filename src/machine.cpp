@@ -500,6 +500,20 @@ void IRAM_ATTR Machine::runTask(void * pvParameters)
       m->m_stepCallback(m);
     #endif
 
+    // the monitor's per opcode profile: the same batch, every instruction timed
+    if (__builtin_expect(s_opProfile != nullptr, 0)) {
+      OpProfile * prof = s_opProfile;
+      for (int i = 0; i < BATCH; ++i) {
+        uint8_t  op = s_memory[(((uint32_t)i8086::CS() << 4) + i8086::IP()) & 0xfffff];
+        uint32_t t  = esp_cpu_get_ccount();
+        i8086::step();
+        prof->cycles[op] += esp_cpu_get_ccount() - t;
+        ++prof->count[op];
+      }
+      m->tick(BATCH);
+      continue;
+    }
+
     bool stats = s_vmStats;
     uint32_t t0 = stats ? esp_cpu_get_ccount() : 0;
 
@@ -2333,6 +2347,20 @@ bool Machine::COM2Interrupt(PC8250 * source, void * context)
 // split. Outside that window the CGA buffer still applies, when it exists.
 // The video memory callbacks run on every guest access to A0000-BFFFF, with the EGA planar engine
 // inlined into them, so they live in IRAM as well.
+// The EGA byte accesses, out of line so the 16 bit handlers can use them without carrying two more
+// inlined copies of the planar engine.
+void IRAM_ATTR __attribute__((noinline)) Machine::egaWrite8(Machine * m, uint32_t off, uint8_t value)
+{
+  m->m_EGA.write8(off, value);
+}
+
+
+uint8_t IRAM_ATTR __attribute__((noinline)) Machine::egaRead8(Machine * m, uint32_t off)
+{
+  return m->m_EGA.read8(off);
+}
+
+
 inline __attribute__((always_inline)) void Machine::writeVideoMemory8Impl(void * context, int address, uint8_t value)
 {
   auto m = (Machine*)context;
@@ -2356,7 +2384,11 @@ inline __attribute__((always_inline)) void Machine::writeVideoMemory16Impl(void 
 {
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd()) {
-    m->m_EGA.write16(address - m->m_EGA.mapBase(), value);
+    // Two byte cycles, as on the card, through the out of line byte handler: with the planar
+    // engine inlined twice more here this function alone took 1.3 KB of the scarce IRAM, and EGA
+    // accesses are 0.3% of the emulator's time (measured), so the extra call costs nothing visible.
+    egaWrite8(m, address - m->m_EGA.mapBase(), (uint8_t) value);
+    egaWrite8(m, address + 1 - m->m_EGA.mapBase(), (uint8_t)(value >> 8));
     return;
   }
   if (m->m_CGABorrowed) {
@@ -2394,8 +2426,13 @@ inline __attribute__((always_inline)) uint8_t Machine::readVideoMemory8Impl(void
 inline __attribute__((always_inline)) uint16_t Machine::readVideoMemory16Impl(void * context, int address)
 {
   auto m = (Machine*)context;
-  if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd())
-    return m->m_EGA.read16(address - m->m_EGA.mapBase());
+  if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd()) {
+    // two byte cycles, the second leaving the latches loaded (see writeVideoMemory16Impl for why
+    // out of line)
+    uint32_t off = address - m->m_EGA.mapBase();
+    uint8_t  lo  = egaRead8(m, off);
+    return lo | ((uint16_t) egaRead8(m, off + 1) << 8);
+  }
   if (m->m_CGABorrowed)
     return readVideoMemory8Impl(context, address) | ((uint16_t) readVideoMemory8Impl(context, address + 1) << 8);
   if (m->m_plantronicsSwap && address >= 0xb8000)
@@ -2413,6 +2450,7 @@ uint32_t      Machine::s_vmWrites = 0;
 uint64_t      Machine::s_vmCycles = 0;
 uint64_t      Machine::s_stepCycles = 0;
 uint64_t      Machine::s_tickCycles = 0;
+Machine::OpProfile * volatile Machine::s_opProfile = nullptr;
 
 
 // The callbacks the CPU core calls: the access itself, and while the monitor's statistics are on,

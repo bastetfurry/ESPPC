@@ -569,6 +569,7 @@ void SerialDebug::help()
   write("  c [s]             free CPU time on the video core, measured over s seconds (default 2)\r\n");
   write("  a                 benchmark the OPL2 synthesiser: all nine channels, one second of samples\r\n");
   write("  m on|off          video memory statistics: count and time the guest's accesses; m  report\r\n");
+  write("  y on|off          per opcode CPU profile (cycles and counts); y  report the top 24\r\n");
   write("  s [n]             single step n instructions, then show registers\r\n");
   write("  g                 resume, back to the screen\r\n");
   write("  q                 resume and detach completely\r\n");
@@ -1430,6 +1431,60 @@ void SerialDebug::cmdVideoStats(char const * args)
 }
 
 
+// Per opcode CPU profile: 'y on' allocates and starts, 'g' lets the guest run, 'y' lists the 24
+// opcodes that took the most cycles, 'y off' stops and frees (see Machine::s_opProfile).
+void SerialDebug::cmdOpProfile(char const * args)
+{
+  if (strncmp(args, "on", 2) == 0) {
+    auto p = (Machine::OpProfile *) calloc(1, sizeof(Machine::OpProfile));
+    if (!p) {
+      write("no memory for the profile\r\n");
+      return;
+    }
+    auto old = Machine::s_opProfile;
+    Machine::s_opProfile = p;
+    free(old);
+    write("opcode profile on; 'g' to run, then 'y' to report\r\n");
+    return;
+  }
+  if (strncmp(args, "off", 3) == 0) {
+    auto old = Machine::s_opProfile;
+    Machine::s_opProfile = nullptr;
+    free(old);
+    write("opcode profile off\r\n");
+    return;
+  }
+  auto p = Machine::s_opProfile;
+  if (!p) {
+    write("profile is off ('y on' first)\r\n");
+    return;
+  }
+  uint64_t totalCycles = 0, totalCount = 0;
+  for (int i = 0; i < 256; ++i) {
+    totalCycles += p->cycles[i];
+    totalCount  += p->count[i];
+  }
+  writeFmt("%llu instructions, %llu cycles in step(), %u cycles on average\r\n",
+           (unsigned long long) totalCount, (unsigned long long) totalCycles,
+           totalCount ? (unsigned)(totalCycles / totalCount) : 0u);
+  write(" op  cycles%  instr%  avg cycles\r\n");
+  bool shown[256] = { };
+  for (int n = 0; n < 24; ++n) {
+    int best = -1;
+    for (int i = 0; i < 256; ++i)
+      if (!shown[i] && (best < 0 || p->cycles[i] > p->cycles[best]))
+        best = i;
+    if (best < 0 || p->cycles[best] == 0)
+      break;
+    shown[best] = true;
+    writeFmt(" %02X  %5.1f%%  %6.2f%%  %5u\r\n", best,
+             totalCycles ? p->cycles[best] * 100.0 / totalCycles : 0.0,
+             totalCount ? p->count[best] * 100.0 / totalCount : 0.0,
+             p->count[best] ? (unsigned)(p->cycles[best] / p->count[best]) : 0u);
+  }
+}
+
+
 // OPL2 cost on this CPU: all nine channels keyed on with a two operator FM voice and sustained, the
 // heaviest thing an AdLib does, generated at 16384 Hz for one second's worth of samples.
 void SerialDebug::cmdOPLBench()
@@ -1553,6 +1608,7 @@ void SerialDebug::runMonitor()
       case 'c': cmdCoreLoad(p);  break;
       case 'a': cmdOPLBench();   break;
       case 'm': cmdVideoStats(p); break;
+      case 'y': cmdOpProfile(p); break;
       case '?': help();          break;
 
       case 's':

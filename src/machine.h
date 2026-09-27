@@ -328,6 +328,15 @@ public:
   static uint64_t          s_stepCycles;     // in i8086::step(), while s_vmStats is set
   static uint64_t          s_tickCycles;     // in Machine::tick(), likewise
 
+  // Per opcode profile for the monitor's 'y' command: while set, runTask times every instruction
+  // and adds it to its first byte's entry (prefixes count as their own opcodes). Allocated only
+  // while profiling.
+  struct OpProfile {
+    uint32_t count[256];
+    uint64_t cycles[256];
+  };
+  static OpProfile * volatile s_opProfile;
+
   // Enables the serial debug console (see serialdbg.h). Must be called before run(), and only
   // when COM1 is left unattached -- they share the same pins.
   void enableDebugConsole()            { m_debugConsoleRequested = true; }
@@ -427,6 +436,8 @@ private:
   static void writeVideoMemory16Impl(void * context, int address, uint16_t value);
   static uint8_t readVideoMemory8Impl(void * context, int address);
   static uint16_t readVideoMemory16Impl(void * context, int address);
+  static void egaWrite8(Machine * m, uint32_t off, uint8_t value);
+  static uint8_t egaRead8(Machine * m, uint32_t off);
 
   static bool interrupt(void * context, int num);
   static bool interruptHandler(void * context, int num);

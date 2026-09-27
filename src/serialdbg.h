@@ -82,6 +82,7 @@ private:
   void cmdCoreLoad(char const * args);
   void cmdOPLBench();
   void cmdVideoStats(char const * args);
+  void cmdOpProfile(char const * args);
   void cmdVideoState();
   void cmdHeapMap();
   void cmdWriteReg(char const * args);
