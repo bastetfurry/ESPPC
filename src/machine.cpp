@@ -126,6 +126,9 @@ Machine::Machine() :
     m_debugConsoleRequested(false),
     m_usbSerialRoute(0),
     m_breakAddr(0),
+    m_portTrace(nullptr),
+    m_portTraceCount(0),
+    m_portTraceMissed(0),
     m_egaRomPath(nullptr),
     m_egaBiosLoaded(false)
 {
@@ -1298,6 +1301,71 @@ void Machine::setHGCMode()
 
 void Machine::writePort(void * context, int address, uint8_t value)
 {
+  auto m = (Machine*)context;
+  if (m->m_portTrace && m->m_portTraceWrites && address >= m->m_portTraceLo && address <= m->m_portTraceHi)
+    m->tracePort(address, value, TraceKind::Out);
+  writePortHW(context, address, value);
+}
+
+
+uint8_t Machine::readPort(void * context, int address)
+{
+  auto m = (Machine*)context;
+  uint8_t value = readPortHW(context, address);
+  if (m->m_portTrace && m->m_portTraceReads && address >= m->m_portTraceLo && address <= m->m_portTraceHi)
+    m->tracePort(address, value, TraceKind::In);
+  return value;
+}
+
+
+bool Machine::armPortTrace(int lo, int hi, bool reads, bool writes, int intLo, int intHi)
+{
+  stopPortTrace();
+  // 512 entries of 10 bytes, 5 KB of internal RAM, and only while armed
+  m_portTrace = (PortTraceEntry*) malloc(PORTTRACE_ENTRIES * sizeof(PortTraceEntry));
+  if (!m_portTrace)
+    return false;
+  m_portTraceLo     = lo;
+  m_portTraceHi     = hi;
+  m_portTraceReads  = reads;
+  m_portTraceWrites = writes;
+  m_intTraceLo      = intLo;
+  m_intTraceHi      = intHi;
+  return true;
+}
+
+
+void Machine::stopPortTrace()
+{
+  free(m_portTrace);
+  m_portTrace       = nullptr;
+  m_portTraceCount  = 0;
+  m_portTraceMissed = 0;
+}
+
+
+void Machine::tracePort(int address, uint8_t value, TraceKind kind)
+{
+  uint16_t cs = i8086::CS(), ip = i8086::IP();
+
+  if (m_portTraceCount > 0) {
+    auto & last = m_portTrace[m_portTraceCount - 1];
+    if (last.cs == cs && last.ip == ip && last.port == address && last.value == value &&
+        last.kind == kind && last.repeat < 0xffff) {
+      ++last.repeat;
+      return;
+    }
+  }
+  if (m_portTraceCount == PORTTRACE_ENTRIES) {
+    ++m_portTraceMissed;
+    return;
+  }
+  m_portTrace[m_portTraceCount++] = { cs, ip, (uint16_t) address, 1, value, kind };
+}
+
+
+void Machine::writePortHW(void * context, int address, uint8_t value)
+{
 
   auto m = (Machine*)context;
 
@@ -1489,7 +1557,7 @@ void Machine::writePort(void * context, int address, uint8_t value)
 }
 
 
-uint8_t Machine::readPort(void * context, int address)
+uint8_t Machine::readPortHW(void * context, int address)
 {
 
   auto m = (Machine*)context;
@@ -1811,6 +1879,9 @@ uint16_t IRAM_ATTR Machine::readVideoMemory16(void * context, int address)
 // itself stays in flash, in interruptHandler().
 bool IRAM_ATTR Machine::interrupt(void * context, int num)
 {
+  auto m = (Machine*)context;
+  if (m->m_portTrace && num >= m->m_intTraceLo && num <= m->m_intTraceHi && i8086::CS() != BIOS_SEG)
+    m->tracePort(i8086::AX(), (uint8_t) num, TraceKind::Int);
   if (num != 0xff && i8086::CS() != BIOS_SEG)
     return false;
   return interruptHandler(context, num);

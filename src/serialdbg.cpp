@@ -561,6 +561,9 @@ void SerialDebug::help()
   write("  x addr len        stream guest memory as raw binary\r\n");
   write("  i port            read an I/O port\r\n");
   write("  o port val        write an I/O port\r\n");
+  write("  t lo hi [r|w|rw] [int lo [hi]]\r\n");
+  write("                    trace port accesses lo..hi (default writes), optionally INTs too\r\n");
+  write("  t                 show the trace so far;  t off  stop it and free the buffer\r\n");
   write("  s [n]             single step n instructions, then show registers\r\n");
   write("  g                 resume, back to the screen\r\n");
   write("  q                 resume and detach completely\r\n");
@@ -1161,6 +1164,91 @@ void SerialDebug::cmdOutPort(char const * args)
 }
 
 
+// Port trace. Arming it and then resuming with 'g' records what the guest does to a range of
+// ports -- which registers a game programs, in which order and from where -- and 't' alone lists
+// it afterwards. The buffer fills and then stops, so it keeps the first accesses after arming,
+// which is where a mode set or a hardware probe happens.
+void SerialDebug::cmdPortTrace(char const * args)
+{
+  if (!*args) {
+    int count;
+    uint32_t missed;
+    auto e = m_machine->portTrace(&count, &missed);
+    if (!e) {
+      write("port trace is off\r\n");
+      return;
+    }
+    for (int i = 0; i < count; ++i) {
+      switch (e[i].kind) {
+        case Machine::TraceKind::Out:
+          writeFmt("%04X:%04X  out %04X <= %02X", e[i].cs, e[i].ip, e[i].port, e[i].value);
+          break;
+        case Machine::TraceKind::In:
+          writeFmt("%04X:%04X  in  %04X  = %02X", e[i].cs, e[i].ip, e[i].port, e[i].value);
+          break;
+        case Machine::TraceKind::Int:
+          writeFmt("%04X:%04X  int %02X  AX=%04X", e[i].cs, e[i].ip, e[i].value, e[i].port);
+          break;
+      }
+      if (e[i].repeat > 1)
+        writeFmt("  x%u", (unsigned) e[i].repeat);
+      write("\r\n");
+    }
+    writeFmt("%d entries%s, %u more accesses after the buffer filled\r\n",
+             count, count == PORTTRACE_ENTRIES ? " (full)" : "", (unsigned) missed);
+    return;
+  }
+
+  if (strncmp(args, "off", 3) == 0) {
+    m_machine->stopPortTrace();
+    write("port trace off\r\n");
+    return;
+  }
+
+  // t lo hi [r|w|rw] [int lo [hi]]
+  char buf[64];
+  strlcpy(buf, args, sizeof(buf));
+  char * tok[8];
+  int n = 0;
+  for (char * t = strtok(buf, " "); t && n < 8; t = strtok(nullptr, " "))
+    tok[n++] = t;
+
+  bool ok = n >= 2;
+  bool ok1 = false, ok2 = false;
+  uint32_t lo = ok ? parseHex(tok[0], &ok1) : 0;
+  uint32_t hi = ok ? parseHex(tok[1], &ok2) : 0;
+  ok = ok && ok1 && ok2 && lo <= hi && hi <= 0xffff;
+
+  bool reads = false, writes = true;
+  int intLo = 1, intHi = 0;
+  for (int i = 2; ok && i < n; ++i) {
+    if (strcmp(tok[i], "r") == 0)       { reads = true;  writes = false; }
+    else if (strcmp(tok[i], "w") == 0)  { reads = false; writes = true;  }
+    else if (strcmp(tok[i], "rw") == 0) { reads = true;  writes = true;  }
+    else if (strcmp(tok[i], "int") == 0 && i + 1 < n) {
+      bool ok3 = false, ok4 = true;
+      intLo = parseHex(tok[++i], &ok3);
+      intHi = (i + 1 < n) ? parseHex(tok[++i], &ok4) : intLo;
+      ok = ok3 && ok4 && intLo <= intHi && intHi <= 0xff;
+    } else
+      ok = false;
+  }
+  if (!ok) {
+    write("usage: t lo hi [r|w|rw] [int lo [hi]]\r\n");
+    return;
+  }
+  if (!m_machine->armPortTrace(lo, hi, reads, writes, intLo, intHi)) {
+    write("no memory for the trace buffer\r\n");
+    return;
+  }
+  writeFmt("tracing %s on %04X..%04X", reads && writes ? "reads and writes" : (reads ? "reads" : "writes"),
+           (unsigned) lo, (unsigned) hi);
+  if (intLo <= intHi)
+    writeFmt(", and INT %02X..%02X", intLo, intHi);
+  write(", 'g' to run\r\n");
+}
+
+
 void SerialDebug::runMonitor()
 {
   write("\r\n--- monitor, the guest is frozen. '?' for help, 'g' to resume ---\r\n");
@@ -1222,6 +1310,7 @@ void SerialDebug::runMonitor()
       }
       case 'i': cmdInPort(p);    break;
       case 'o': cmdOutPort(p);   break;
+      case 't': cmdPortTrace(p); break;
       case '?': help();          break;
 
       case 's':

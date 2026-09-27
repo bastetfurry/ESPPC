@@ -78,6 +78,7 @@ private:
   void cmdEnter(char const * args);
   void cmdFind(char const * args);
   void cmdScreenshot();
+  void cmdPortTrace(char const * args);
   void cmdVideoState();
   void cmdHeapMap();
   void cmdWriteReg(char const * args);

@@ -48,6 +48,7 @@
 
 #define RAM_SIZE             1048576    // must correspond to bios MEMSIZE
 #define VIDEOMEMSIZE         65536
+#define PORTTRACE_ENTRIES    512        // debug monitor port trace, see Machine::armPortTrace()
 #define CGA_BORROWED_SIZE    16384      // a real CGA's video RAM, and one EGA plane bank
 
 // maximum number of serial ports
@@ -219,6 +220,24 @@ public:
   void     setBreakpoint(uint32_t linear)  { m_breakAddr = linear; }
   uint32_t breakpoint() const              { return m_breakAddr; }
 
+  // Port trace for the debug monitor: records the guest's accesses to ports lo..hi, with the CS:IP
+  // they came from, until the buffer is full. A run of identical accesses from the same place is
+  // one entry with a repeat count, so a polling loop does not fill it. Disarmed it costs one
+  // pointer test per port access; the buffer only exists while armed.
+  //
+  // It can record software interrupts intLo..intHi as well (intLo > intHi leaves them out): for
+  // those, port holds AX and value the interrupt number, and CS:IP is the caller's.
+  enum class TraceKind : uint8_t { In, Out, Int };
+  struct PortTraceEntry {
+    uint16_t  cs, ip, port, repeat;
+    uint8_t   value;
+    TraceKind kind;
+  };
+  bool armPortTrace(int lo, int hi, bool reads, bool writes, int intLo = 1, int intHi = 0);
+  void stopPortTrace();
+  PortTraceEntry const * portTrace(int * count, uint32_t * missed) const
+                                       { *count = m_portTraceCount; *missed = m_portTraceMissed; return m_portTrace; }
+
   // --- EGA ---
   // setEGAMode() takes a BIOS mode number (0x0d, 0x0e, 0x0f, 0x10) and returns false if it is
   // not an EGA mode or the planar video memory could not be allocated, in which case the caller
@@ -253,8 +272,9 @@ public:
   void setUsbSerialRoute(int port)     { m_usbSerialRoute = port; }
 
   // I/O port access for the debug monitor, routed through the same handlers the CPU uses
-  uint8_t readPortDebug(int address)            { return readPort(this, address); }
-  void    writePortDebug(int address, uint8_t v) { writePort(this, address, v); }
+  // (past the port trace, so the monitor's own accesses do not show up in it)
+  uint8_t readPortDebug(int address)            { return readPortHW(this, address); }
+  void    writePortDebug(int address, uint8_t v) { writePortHW(this, address, v); }
 
   // Memory access for the debug monitor. Video memory is not part of s_memory -- the CPU routes
   // the video window to separate callbacks -- so reading s_memory directly there shows zeros
@@ -315,6 +335,9 @@ private:
 
   static void writePort(void * context, int address, uint8_t value);
   static uint8_t readPort(void * context, int address);
+  static uint8_t readPortHW(void * context, int address);
+  static void writePortHW(void * context, int address, uint8_t value);
+  void tracePort(int address, uint8_t value, TraceKind kind);
 
   static void writeVideoMemory8(void * context, int address, uint8_t value);
   static void writeVideoMemory16(void * context, int address, uint16_t value);
@@ -454,6 +477,15 @@ private:
   bool                     m_debugConsoleRequested;
   int                      m_usbSerialRoute;
   uint32_t                 m_breakAddr;
+  PortTraceEntry *         m_portTrace;          // null while the trace is off
+  int                      m_portTraceCount;
+  uint32_t                 m_portTraceMissed;    // accesses that came after the buffer filled
+  uint16_t                 m_portTraceLo;
+  uint16_t                 m_portTraceHi;
+  bool                     m_portTraceReads;
+  bool                     m_portTraceWrites;
+  int                      m_intTraceLo;
+  int                      m_intTraceHi;
   char *                   m_egaRomPath;
   bool                     m_egaBiosLoaded;
 
