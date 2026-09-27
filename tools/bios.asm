@@ -960,7 +960,7 @@ int10_set_vm_3:
 int10_set_vm_4:
   ; 320x200, 4 colour
   mov  word [vid_page_size-bios_data], 0x4000
-  mov  ax, 0x000a
+  mov  ax, 0x302a  ; 3D9 = 30h, 3D8 = 2Ah, as the IBM BIOS sets them (see int10_set_vm_write)
   mov  bx, 40    ; BX = video columns
   mov  cx, 0x0818  ; CL = video rows, CH = scan lines per character
   jmp  int10_set_vm_write
@@ -968,7 +968,7 @@ int10_set_vm_4:
 int10_set_vm_5:
   ; 320x200 grey
   mov  word [vid_page_size-bios_data], 0x4000
-  mov  ax, 0x000e
+  mov  ax, 0x302e  ; 3D9 = 30h, 3D8 = 2Eh
   mov  bx, 40    ; BX = video columns
   mov  cx, 0x0818  ; CL = video rows, CH = scan lines per character
   jmp  int10_set_vm_write
@@ -987,7 +987,7 @@ int10_set_vm_6:
   pop   es
 
   mov   word [vid_page_size-bios_data], 0x4000
-  mov   ax, 0x071a
+  mov   ax, 0x3f1e  ; 3D9 = 3Fh (white foreground), 3D8 = 1Eh
   mov   bx, 80      ; BX = video columns
   mov   cx, 0x0818  ; CL = video rows, CH = scan lines per character
   jmp   int10_set_vm_write
@@ -1197,6 +1197,14 @@ int10_set_vm_write:
   ; write the video data to the video mode registers and bios data area
   ; al = port 0x3d8 value, ah = port 0x3d9 value
   ; bx = video text columns
+  ;
+  ; The graphics modes use the IBM PC BIOS values. The 3D9 value matters most: software that never
+  ; writes the colour select register itself gets whatever the mode set left there, and on IBM
+  ; hardware that is 30h in modes 4 and 5 -- palette 1 (cyan, magenta, white) at high intensity --
+  ; and 3Fh in mode 6, a white foreground. This BIOS used to leave 00h, palette 0 at low intensity,
+  ; which is why the SCUMM games (Monkey Island) came up green, red and brown instead of cyan,
+  ; magenta and white. The 3D8 values gain bit 5 (blink), which a graphics mode ignores, and mode 6
+  ; bit 2 (colour burst off), exactly as IBM sets it.
   xchg  ah, al
   mov   dx, 0x3d9
   out   dx, al
@@ -2241,10 +2249,13 @@ int10_set_colour:
 
   ; Set BG colour
 
+  ; Bits 0-4 come from BL, bit 4 being the intensity of the graphics palette, as on IBM. Masking
+  ; with F0h kept the old bit 4, so once the mode set leaves 30h here the intensity could never
+  ; be switched off through this call.
   and  bl, 0x1f
   mov  dx, 0x3d9
   in   al, dx
-  and  al, 0xf0
+  and  al, 0xe0
   or   al, bl
   out  dx, al
 
