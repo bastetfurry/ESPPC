@@ -682,6 +682,10 @@ void sysReqCallback()
   }
 
   ui.end();
+
+  // The menu had the adapter. TextUI puts the mode back, but let the CGA set itself up in full on
+  // its next register write instead of relying on that alone.
+  machine->invalidateCGAMode();
 }
 
 

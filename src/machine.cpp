@@ -112,6 +112,7 @@ Machine::Machine() :
     m_sysReqCallback(nullptr),
     m_baseDir(nullptr),
     m_ramSizeKB(640),
+    m_CGAModeCurrentValid(false),
     m_EGAActive(false),
     m_EGAACIndex(0),
     m_EGAACFlipFlop(false),
@@ -356,6 +357,7 @@ void Machine::reset()
   m_CGAModeReg      = 0;
   m_CGAColorReg     = 0;
   m_CGAVSyncQuery   = 0;
+  invalidateCGAMode();
 
   m_HGCMemoryOffset = 0;
   m_HGCModeReg      = 0;
@@ -655,6 +657,20 @@ void Machine::setCGAMode()
   if (m_EGAActive || !(s_videoMemory || m_CGABorrowed))
     return;
 
+  // Skip writes that change nothing. SCUMM games (Monkey Island) rewrite the mode and colour
+  // registers every frame, and reprogramming the adapter each time costs the emulated CPU a
+  // percent or two. The start address counts too, since it moves the frame buffer: hardware
+  // scrolling and page flipping change nothing else. Anything that takes the adapter away from
+  // the CGA calls invalidateCGAMode(), so the first write after it always gets through.
+  if (m_CGAModeCurrentValid && m_CGAModeReg == m_CGAModeRegCurrent &&
+      m_CGAColorReg == m_CGAColorRegCurrent && m_CGAMemoryOffset == m_CGAMemoryOffsetCurrent)
+    return;
+
+  m_CGAModeRegCurrent      = m_CGAModeReg;
+  m_CGAColorRegCurrent     = m_CGAColorReg;
+  m_CGAMemoryOffsetCurrent = m_CGAMemoryOffset;
+  m_CGAModeCurrentValid    = true;
+
   // B8000 in whichever buffer is standing in for the CGA's memory. The borrowed one is 16 KB, as
   // on a real CGA, so the start address wraps within it.
   uint8_t * cga = m_CGABorrowed ? m_CGABorrowed + (m_CGAMemoryOffset & (CGA_BORROWED_SIZE - 1))
@@ -687,13 +703,22 @@ void Machine::setCGAMode()
     m_graphicsAdapter.enableVideo(true);
 
   } else if ((m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPH640) == 0) {
-
     // 320x200 graphics
     //printf("CGA, 320x200 graphics mode\n");
+    int paletteIndex;
     m_frameBuffer = cga;
     m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_320x200_4Colors);
-    int paletteIndex = (bool)(m_CGAColorReg & CGA_COLORCONTROLREG_PALETTESEL) * 2 + (bool)(m_CGAColorReg & CGA_COLORCONTROLREG_HIGHINTENSITY);
+
+    if(m_CGAModeReg & CGA_MODECONTROLREG_COLOR)
+    {
+       paletteIndex = 4 + (bool)(m_CGAColorReg & CGA_COLORCONTROLREG_HIGHINTENSITY);
+    }
+    else
+    {
+       paletteIndex = (bool)(m_CGAColorReg & CGA_COLORCONTROLREG_PALETTESEL) * 2 + (bool)(m_CGAColorReg & CGA_COLORCONTROLREG_HIGHINTENSITY);
+    }
+    
     m_graphicsAdapter.setPCGraphicsPaletteInUse(paletteIndex);
     m_graphicsAdapter.setPCGraphicsBackgroundColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     m_graphicsAdapter.enableVideo(true);
@@ -1038,6 +1063,7 @@ void Machine::leaveEGAMode()
   if (!m_egaBiosLoaded)
     m_EGA.freeVRAM();
   m_EGAActive = false;
+  invalidateCGAMode();     // the EGA had the adapter, and the CGA frame buffer has moved
 
   if (m_egaBiosLoaded && m_EGA.hasVRAM()) {
     // CGA modes on the EGA machine (4, 5, 6) borrow the first plane bank as their video RAM
@@ -1232,6 +1258,9 @@ void Machine::setHGCMode()
   // same reasoning as setCGAMode()
   if (m_EGAActive || !s_videoMemory)
     return;
+
+  // Hercules is about to take the adapter, so a later CGA write must not be skipped as unchanged
+  invalidateCGAMode();
 
   constexpr int HGC_OFFSET_PAGE0 = 0x0000;
   constexpr int HGC_OFFSET_PAGE1 = 0x8000;

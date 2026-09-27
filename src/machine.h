@@ -161,6 +161,10 @@ public:
   // Called from POST once the IVT is in place: points the option ROM's own INT 10h handler at
   // this BIOS's handler, so the ROM is present and hooked but never actually drives the hardware.
   void prepareVideoROM();
+
+  // Makes the next CGA register write set the mode up in full, even if it repeats the values the
+  // CGA had before. Needed after anything else has driven the graphics adapter.
+  void invalidateCGAMode()                     { m_CGAModeCurrentValid = false; }
   int ramSizeKB()                              { return m_ramSizeKB; }
 
   void setSysReqCallback(SysReqCallback value) { m_sysReqCallback = value; }
@@ -398,6 +402,13 @@ private:
   uint16_t                 m_CGAMemoryOffset;
   uint8_t                  m_CGAModeReg;
   uint8_t                  m_CGAColorReg;
+  // What setCGAMode() last set the adapter up from, so it can skip a write that changes nothing
+  // (SCUMM games rewrite the mode and colour registers every frame). Cleared by invalidateCGAMode()
+  // whenever something else -- EGA, Hercules, the system menu -- has had the adapter since.
+  uint8_t                  m_CGAModeRegCurrent;
+  uint8_t                  m_CGAColorRegCurrent;
+  uint16_t                 m_CGAMemoryOffsetCurrent;
+  bool                     m_CGAModeCurrentValid;
   uint16_t                 m_CGAVSyncQuery;
 
   // Hercules

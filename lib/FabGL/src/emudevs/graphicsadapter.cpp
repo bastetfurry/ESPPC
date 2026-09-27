@@ -57,7 +57,7 @@ static const RGB222 CGAPalette[16] = {
 
 
 
-static const RGB222 CGAGraphics4ColorsPalette[4][4] = {
+static const RGB222 CGAGraphics4ColorsPalette[6][4] = {
   // low intensity PC graphics 4 colors palette
   {
     RGB222(0, 0, 0),    // background (not used)
@@ -86,6 +86,20 @@ static const RGB222 CGAGraphics4ColorsPalette[4][4] = {
     RGB222(3, 1, 3),    // light magenta
     RGB222(3, 3, 3),    // white
   },
+  // low intensity PC graphics 4 colors mode 5 palette (colour burst off: cyan, red, light gray)
+  {
+    RGB222(0, 0, 0),    // background (not used)
+    RGB222(0, 2, 2),    // cyan
+    RGB222(2, 0, 0),    // red
+    RGB222(2, 2, 2),    // light gray
+  },
+  // high intensity PC graphics 4 colors mode 5 palette
+  {
+    RGB222(0, 0, 0),    // background (not used)
+    RGB222(1, 3, 3),    // light cyan
+    RGB222(3, 1, 1),    // light red
+    RGB222(3, 3, 3),    // white
+  }
 };
 
 
