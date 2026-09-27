@@ -180,6 +180,13 @@ public:
   // palette mask the pixel value is ANDed with first. Takes effect at once in a Tandy mode.
   void setTandyPalette(uint8_t const * palette16, uint8_t mask);
 
+  // PCEmulator: an on-screen drive activity LED, for boards without a free real one. 3x3 pixels in
+  // the lower right corner of every mode, dim green when idle and bright for a moment after each
+  // driveActivity(). mode: 0 = off, 1 = one LED for all drives, 2 = one each for A, B, C and D.
+  // It is drawn into the line buffers only, never into guest memory.
+  void setDriveLEDMode(int mode);
+  void driveActivity(int drive);
+
   // PCEmulator: which artifact colours the composite mode shows: 0 = from 640x200, 1 = from
   // 320x200 palette 0, 2 = from 320x200 palette 1
   void setCompositeTable(int table);
@@ -230,6 +237,8 @@ private:
   static void drawScanline_EGA_640_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_320_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_Text_80x25(void * arg, uint8_t * dest, int scanLine);
+  static void drawScanlineWithLED(void * arg, uint8_t * dest, int scanLine);
+  void installScanlineCallback();
   static void drawScanline_Tandy_320x200_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_Tandy_160x200_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_Plantronics_320x200_16Colors(void * arg, uint8_t * dest, int scanLine);
@@ -285,6 +294,14 @@ private:
 
   // --- PCEmulator: composite ---
   int8_t              m_compositeTable;
+
+  // --- PCEmulator: drive LED ---
+  DrawScanlineCallback m_modeCallback;     // the mode's own renderer, called by drawScanlineWithLED
+  int8_t              m_modeLines;         // its scanlines per call
+  int8_t              m_driveLEDMode;
+  uint8_t             m_ledRawOn;
+  uint8_t             m_ledRawOff;
+  volatile int64_t    m_ledUntil[4];       // esp_timer time until which each drive's LED is lit
 
 };
 

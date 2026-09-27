@@ -235,7 +235,9 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
   if (emulation != Emulation::None) {
     auto info = emulationInfo + (int)emulation - 1;
 
-    m_VGADCtrl.setDrawScanlineCallback(info->scanlineCallback, this);
+    m_modeCallback = info->scanlineCallback;
+    m_modeLines    = info->scanlinesPerCallback;
+    installScanlineCallback();
     m_VGADCtrl.setScanlinesPerCallBack(info->scanlinesPerCallback);
     m_VGADCtrl.setResolution(info->modeline, info->viewportWidth, info->viewportHeight);
 
@@ -280,7 +282,12 @@ GraphicsAdapter::GraphicsAdapter()
     m_egaTextColumns(80),
     m_egaPal2(nullptr),
     m_tandyMask(0x0f),
-    m_compositeTable(0)
+    m_compositeTable(0),
+    m_modeCallback(nullptr),
+    m_modeLines(1),
+    m_driveLEDMode(0),
+    m_ledRawOn(0),
+    m_ledRawOff(0)
 {
   for (int i = 0; i < 16; ++i)
     m_tandyPalette[i] = i;
@@ -602,6 +609,38 @@ void GraphicsAdapter::setPCGraphicsPaletteInUse(int paletteIndex)
 {
   m_PCGraphicsPaletteInUse = paletteIndex;
   setupLUT();
+}
+
+
+// The mode's renderer directly while the LED is off, so it costs nothing then; through the LED
+// wrapper while it is on.
+void GraphicsAdapter::installScanlineCallback()
+{
+  if (!m_modeCallback)
+    return;
+  if (m_driveLEDMode)
+    m_VGADCtrl.setDrawScanlineCallback(drawScanlineWithLED, this);
+  else
+    m_VGADCtrl.setDrawScanlineCallback(m_modeCallback, this);
+}
+
+
+void GraphicsAdapter::setDriveLEDMode(int mode)
+{
+  m_driveLEDMode = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
+  m_ledRawOn     = m_VGADCtrl.createRawPixel(RGB222(0, 3, 0));
+  m_ledRawOff    = m_VGADCtrl.createRawPixel(RGB222(0, 1, 0));
+  for (int i = 0; i < 4; ++i)
+    m_ledUntil[i] = 0;
+  if (m_emulation != Emulation::None)
+    installScanlineCallback();
+}
+
+
+// about 60 ms per access, so a single sector read is still a visible blink
+void GraphicsAdapter::driveActivity(int drive)
+{
+  m_ledUntil[drive & 3] = esp_timer_get_time() + 60000;
 }
 
 
@@ -1240,6 +1279,49 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_Plantronics_640x200_4Colors(void * 
     uint8_t a = p0[col], b = p1[col];
     *dest32++ = LUT32[(a & 0xf0) | (b >> 4)];
     *dest32++ = LUT32[((a & 0x0f) << 4) | (b & 0x0f)];
+  }
+}
+
+
+
+// PCEmulator: the drive LED on top of whatever the mode drew. Only the three LED lines do any
+// work: 3x3 pixels, two lines above the bottom of the viewport and two pixels from its right edge,
+// one LED or four (A B C D, left to right) with two pixels between them. FabGL's line buffers are
+// contiguous and byte swizzled (pixel x at byte x ^ 2).
+void IRAM_ATTR GraphicsAdapter::drawScanlineWithLED(void * arg, uint8_t * dest, int scanLine)
+{
+  auto ga = (GraphicsAdapter*) arg;
+
+  ga->m_modeCallback(arg, dest, scanLine);
+
+  int const h   = ga->m_VGADCtrl.getViewPortHeight();
+  int const top = h - 5;
+  int const n   = ga->m_modeLines;
+  if (scanLine + n <= top || scanLine > top + 2)
+    return;
+
+  int const     w     = ga->m_VGADCtrl.getViewPortWidth();
+  int const     count = ga->m_driveLEDMode == 2 ? 4 : 1;
+  int const     start = w - 2 - (count * 5 - 2);
+  int64_t const now   = esp_timer_get_time();
+
+  uint8_t px[4];
+  if (count == 1) {
+    bool on = ga->m_ledUntil[0] > now || ga->m_ledUntil[1] > now || ga->m_ledUntil[2] > now || ga->m_ledUntil[3] > now;
+    px[0] = on ? ga->m_ledRawOn : ga->m_ledRawOff;
+  } else {
+    for (int i = 0; i < 4; ++i)
+      px[i] = ga->m_ledUntil[i] > now ? ga->m_ledRawOn : ga->m_ledRawOff;
+  }
+
+  for (int l = 0; l < n; ++l) {
+    int y = scanLine + l;
+    if (y < top || y > top + 2)
+      continue;
+    uint8_t * row = dest + l * w;
+    for (int i = 0; i < count; ++i)
+      for (int x = start + i * 5; x < start + i * 5 + 3; ++x)
+        row[x ^ 2] = px[i];
   }
 }
 

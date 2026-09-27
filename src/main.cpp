@@ -749,6 +749,8 @@ void setup()
     preferences.getString("TimeZone", hostSettings.timeZone, sizeof(hostSettings.timeZone));
   hostSettings.autoBootSeconds = preferences.isKey("AutoBoot") ? preferences.getInt("AutoBoot")
                                                                : HostSettings::DEFAULT_AUTOBOOT;
+  hostSettings.driveLed        = preferences.isKey("DriveLed") ? preferences.getInt("DriveLed")
+                                                               : HostSettings::DEFAULT_DRIVE_LED;
 
   // The machine exists from here on so the setup screens can borrow its video adapter; nothing in
   // it runs until machine->run() below, and TextUI::end() hands the adapter back unconfigured.
@@ -875,6 +877,7 @@ void setup()
           preferences.putString("NtpServer", hostSettings.ntpServer);
           preferences.putString("TimeZone", hostSettings.timeZone);
           preferences.putInt("AutoBoot", hostSettings.autoBootSeconds);
+          preferences.putInt("DriveLed", hostSettings.driveLed);
           applyTimeZone();
         }
         break;
@@ -1005,6 +1008,9 @@ void setup()
   */
 
   machine->setSysReqCallback(sysReqCallback);
+
+  // the on-screen drive LED, from now on: the setup screens above stay without it
+  machine->graphicsAdapter()->setDriveLEDMode(hostSettings.driveLed);
 
   machine->run();
 }

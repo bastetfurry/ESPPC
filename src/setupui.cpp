@@ -920,7 +920,9 @@ void trimSpaces(char * buf)
 
 bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
 {
-  enum class Kind { Text, TimeZone, AutoBoot };
+  enum class Kind { Text, TimeZone, AutoBoot, Choice };
+
+  static char const * const DRIVE_LED_OPTS[] = { "Off", "One for all drives", "One per drive (A B C D)" };
 
   struct Item {
     char const * label;
@@ -929,7 +931,9 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
     int          maxLength;
     char const * whenEmpty;     // what an empty value means
     char const * help;
-    int *        number;        // the setting (AutoBoot)
+    int *        number;        // the setting (AutoBoot, Choice)
+    char const * const * options;  // Choice: the names of the values 0..optionCount-1
+    int          optionCount;
   };
 
   HostSettings edit = settings;
@@ -945,6 +949,10 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
       "Countdown before the highlighted machine boots on its own, 1-99 seconds. Immediately (0) "
       "skips the machine list: press DEL during the POST to get to it. Disabled (-1) waits for "
       "a key. +/- steps.", &edit.autoBootSeconds },
+    { "Drive LED", Kind::Choice, nullptr, 0, nullptr,
+      "A small green LED in the lower right corner of the screen that lights up on floppy and hard "
+      "disk access, since the board has no free one. One for all drives, or one each for A, B, C and "
+      "D from left to right. Takes effect when saved.", &edit.driveLed, DRIVE_LED_OPTS, 3 },
   };
   constexpr int COUNT = sizeof(ITEMS) / sizeof(ITEMS[0]);
 
@@ -970,7 +978,9 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
     for (int i = 0; i < COUNT; ++i) {
       char numText[16];
       char const * v;
-      if (ITEMS[i].kind == Kind::AutoBoot) {
+      if (ITEMS[i].kind == Kind::Choice) {
+        v = ITEMS[i].options[imax(0, imin(ITEMS[i].optionCount - 1, *ITEMS[i].number))];
+      } else if (ITEMS[i].kind == Kind::AutoBoot) {
         int n = *ITEMS[i].number;
         if (n < 0)
           v = "Disabled";
@@ -1015,6 +1025,20 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
                   k.vk == VirtualKey::VK_RIGHT) ? 1 : -1;
       *ITEMS[sel].number = imax(-1, imin(99, *ITEMS[sel].number + step));
       modified = true;
+    }
+    else if (ITEMS[sel].kind == Kind::Choice && (k.ascii == '+' || k.ascii == '-' ||
+             k.vk == VirtualKey::VK_LEFT || k.vk == VirtualKey::VK_RIGHT)) {
+      int step = (k.ascii == '+' || k.vk == VirtualKey::VK_RIGHT) ? 1 : -1;
+      int n    = ITEMS[sel].optionCount;
+      *ITEMS[sel].number = (*ITEMS[sel].number + step + n) % n;
+      modified = true;
+    }
+    else if (isEnter(k.vk) && ITEMS[sel].kind == Kind::Choice) {
+      int s = ui.menu(ITEMS[sel].label, nullptr, ITEMS[sel].options, ITEMS[sel].optionCount, *ITEMS[sel].number);
+      if (s >= 0 && s != *ITEMS[sel].number) {
+        *ITEMS[sel].number = s;
+        modified = true;
+      }
     }
     else if (isEnter(k.vk) && ITEMS[sel].kind == Kind::AutoBoot) {
       char buf[8];

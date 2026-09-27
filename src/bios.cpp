@@ -1005,6 +1005,10 @@ void BIOS::diskHandler_floppy()
     return;
   }
 
+  // read, write, verify and format light the on-screen drive LED, if it is enabled
+  if (service >= 0x02 && service <= 0x05)
+    m_machine->graphicsAdapter()->driveActivity(drive);
+
   switch (service) {
 
     // Reset Diskette System
@@ -1262,6 +1266,10 @@ void BIOS::diskHandler_HD()
     diskHandler_HDExit(0x80, true);
     return;
   }
+
+  // read, write, verify and format light the on-screen drive LED, if it is enabled
+  if (service >= 0x02 && service <= 0x05)
+    m_machine->graphicsAdapter()->driveActivity(drive);
 
   switch (service) {
 
