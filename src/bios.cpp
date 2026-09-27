@@ -284,6 +284,18 @@ void BIOS::helpersEntry()
       i8086::setAL(m_machine->tandyDACIrq() ? 1 : 0);
       break;
 
+    // AH = 0x13, the text mode fast path of INT 10h: SI = the caller's AX (AH = 02h, 09h, 0Ah or
+    // 0Eh). Returns CF = 1 when done (AX is the caller's again), CF = 0 for bios.asm to carry on
+    // with its own code, which is what happens in the graphics modes.
+    case 0x13:
+    {
+      uint16_t ax = i8086::SI();
+      bool done = fastTextVideo(ax);
+      i8086::setAX(ax);
+      i8086::setFlagCF(done);
+      break;
+    }
+
     // AH = 0x12, at POST: DX = offset of that IRQ 7 handler in the BIOS segment
     case 0x12:
       m_machine->setTandyDACStub(i8086::DX());
@@ -387,6 +399,136 @@ void BIOS::helpersEntry()
   };
 }
 
+
+
+// INT 10h text output done natively rather than by the emulated BIOS: set cursor (02h), write
+// character and attribute (09h), write character (0Ah) and teletype (0Eh), in text modes 0-3 on
+// every adapter. The CPU executed some 150 instructions of BIOS per call for these -- the dispatch
+// chain, the mode checks, the address arithmetic and the CRTC update -- which made text output via
+// the BIOS the slowest thing on screen (CheckIt: 1559 characters per second on the EGA machine).
+//
+// Video memory is written through the same handler the guest's own writes go through, so the CGA
+// buffer, the EGA's odd/even planes and the Tandy behave exactly as they did with the asm; only the
+// emulated instructions around each write are gone. The behaviour follows bios.asm, apart from
+// two quirks of its teletype that are not kept: a line feed without scrolling left the hardware
+// cursor behind until the next character, and the page checks were signed.
+//
+// The BIOS data area: 40:49 mode, 40:4A columns, 40:4C page size, 40:50 cursor (column, row) for
+// eight pages, 40:62 active page, 40:84 rows - 1.
+bool BIOS::fastTextVideo(uint16_t callerAX)
+{
+  auto bda  = m_memory + BIOS_DATAAREA_ADDR;
+  int  mode = bda[0x49];
+  if (mode > 3)
+    return false;
+
+  int service = callerAX >> 8;
+  int page    = (service == 0x0e) ? bda[0x62] : i8086::BH();
+  if (page > 7)
+    return true;                 // no such page: the asm returned without doing anything too
+
+  if (service == 0x02) {
+    textSetCursor(page, i8086::DH(), i8086::DL());
+    return true;
+  }
+
+  int      cols     = *(uint16_t*)(bda + 0x4a);
+  uint32_t pageBase = 0xb8000 + (uint32_t)page * *(uint16_t*)(bda + 0x4c);
+  uint8_t  col      = bda[0x50 + page * 2];
+  uint8_t  row      = bda[0x51 + page * 2];
+  uint32_t addr     = pageBase + ((uint32_t)row * cols + col) * 2;
+  uint8_t  ch       = callerAX & 0xff;
+
+  switch (service) {
+
+    // character and attribute (BL), CX times, from the cursor on; the cursor does not move
+    case 0x09:
+      for (int n = i8086::CX(); n > 0; --n, addr += 2) {
+        m_machine->writeMemDebug(addr, ch);
+        m_machine->writeMemDebug(addr + 1, i8086::BL());
+      }
+      return true;
+
+    // character only, CX times, the attributes left as they are
+    case 0x0a:
+      for (int n = i8086::CX(); n > 0; --n, addr += 2)
+        m_machine->writeMemDebug(addr, ch);
+      return true;
+
+    // teletype on the active page: control characters move the cursor, anything else is written
+    // (attribute unchanged) and advances it, wrapping and scrolling at the edges
+    case 0x0e:
+    {
+      int lastRow = bda[0x84];
+      switch (ch) {
+        case 0x08:                           // backspace: blank the cell, step back
+          m_machine->writeMemDebug(addr, 0x20);
+          col = col ? col - 1 : 0;
+          break;
+        case 0x0d:                           // carriage return
+          col = 0;
+          break;
+        case 0x0a:                           // line feed (and, as in bios.asm, back to column 0)
+          col = 0;
+          if (++row > lastRow) {
+            row = lastRow;
+            textScrollUp(page, 0x07);
+          }
+          break;
+        default:
+          m_machine->writeMemDebug(addr, ch);
+          if (++col >= cols) {
+            col = 0;
+            if (++row > lastRow) {
+              row = lastRow;
+              textScrollUp(page, 0x07);
+            }
+          }
+          break;
+      }
+      textSetCursor(page, row, col);
+      return true;
+    }
+  }
+  return false;
+}
+
+
+// The cursor of a page in the BIOS data area, and the CRTC's when it is the active page (row * cols
+// + column, like bios.asm's set_crtc_cursor_pos). The CRTC goes through the port handler so its
+// registers and the adapter's cursor stay in step, as with the guest's own OUTs.
+void BIOS::textSetCursor(int page, int row, int col)
+{
+  auto bda = m_memory + BIOS_DATAAREA_ADDR;
+  bda[0x50 + page * 2] = col;
+  bda[0x51 + page * 2] = row;
+  if (page != bda[0x62])
+    return;
+  uint16_t pos = row * *(uint16_t*)(bda + 0x4a) + col;
+  m_machine->writePortDebug(0x3d4, 0x0e);
+  m_machine->writePortDebug(0x3d5, pos >> 8);
+  m_machine->writePortDebug(0x3d4, 0x0f);
+  m_machine->writePortDebug(0x3d5, pos & 0xff);
+}
+
+
+// The whole page up one line, the new bottom line filled with character 0 in attr, as the teletype
+// path of bios.asm does it (scroll_up_window with AL = 1 over the full screen).
+void BIOS::textScrollUp(int page, int attr)
+{
+  auto     bda   = m_memory + BIOS_DATAAREA_ADDR;
+  int      cols  = *(uint16_t*)(bda + 0x4a);
+  int      rows  = bda[0x84] + 1;
+  uint32_t base  = 0xb8000 + (uint32_t)page * *(uint16_t*)(bda + 0x4c);
+  uint32_t bytes = (uint32_t)(rows - 1) * cols * 2;
+  uint32_t line  = cols * 2;
+  for (uint32_t i = 0; i < bytes; ++i)
+    m_machine->writeMemDebug(base + i, m_machine->readMemDebug(base + line + i));
+  for (uint32_t i = 0; i < line; i += 2) {
+    m_machine->writeMemDebug(base + bytes + i, 0x00);
+    m_machine->writeMemDebug(base + bytes + i + 1, attr);
+  }
+}
 
 
 // convert keypad scancode to number, or -1 if not applicable

@@ -125,6 +125,11 @@ public:
 
   void videoHandlerEntry();
 
+  // INT 10h AH=02h, 09h, 0Ah and 0Eh in the text modes, done natively (see the definition)
+  bool fastTextVideo(uint16_t callerAX);
+  void textSetCursor(int page, int row, int col);
+  void textScrollUp(int page, int attr);
+
   void setDriveMediaType(int drive, MediaType media);
 
   // Push a key into the BIOS keyboard buffer as if it had been typed: the high byte is the

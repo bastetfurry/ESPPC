@@ -703,6 +703,19 @@ int9_sysreq:
 ; ************************* INT 10h handler - video services
 
 int10:
+  ; PCEmulator: the text output calls -- set cursor, write character (and attribute), teletype --
+  ; go to the emulator first, which does them natively in the text modes (BIOS::fastTextVideo).
+  ; It answers CF = 1 when done; otherwise (graphics modes) the code below handles the call as
+  ; before. They are also the most frequent calls, so they are tested before anything else.
+  cmp  ah, 0x0e
+  je   int10_fast
+  cmp  ah, 0x02
+  je   int10_fast
+  cmp  ah, 0x09
+  je   int10_fast
+  cmp  ah, 0x0a
+  je   int10_fast
+int10_dispatch:
   cmp  ah, 0x00 ; Set video mode
   je   int10_set_vm
   cmp  ah, 0x01 ; Set cursor shape
@@ -785,6 +798,15 @@ int10_not_ega_call:
   iret
 
 int10_no_ega:
+  iret
+
+int10_fast:
+  push si
+  mov  si, ax           ; the caller's AX, since AH picks the helper
+  mov  ah, 0x13
+  emu_helper            ; CF = 1: done; AX is the caller's again either way
+  pop  si
+  jnc  int10_dispatch
   iret
 
 
