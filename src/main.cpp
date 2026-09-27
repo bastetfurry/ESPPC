@@ -403,7 +403,7 @@ static void drawSetupFrame()
 
 static void drawSetupDetails(MachineConfItem * c)
 {
-  static char const * VIDEO[] = { "CGA / Hercules", "EGA" };
+  static char const * VIDEO[] = { "CGA / Hercules", "EGA", "Tandy 1000" };
   static char const * USB[]   = { "Off", "COM1", "COM2" };
 
   for (int y = 3; y < 19; ++y)
@@ -422,11 +422,13 @@ static void drawSetupDetails(MachineConfItem * c)
   ui.text(49, 11, "Memory", TUI_LABEL);
   ui.textf(61, 11, TUI_VALUE, "%d KB", c->ramSizeKB);
   ui.text(49, 12, "Video", TUI_LABEL);
-  ui.text(61, 12, VIDEO[c->videoAdapter ? 1 : 0], TUI_VALUE);
+  ui.text(61, 12, VIDEO[c->videoAdapter % 3], TUI_VALUE);
   ui.text(49, 13, "Debug Cons.", TUI_LABEL);
   ui.text(61, 13, c->debugConsole ? "Enabled" : "Disabled", TUI_VALUE);
   ui.text(49, 14, "USB Serial", TUI_LABEL);
   ui.text(61, 14, USB[c->effectiveUsbSerial() % 3], TUI_VALUE);
+  ui.text(49, 15, "Tandy Sound", TUI_LABEL);
+  ui.text(61, 15, (c->tandySound || c->videoAdapter == 2) ? "Enabled" : "Disabled", TUI_VALUE);
 
   // a disk given as a URL is fetched on boot if the SD card does not have it yet
   for (int i = 0; i < DISKCOUNT; ++i)
@@ -920,6 +922,13 @@ void setup()
                                                          : SPIFFS_MOUNT_PATH "/ega.bin";
     printf("Video adapter: EGA, BIOS ROM \"%s\"\n", rom);
     machine->setEGABios(rom);
+  } else if (conf->videoAdapter == 2) {
+    printf("Video adapter: Tandy 1000, with its SN76496 sound\n");
+    machine->setTandy(true);
+  }
+  if (conf->tandySound && conf->videoAdapter != 2) {
+    printf("Sound: SN76496 at C0h\n");
+    machine->setTandySound(true);
   }
   
   // COM1 uses pins 3/1, the same pins as the USB serial console: attaching it makes UART2 take

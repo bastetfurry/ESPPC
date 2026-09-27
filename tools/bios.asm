@@ -733,12 +733,20 @@ int10:
   jb   int10_not_ega_call
   cmp  ah, 0x12
   ja   int10_not_ega_call
+  ;
+  ; A Tandy 1000 has the PCjr palette calls, AH=10h AL=00h..02h, and none of the rest: no AH=11h
+  ; fonts and, above all, no AH=12h, which would make software take it for an EGA.
   push ax
-  mov  ah, 0x0e ; is an EGA fitted? AL = 1 yes, 0 no
+  mov  ah, 0x0e ; which adapter? AL = 0 CGA/Hercules, 1 EGA, 2 Tandy
   emu_helper
-  test al, al
+  cmp  al, 1
   pop  ax
-  jz   int10_no_ega
+  je   int10_not_ega_call
+  jb   int10_no_ega
+  cmp  ah, 0x10 ; Tandy
+  jne  int10_no_ega
+  cmp  al, 0x02
+  ja   int10_no_ega
 int10_not_ega_call:
   cmp  ah, 0x10 ; Get/Set Palette registers
   je   int10_palette
@@ -827,7 +835,10 @@ int10_set_vm:
   ; and that helper fills in the BIOS data area itself. AL = 1 back means it took the mode, so
   ; everything below -- the sequencer writes, the CGA mode tables and the text mode clear -- has
   ; to be skipped. AL = 0 means carry on, and any EGA mode that was up has been torn down.
+  ; BL carries bit 7 of the request ("keep video memory") across, since AH is needed for the call.
+  ; BX was saved on entry and the CGA path below loads it again.
   push  ax
+  mov   bl, ah
   mov   ah, 0x0b
   emu_helper
   cmp   al, 1

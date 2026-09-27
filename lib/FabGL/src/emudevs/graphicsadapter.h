@@ -99,6 +99,18 @@ public:
     // itself in plane 2, which is why software can redefine the character set: the renderer
     // simply draws whatever glyphs are in plane 2 at the time.
     PC_Text_EGA_80x25_16Colors,
+
+    // --- PCEmulator local addition: Tandy 1000 16 colour modes ---
+    //
+    // Linear frame buffers like CGA, two pixels per byte (high nibble first), with the lines of a
+    // character row spread over 8 KB banks. Every pixel goes through the 16 palette registers.
+
+    // Tandy 320x200, 16 Colors (PC BIOS 09h). 32 KB: four banks, 160 bytes a line.
+    PC_Graphics_Tandy_320x200_16Colors,
+
+    // Tandy 160x200, 16 Colors (PC BIOS 08h). 16 KB: two banks, 80 bytes a line, every pixel
+    // shown two pixels wide.
+    PC_Graphics_Tandy_160x200_16Colors,
   };
 
 
@@ -138,6 +150,10 @@ public:
   void setPCGraphicsBackgroundColorIndex(int colorIndex);
   void setPCGraphicsForegroundColorIndex(int colorIndex);
   void setPCGraphicsPaletteInUse(int paletteIndex);
+
+  // PCEmulator: the Tandy palette registers (4 bit IRGB, an index into the 16 CGA colours) and the
+  // palette mask the pixel value is ANDed with first. Takes effect at once in a Tandy mode.
+  void setTandyPalette(uint8_t const * palette16, uint8_t mask);
   int getGraphWidth()                                      { return m_VGADCtrl.getViewPortWidth(); }
   int getGraphHeight()                                     { return m_VGADCtrl.getViewPortHeight(); }
 
@@ -185,6 +201,8 @@ private:
   static void drawScanline_EGA_640_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_320_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_Text_80x25(void * arg, uint8_t * dest, int scanLine);
+  static void drawScanline_Tandy_320x200_16Colors(void * arg, uint8_t * dest, int scanLine);
+  static void drawScanline_Tandy_160x200_16Colors(void * arg, uint8_t * dest, int scanLine);
 
   void setupEGALUT();
   void freeEGALUT();
@@ -228,6 +246,10 @@ private:
   uint8_t             m_egaPalette[16];
   uint32_t *          m_egaSpread[4];  // plane byte -> eight packed 4 bit pixel indices
   uint16_t *          m_egaPal2;       // two packed indices -> two raw VGA pixel bytes
+
+  // --- PCEmulator: Tandy mode state ---
+  uint8_t             m_tandyPalette[16];
+  uint8_t             m_tandyMask;
 
 };
 

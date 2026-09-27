@@ -93,6 +93,24 @@ def decode_cga(data, w, h, fmt):
     return rows
 
 
+def decode_tandy(data, w, h, fmt, pal):
+    # Tandy 16 colours: two pixels a byte, high nibble first, through the palette registers
+    # (4 bit IRGB, a CGA colour). Mode 9 spreads a character row's four lines over four 8 KB banks,
+    # mode 8 its two lines over two, and every mode 8 pixel is shown twice as wide.
+    rows_per_char, stride = (4, 160) if fmt == 'tandy9' else (2, 80)
+    rows = []
+    for y in range(h):
+        row = bytearray()
+        base = (y % rows_per_char) * 0x2000 + (y // rows_per_char) * stride
+        for x in range(stride):
+            b = data[base + x]
+            for nib in (b >> 4, b & 15):
+                rgb = bytes(CGA16[pal[nib] & 15])
+                row += rgb if fmt == 'tandy9' else rgb * 2
+        rows.append(row)
+    return rows
+
+
 def decode_hgc(data, w, h):
     rows = []
     for y in range(h):
@@ -161,6 +179,10 @@ def main():
         rows = decode_ega(data, w, h, stride, pal)
     elif fmt == 'hgc':
         rows = decode_hgc(data, w, h)
+    elif fmt.startswith('tandy'):
+        pal = [int(palhex[i * 2:i * 2 + 2], 16) for i in range(16)]
+        rows = decode_tandy(data, w, h, fmt, pal)
+        w = 320
     else:
         rows = decode_cga(data, w, h, fmt)
 

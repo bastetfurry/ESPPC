@@ -272,10 +272,14 @@ void BIOS::helpersEntry()
     // AH = 0x0E, is an EGA fitted?
     //   returns AL = 1 on a machine with the EGA BIOS ROM, AL = 0 on a CGA/Hercules machine
     //
+    // AH = 0x0E, which adapter is fitted?
+    //   returns AL = 0 CGA/Hercules, 1 EGA (the EGA BIOS ROM is loaded), 2 Tandy 1000
+    //
     // INT 10h AH=10h..12h are EGA calls. A CGA BIOS leaves the registers alone for them, and
     // that is how software tells the two apart, so bios.asm only answers them when this says so.
+    // A Tandy answers AH=10h AL=00h..02h, its palette calls, and nothing else of the three.
     case 0x0e:
-      i8086::setAL(m_machine->egaBiosInstalled() ? 1 : 0);
+      i8086::setAL(m_machine->egaBiosInstalled() ? 1 : (m_machine->tandy() ? 2 : 0));
       break;
 
     // AH = 0x0B, video mode hook, called from int10_set_vm before it programs the CGA registers.
@@ -315,6 +319,30 @@ void BIOS::helpersEntry()
         bda[0x62]                     = 0;                       // active display page
         bda[0x84]                     = 24;                      // text rows - 1
         bda[0x85]                     = (uint8_t) charH;         // scan lines per character
+
+        i8086::setAL(1);
+        break;
+      }
+
+      // Tandy 1000: modes 8 and 9. For any other mode this puts the video array back to its CGA
+      // state and returns false, and the CGA path carries on as usual.
+      // BL bit 7 is the caller's "keep video memory" (AL bit 7 of the request, see bios.asm).
+      if (m_machine->tandy() && m_machine->setTandyMode(mode, (i8086::BL() & 0x80) == 0)) {
+
+        bool mode9 = mode == 0x09;
+        auto bda   = m_memory + BIOS_DATAAREA_ADDR;
+
+        bda[0x49]                     = (uint8_t) mode;          // current video mode
+        *(uint16_t*)(bda + 0x4a)      = mode9 ? 40 : 20;         // text columns
+        *(uint16_t*)(bda + 0x4c)      = mode9 ? 0x8000 : 0x4000; // page size in bytes
+        *(uint16_t*)(bda + 0x4e)      = 0;                       // page offset
+        memset(bda + 0x50, 0, 16);                               // cursor position, all pages
+        bda[0x62]                     = 0;                       // active display page
+        bda[0x65]                     = mode9 ? 0x2b : 0x2a;     // 3D8h as programmed
+        bda[0x66]                     = 0x30;                    // 3D9h as programmed
+        bda[0x84]                     = 24;                      // text rows - 1
+        bda[0x85]                     = 8;                       // scan lines per character
+        bda[0x8a]                     = mode9 ? 0xf6 : 0x3f;     // Tandy: page register copy
 
         i8086::setAL(1);
         break;
@@ -1346,6 +1374,20 @@ void BIOS::diskHandler_HDExit(uint8_t err, bool setErrStat)
 }
 
 
+// Offset into the frame buffer of pixel x, y in a Tandy 16 colour mode, or 0xffffffff if the adapter
+// is not in one or the pixel is off the screen
+static uint32_t tandyPixelAddress(GraphicsAdapter::Emulation emulation, int x, int y)
+{
+  if (y < 0 || y >= 200 || x < 0)
+    return 0xffffffff;
+  if (emulation == GraphicsAdapter::Emulation::PC_Graphics_Tandy_320x200_16Colors && x < 320)
+    return ((y & 3) << 13) + (y >> 2) * 160 + (x >> 1);
+  if (emulation == GraphicsAdapter::Emulation::PC_Graphics_Tandy_160x200_16Colors && x < 160)
+    return ((y & 1) << 13) + (y >> 1) * 80 + (x >> 1);
+  return 0xffffffff;
+}
+
+
 void BIOS::videoHandlerEntry()
 {
   auto ga = m_machine->graphicsAdapter();
@@ -1379,6 +1421,23 @@ void BIOS::videoHandlerEntry()
           break;
         }
 
+        // Tandy 16 colours: a nibble per pixel, high nibble first, the lines of a character row
+        // in 8 KB banks (four in 320x200, two in 160x200)
+        case GraphicsAdapter::Emulation::PC_Graphics_Tandy_320x200_16Colors:
+        case GraphicsAdapter::Emulation::PC_Graphics_Tandy_160x200_16Colors:
+        {
+          uint32_t addr = tandyPixelAddress(ga->emulation(), i8086::CX(), i8086::DX());
+          if (addr == 0xffffffff)
+            break;
+          const uint8_t shift = (i8086::CX() & 1) ? 0 : 4;
+          const uint8_t value = (i8086::AL() & 0x0f) << shift;
+          if (i8086::AL() & 0x80)
+            fb[addr] ^= value;
+          else
+            fb[addr]  = (fb[addr] & ~(0x0f << shift)) | value;
+          break;
+        }
+
         case GraphicsAdapter::Emulation::PC_Graphics_640x200_2Colors:
           printf("INT 10h, write pixel, unsupported 640x200x2 resolution\n");
           break;
@@ -1402,13 +1461,38 @@ void BIOS::videoHandlerEntry()
         i8086::setAL((uint8_t) colour);
         break;
       }
+      uint32_t addr = tandyPixelAddress(ga->emulation(), i8086::CX(), i8086::DX());
+      if (addr != 0xffffffff) {
+        i8086::setAL((fb[addr] >> ((i8086::CX() & 1) ? 0 : 4)) & 0x0f);
+        break;
+      }
       printf("INT 10h, read pixel, unsupported resolution\n");
       break;
     }
 
     // EGA palette registers. The ROM side only forwards AL = 00..03 here; the DAC calls it
-    // handles itself.
+    // handles itself. On a Tandy 1000 the same calls (AL = 00..02) program its video array.
     case 0x10:
+      if (m_machine->tandy()) {
+        switch (i8086::AL()) {
+          case 0x00:                     // BL = palette register, BH = colour (4 bit IRGB)
+            if (i8086::BL() < 16)
+              m_machine->setTandyPaletteReg(i8086::BL(), i8086::BH());
+            break;
+          case 0x01:                     // BH = border colour
+            m_machine->setTandyBorder(i8086::BH());
+            break;
+          case 0x02:                     // ES:DX = 16 palette registers, then the border
+          {
+            uint32_t addr = ((uint32_t)i8086::ES() << 4) + i8086::DX();
+            for (int i = 0; i < 16; ++i)
+              m_machine->setTandyPaletteReg(i, m_memory[(addr + i) & 0xfffff]);
+            m_machine->setTandyBorder(m_memory[(addr + 16) & 0xfffff]);
+            break;
+          }
+        }
+        break;
+      }
       switch (i8086::AL()) {
 
         // Set one palette register: BL = register, BH = 6 bit rgbRGB value

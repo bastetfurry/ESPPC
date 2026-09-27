@@ -786,6 +786,31 @@ void SerialDebug::cmdScreenshot()
     return;
   }
 
+  // Tandy 16 colours: the whole 32 or 16 KB with its bank gaps, plus the 16 palette registers
+  // (4 bit IRGB) after the palette mask has been applied, so the decoder only has to look them up
+  if (fb && (em == GraphicsAdapter::Emulation::PC_Graphics_Tandy_320x200_16Colors ||
+             em == GraphicsAdapter::Emulation::PC_Graphics_Tandy_160x200_16Colors)) {
+
+    bool     mode9 = (em == GraphicsAdapter::Emulation::PC_Graphics_Tandy_320x200_16Colors);
+    uint32_t bytes = mode9 ? 32768 : 16384;
+    auto     arr   = m_machine->tandyArray();
+
+    writeFmt("SCREENSHOT fmt=%s w=%d h=200 stride=%d bytes=%u pal=",
+             mode9 ? "tandy9" : "tandy8", mode9 ? 320 : 160, mode9 ? 160 : 80, (unsigned)bytes);
+    for (int i = 0; i < 16; ++i)
+      writeFmt("%02x", arr[0x10 + (i & arr[1])]);
+    write("\r\n");
+
+    for (uint32_t i = 0; i < bytes; i += 256) {
+      Serial.write(fb + i, 256);
+      Serial.flush();
+      vTaskDelay(1);
+    }
+
+    write("\r\nSCREENSHOTEND\r\n");
+    return;
+  }
+
   write("text mode -- attach the screen mirror instead\r\n");
 }
 

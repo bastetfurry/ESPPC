@@ -39,6 +39,7 @@
 
 #include "bios.h"
 #include "serialdbg.h"
+#include "sn76496.h"
 #include "ega.h"
 
 
@@ -157,6 +158,24 @@ public:
   // initialise itself, instead of the CGA/Hercules adapter with EGA modes bolted onto the system
   // BIOS. romPath is copied. Must be called before run().
   void setEGABios(char const * romPath);
+
+  // Tandy 1000 video and sound on top of the CGA: the 16 colour modes 8 and 9, the video array
+  // (palette) at 3DAh/3DEh, the page register at 3DFh, and the SN76496 at C0h. Must be called
+  // before run().
+  void setTandy(bool value)                    { m_tandy = value; }
+  bool tandy() const                           { return m_tandy; }
+
+  // The SN76496 alone, as on the TNDY style sound cards, for a machine without the Tandy video.
+  // setTandy() implies it. Must be called before run().
+  void setTandySound(bool value)               { m_tandySound = value; }
+  bool tandySound() const                      { return m_tandySound || m_tandy; }
+
+  // BIOS side of the Tandy: a mode set for BIOS modes 8 and 9 (returns false for any other mode,
+  // after putting the video array back to its CGA state), and the palette calls INT 10h AH=10h.
+  bool setTandyMode(int biosMode, bool clear);
+  void setTandyPaletteReg(int index, uint8_t value);
+  void setTandyBorder(uint8_t value)           { m_tandyArray[2] = value & 0x0f; }
+  uint8_t const * tandyArray() const           { return m_tandyArray; }   // for the monitor
   bool egaBiosInstalled() const                { return m_egaBiosLoaded; }
 
   // Called from POST once the IVT is in place: points the option ROM's own INT 10h handler at
@@ -325,6 +344,8 @@ private:
   bool loadEGABios();
   void loadEGAFont(int charHeight);
   void setCGAMode();
+  void writeTandyArray(uint8_t value);
+  void resetTandyArray();
   void setEGAAttributeReg(uint8_t value);
   void setEGADefaultPalette(bool line200);
   uint8_t egaInputStatus1();
@@ -433,6 +454,14 @@ private:
   uint16_t                 m_CGAMemoryOffsetCurrent;
   bool                     m_CGAModeCurrentValid;
   uint16_t                 m_CGAVSyncQuery;
+
+  // Tandy 1000 (see setTandy())
+  bool                     m_tandy;
+  bool                     m_tandySound;
+  uint8_t                  m_tandyArrayIndex;   // 3DAh
+  uint8_t                  m_tandyArray[32];    // 3DEh: 1 mask, 2 border, 3 mode, 10h-1Fh palette
+  uint8_t                  m_tandyPage;         // 3DFh, stored only: see docs/tandy.md
+  SN76496                  m_sn76496;
 
   // Hercules
   uint8_t                  m_HGC6845SelectRegister;

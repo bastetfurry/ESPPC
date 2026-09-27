@@ -113,6 +113,10 @@ Machine::Machine() :
     m_baseDir(nullptr),
     m_ramSizeKB(640),
     m_CGAModeCurrentValid(false),
+    m_tandy(false),
+    m_tandySound(false),
+    m_tandyArrayIndex(0),
+    m_tandyPage(0x3f),
     m_EGAActive(false),
     m_EGAACIndex(0),
     m_EGAACFlipFlop(false),
@@ -195,6 +199,8 @@ void Machine::init()
 
   m_soundGen.play(true);
   m_soundGen.attach(&m_sinWaveGen);
+  if (tandySound())
+    m_sn76496.attach(&m_soundGen);
 
   m_i8042.init();
   m_i8042.setCallbacks(this, keyboardInterrupt, mouseInterrupt, resetMachine, sysReq);
@@ -361,6 +367,12 @@ void Machine::reset()
   m_CGAColorReg     = 0;
   m_CGAVSyncQuery   = 0;
   invalidateCGAMode();
+
+  resetTandyArray();
+  m_tandyArrayIndex = 0;
+  m_tandyPage       = 0x3f;
+  if (tandySound())
+    m_sn76496.reset();
 
   m_HGCMemoryOffset = 0;
   m_HGCModeReg      = 0;
@@ -537,6 +549,16 @@ void Machine::prepareVideoROM()
     uint8_t * bda = s_memory + 0x400;
     *(uint16_t*)(bda + 0x10) = (*(uint16_t*)(bda + 0x10) & ~0x0030) | 0x0020;
     memset(bda + 0x87, 0, 4);       // 40:87..8A, EGA info, switches, feature, display combination
+
+    // A Tandy 1000 is recognised by two ROM bytes rather than by probing anything: the PC model
+    // byte FFh at F000:FFFE, and 21h at F000:C000, the "!" of Tandy's copyright notice there. The
+    // model byte was FCh (AT), which POST has just copied into place; F000:C000 is past the end of
+    // this BIOS image, so it is free. The page register copy at 40:8A is what the Tandy BIOS keeps.
+    if (m_tandy) {
+      s_memory[0xffffe] = 0xff;
+      s_memory[0xfc000] = 0x21;
+      bda[0x8a]         = 0x3f;
+    }
     return;
   }
 
@@ -650,6 +672,94 @@ void Machine::setCGA6845Register(uint8_t value)
 }
 
 
+// Tandy video array data, the register picked by the last write to 3DAh
+void Machine::writeTandyArray(uint8_t value)
+{
+  int index = m_tandyArrayIndex;
+  if (index >= 0x10)
+    value &= 0x0f;
+  uint8_t old = m_tandyArray[index];
+  m_tandyArray[index] = value;
+
+  if (index == 1 || index >= 0x10) {
+    // palette mask or a palette entry: rebuild the colour table, which only a Tandy mode uses
+    m_graphicsAdapter.setTandyPalette(m_tandyArray + 0x10, m_tandyArray[1]);
+  } else if (index == 3 && ((old ^ value) & 0x10)) {
+    // 16 colour graphics on or off: that changes the mode, so set it up again
+    invalidateCGAMode();
+    setCGAMode();
+  }
+}
+
+
+// What the Tandy BIOS leaves in the video array for the CGA modes: mask 0Fh, black border, no
+// 16 colour graphics, and the identity palette.
+void Machine::resetTandyArray()
+{
+  memset(m_tandyArray, 0, sizeof(m_tandyArray));
+  m_tandyArray[1] = 0x0f;
+  for (int i = 0; i < 16; ++i)
+    m_tandyArray[0x10 + i] = i;
+  m_graphicsAdapter.setTandyPalette(m_tandyArray + 0x10, m_tandyArray[1]);
+}
+
+
+void Machine::setTandyPaletteReg(int index, uint8_t value)
+{
+  m_tandyArrayIndex = 0x10 + (index & 0x0f);
+  writeTandyArray(value);
+}
+
+
+// The Tandy BIOS mode set for modes 8 and 9, with the register values of DOSBox's Tandy mode table
+// (see docs/tandy.md). SQ3 leaves every one of these to the BIOS and only writes the mode control
+// register itself afterwards. Any other mode puts the video array back to its CGA state, so a
+// following CGA mode set does not come up in 16 colours, and returns false for the CGA path to
+// carry on.
+bool Machine::setTandyMode(int biosMode, bool clear)
+{
+  if (biosMode != 0x08 && biosMode != 0x09) {
+    bool was16 = m_tandyArray[3] & 0x10;
+    resetTandyArray();
+    m_tandyPage = 0x3f;
+    if (was16)
+      invalidateCGAMode();
+    return false;
+  }
+
+  if (!s_videoMemory)
+    return false;
+
+  bool mode9 = biosMode == 0x09;
+
+  // CRTC: R0 horizontal total, R1 displayed, R2 sync position, R3 sync width, R4 vertical total,
+  // R5 adjust, R6 displayed rows, R7 vertical sync, R9 scanlines per row - 1
+  uint8_t const crtc8[] = {  56, 40, 41, 10, 127, 6, 100, 112, 2, 1 };
+  uint8_t const crtc9[] = { 113, 80, 81, 10,  63, 6,  50,  55, 2, 3 };
+  uint8_t const * crtc = mode9 ? crtc9 : crtc8;
+  for (int r = 0; r < 10; ++r) {
+    writePortHW(this, 0x3d4, r);
+    writePortHW(this, 0x3d5, crtc[r]);
+  }
+
+  resetTandyArray();
+  m_tandyPage = mode9 ? 0xf6 : 0x3f;
+
+  if (clear)
+    memset(s_videoMemory + 0x8000, 0, mode9 ? 0x8000 : 0x4000);
+
+  // array register 3 before the mode control register, so the mode comes up in 16 colours at once.
+  // The array changed behind setCGAMode()'s back, so its cache must not skip the write below,
+  // which it would when mode 9 is set again over mode 9.
+  m_tandyArray[3] = 0x14;
+  invalidateCGAMode();
+  writePortHW(this, 0x3d9, 0x30);
+  writePortHW(this, 0x3d8, mode9 ? 0x2b : 0x2a);
+
+  return true;
+}
+
+
 void Machine::setCGAMode()
 {
   // While an EGA mode is up the CGA frame buffer has been released to make room for the planar
@@ -703,6 +813,20 @@ void Machine::setCGAMode()
     m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_80x25_16Colors);
     m_graphicsAdapter.setBit7Blink(m_CGAModeReg & CGA_MODECONTROLREG_BIT7BLINK);
+    m_graphicsAdapter.enableVideo(true);
+
+  } else if (m_tandy && (m_tandyArray[3] & 0x10) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS)) {
+
+    // Tandy 16 colour graphics: video array register 3 bit 4, with the high resolution clock
+    // (mode control bit 0) telling 320x200 (mode 9) from 160x200 (mode 8). Both are drawn from
+    // B8000 as it stands: the page register is not modelled yet, and neither is the CRTC start
+    // address, which would move the four banks independently (see docs/tandy.md).
+    m_frameBuffer = s_videoMemory + 0x8000;
+    m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
+    m_graphicsAdapter.setTandyPalette(m_tandyArray + 0x10, m_tandyArray[1]);
+    m_graphicsAdapter.setEmulation((m_CGAModeReg & CGA_MODECONTROLREG_TEXT80)
+                                   ? GraphicsAdapter::Emulation::PC_Graphics_Tandy_320x200_16Colors
+                                   : GraphicsAdapter::Emulation::PC_Graphics_Tandy_160x200_16Colors);
     m_graphicsAdapter.enableVideo(true);
 
   } else if ((m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPH640) == 0) {
@@ -1471,6 +1595,31 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
     // CGA - CRT 6845 - selected register write
     case 0x3d5:
       m->setCGA6845Register(value);
+      break;
+
+    // Tandy - video array index. On a CGA nothing decodes a write to the status port.
+    case 0x3da:
+      if (m->m_tandy)
+        m->m_tandyArrayIndex = value & 0x1f;
+      break;
+
+    // Tandy - video array data
+    case 0x3de:
+      if (m->m_tandy)
+        m->writeTandyArray(value);
+      break;
+
+    // Tandy - CRT/processor page register. Stored for the BIOS and the monitor; the display and
+    // the B8000 window do not follow it yet.
+    case 0x3df:
+      if (m->m_tandy)
+        m->m_tandyPage = value;
+      break;
+
+    // SN76496, on the Tandy 1000 and on TNDY style sound cards
+    case 0xc0 ... 0xc7:
+      if (m->tandySound())
+        m->m_sn76496.write(value);
       break;
 
     // CGA - Mode Control Register

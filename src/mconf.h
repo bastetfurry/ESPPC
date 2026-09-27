@@ -126,8 +126,9 @@ struct MachineConfItem {
   bool              debugConsole;             // "enabledebug": serial debug console instead of COM1
   uint8_t           usbSerial;                // "usbserial": 0 = off, 1 = COM1, 2 = COM2
   bool              usbSerialSet;             // whether the file said so, see applyUsbSerial()
-  uint8_t           videoAdapter;             // "video": 0 = CGA/Hercules (default), 1 = EGA
+  uint8_t           videoAdapter;             // "video": 0 = CGA/Hercules (default), 1 = EGA, 2 = Tandy 1000
   char            * egaRom;                   // "egarom": path to the EGA BIOS option ROM
+  bool              tandySound;               // "tandysound": SN76496 at C0h without the Tandy video
 
   MachineConfItem()
     : next(nullptr),
@@ -142,7 +143,8 @@ struct MachineConfItem {
       usbSerial(0),
       usbSerialSet(false),
       videoAdapter(0),
-      egaRom(nullptr)
+      egaRom(nullptr),
+      tandySound(false)
   {
   }
 
@@ -160,16 +162,25 @@ struct MachineConfItem {
   void setDisk(int index, char const * value)   { free(disk[index]); disk[index] = strdup(value); }
   void setCHS(int index, char const * value)    { sscanf(value, "%hu,%hu,%hu", &cylinders[index], &heads[index], &sectors[index]); }
 
-  // "video ega" selects the EGA path, which needs a real EGA BIOS option ROM. Anything else,
-  // including the tag being absent, leaves the machine on the original CGA/Hercules adapter.
+  // "video ega" selects the EGA path, which needs a real EGA BIOS option ROM, and "video tandy" the
+  // Tandy 1000 graphics and sound. Anything else, including the tag being absent, leaves the machine
+  // on the original CGA/Hercules adapter.
   void setVideoAdapter(char const * value)      {
-    videoAdapter = (value && (value[0] == 'e' || value[0] == 'E')) ? 1 : 0;
+    char c = value ? (value[0] | 0x20) : 0;
+    videoAdapter = c == 'e' ? 1 : (c == 't' ? 2 : 0);
   }
 
   void setEgaRom(char const * value)            {
     if (egaRom)
       free(egaRom);
     egaRom = value && value[0] ? strdup(value) : nullptr;
+  }
+
+  // "tandysound 1" adds the Tandy 1000's SN76496 sound chip at port C0h to any machine, as the TNDY
+  // style sound cards do. The Tandy 1000 video option has it anyway.
+  void setTandySound(char const * value)        {
+    tandySound = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
+                           value[0] == 't' || value[0] == 'T');
   }
 
   // "enabledebug 1" turns the serial debug console on. It is off unless asked for, because it

@@ -181,6 +181,16 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     // and colours be fetched once and reused across all eight scanlines.
     { false,    nullptr,  0,  0, 8,             drawScanline_EGA_Text_80x25, VGA_640x480_60Hz, 640, 400 },
 
+    // --- PCEmulator local addition: Tandy 1000 16 colour modes, on the QVGA timing like CGA
+    // 320x200. One scanline per callback, like the CGA modes: the renderers are a table lookup
+    // per source byte and cheap enough for it.
+
+    // Emulation::PC_Graphics_Tandy_320x200_16Colors (Tandy, BIOS 09h)
+    { false,    nullptr,  0,  0, 1,     drawScanline_Tandy_320x200_16Colors, QVGA_320x240_60Hz, 320, 200 },
+
+    // Emulation::PC_Graphics_Tandy_160x200_16Colors (Tandy, BIOS 08h)
+    { false,    nullptr,  0,  0, 1,     drawScanline_Tandy_160x200_16Colors, QVGA_320x240_60Hz, 320, 200 },
+
   };
 
   if (emulation != Emulation::None) {
@@ -228,8 +238,11 @@ GraphicsAdapter::GraphicsAdapter()
     m_egaStart(0),
     m_egaCharHeight(16),
     m_egaTextColumns(80),
-    m_egaPal2(nullptr)
+    m_egaPal2(nullptr),
+    m_tandyMask(0x0f)
 {
+  for (int i = 0; i < 16; ++i)
+    m_tandyPalette[i] = i;
   for (int i = 0; i < 4; ++i)
     m_egaSpread[i] = nullptr;
   for (int i = 0; i < 16; ++i)
@@ -361,6 +374,33 @@ void GraphicsAdapter::setupLUT()
       setupEGALUT();
       break;
 
+    // PCEmulator: Tandy. The line buffer is byte swizzled in 32 bit words (pixel x goes to byte
+    // x ^ 2, see the CGA 320x200 case above), and the tables are laid out so the renderers can
+    // store whole words in order.
+    case Emulation::PC_Graphics_Tandy_320x200_16Colors:
+      // one source byte -> two raw pixels, the first (high nibble) in the low byte. A word is two
+      // source bytes: the first one's pair goes to the upper half, which is bytes 2 and 3.
+      if (!m_rawLUT)
+        m_rawLUT = (uint8_t*) heap_caps_malloc(256 * 2, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+      for (int i = 0; i < 256; ++i) {
+        uint8_t hi = m_VGADCtrl.createRawPixel(CGAPalette[m_tandyPalette[(i >> 4) & m_tandyMask] & 15]);
+        uint8_t lo = m_VGADCtrl.createRawPixel(CGAPalette[m_tandyPalette[i & m_tandyMask] & 15]);
+        ((uint16_t*)m_rawLUT)[i] = hi | (lo << 8);
+      }
+      break;
+
+    case Emulation::PC_Graphics_Tandy_160x200_16Colors:
+      // one source byte -> four raw pixels, each source pixel twice: output pixels 0 and 1 (the
+      // high nibble) land in bytes 2 and 3, pixels 2 and 3 in bytes 0 and 1
+      if (!m_rawLUT)
+        m_rawLUT = (uint8_t*) heap_caps_malloc(256 * 4, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+      for (int i = 0; i < 256; ++i) {
+        uint32_t hi = m_VGADCtrl.createRawPixel(CGAPalette[m_tandyPalette[(i >> 4) & m_tandyMask] & 15]);
+        uint32_t lo = m_VGADCtrl.createRawPixel(CGAPalette[m_tandyPalette[i & m_tandyMask] & 15]);
+        ((uint32_t*)m_rawLUT)[i] = lo | (lo << 8) | (hi << 16) | (hi << 24);
+      }
+      break;
+
   }
 }
 
@@ -473,6 +513,16 @@ void GraphicsAdapter::setPCGraphicsPaletteInUse(int paletteIndex)
 {
   m_PCGraphicsPaletteInUse = paletteIndex;
   setupLUT();
+}
+
+
+void GraphicsAdapter::setTandyPalette(uint8_t const * palette16, uint8_t mask)
+{
+  memcpy(m_tandyPalette, palette16, 16);
+  m_tandyMask = mask & 0x0f;
+  if (m_emulation == Emulation::PC_Graphics_Tandy_320x200_16Colors ||
+      m_emulation == Emulation::PC_Graphics_Tandy_160x200_16Colors)
+    setupLUT();
 }
 
 
@@ -1010,6 +1060,40 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
 
     }
   }
+}
+
+
+// PCEmulator: Tandy 320x200x16 (BIOS 09h). A character row is four scanlines, and line n of the
+// row lives in bank n (n * 8 KB), 160 bytes a line. Two source bytes make one 32 bit store.
+void IRAM_ATTR GraphicsAdapter::drawScanline_Tandy_320x200_16Colors(void * arg, uint8_t * dest, int scanLine)
+{
+  constexpr int WIDTHINBYTES = 320 / 2;
+
+  auto ga = (GraphicsAdapter*) arg;
+
+  auto src    = ga->m_videoBuffer + ((scanLine & 3) << 13) + WIDTHINBYTES * (scanLine >> 2);
+  auto dest32 = (uint32_t*) dest;
+  auto LUT16  = (uint16_t const *) ga->m_rawLUT;
+
+  for (int col = 0; col < WIDTHINBYTES; col += 2, src += 2)
+    *dest32++ = ((uint32_t)LUT16[src[0]] << 16) | LUT16[src[1]];
+}
+
+
+// PCEmulator: Tandy 160x200x16 (BIOS 08h). Two scanlines to a character row, so two banks, 80 bytes
+// a line; each source byte becomes four output pixels, one 32 bit store.
+void IRAM_ATTR GraphicsAdapter::drawScanline_Tandy_160x200_16Colors(void * arg, uint8_t * dest, int scanLine)
+{
+  constexpr int WIDTHINBYTES = 160 / 2;
+
+  auto ga = (GraphicsAdapter*) arg;
+
+  auto src    = ga->m_videoBuffer + ((scanLine & 1) << 13) + WIDTHINBYTES * (scanLine >> 1);
+  auto dest32 = (uint32_t*) dest;
+  auto LUT32  = (uint32_t const *) ga->m_rawLUT;
+
+  for (int col = 0; col < WIDTHINBYTES; ++col)
+    *dest32++ = LUT32[*src++];
 }
 
 
