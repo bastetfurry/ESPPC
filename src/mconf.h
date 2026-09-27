@@ -126,7 +126,7 @@ struct MachineConfItem {
   bool              debugConsole;             // "enabledebug": serial debug console instead of COM1
   uint8_t           usbSerial;                // "usbserial": 0 = off, 1 = COM1, 2 = COM2
   bool              usbSerialSet;             // whether the file said so, see applyUsbSerial()
-  uint8_t           videoAdapter;             // "video": 0 = CGA/Hercules (default), 1 = EGA, 2 = Tandy 1000
+  uint8_t           videoAdapter;             // "video": 0 = CGA (default), 1 = EGA, 2 = Tandy 1000
   char            * egaRom;                   // "egarom": path to the EGA BIOS option ROM
   bool              tandySound;               // "tandysound": SN76496 at C0h without the Tandy video
   bool              tandyDAC;                 // "tandydac": the SL/TL DAC, needs the sound chip
@@ -170,7 +170,7 @@ struct MachineConfItem {
 
   // "video ega" selects the EGA path, which needs a real EGA BIOS option ROM, and "video tandy" the
   // Tandy 1000 graphics and sound. Anything else, including the tag being absent, leaves the machine
-  // on the original CGA/Hercules adapter.
+  // on the original CGA adapter.
   void setVideoAdapter(char const * value)      {
     char c = value ? (value[0] | 0x20) : 0;
     videoAdapter = c == 'e' ? 1 : (c == 't' ? 2 : 0);

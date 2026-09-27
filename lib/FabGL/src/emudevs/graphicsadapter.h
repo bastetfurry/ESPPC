@@ -70,9 +70,6 @@ public:
     // Requires 640 / 8 * 200 = 16000 bytes
     PC_Graphics_640x200_2Colors,
     
-    // Hercules 720x348 Graphics Black/White
-    // Requires 720 / 8 * 348 = 31320 bytes
-    PC_Graphics_HGC_720x348,
 
     // --- PCEmulator local addition: EGA planar graphics modes ---
     //
@@ -233,7 +230,6 @@ private:
   static void drawScanline_PC_Text_40x25_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_PC_Graphics_320x200_4Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_PC_Graphics_640x200_2Colors(void * arg, uint8_t * dest, int scanLine);
-  static void drawScanline_PC_Graphics_HGC_720x348(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_640_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_320_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_Text_80x25(void * arg, uint8_t * dest, int scanLine);

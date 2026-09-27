@@ -56,17 +56,6 @@ static_assert(EGA_BANK_ENTRIES * sizeof(uint32_t) == CGA_BORROWED_SIZE, "a CGA m
 #define CGA_COLORCONTROLREG_PALETTESEL    0x20   // 0 is Green, red and brown, 1 is Cyan, magenta and white
 
 
-// Hercules (HGC) Ports Bits
-
-#define HGC_MODECONTROLREG_GRAPHICS       0x02   // 0 = text mode, 1 = graphics mode
-#define HGC_MODECONTROLREG_ENABLED        0x08   // 0 = video off, 1 = video on
-#define HGC_MODECONTROLREG_BIT7BLINK      0x20   // 0 = text mode bit 7 controls background, 1 = text mode bit 7 controls blinking
-#define HGC_MODECONTROLREG_GRAPHICSPAGE   0x80   // 0 = graphics mapped on page 0 (0xB0000), 1 = graphics mapped on page 1 (0xB8000)
-
-#define HGC_CONFSWITCH_ALLOWGRAPHICSMODE  0x01   // 0 = prevents graphics mode, 1 = allows graphics mode
-#define HGC_CONFSWITCH_ALLOWPAGE1         0x02   // 0 = prevents access to page 1, 1 = allows access to page 1
-
-
 // I/O expander (based on MCP23S17) ports
 
 #define EXTIO_CONFIG                    0x00e0   // configuration port (see EXTIO_CONFIG_.... flags)
@@ -190,7 +179,7 @@ void Machine::init()
   if (m_egaBiosLoaded) {
     // The ROM programs and tests the hardware during its own initialisation, so the planes have
     // to be there before POST calls it. The CGA buffer is released the same way an EGA mode set
-    // would do it, and setCGAMode()/setHGCMode() stand down for as long as this is true.
+    // would do it, and setCGAMode() stands down for as long as this is true.
     if (s_videoMemory) {
       heap_caps_free(s_videoMemory);
       s_videoMemory = nullptr;
@@ -419,10 +408,6 @@ void Machine::reset()
   m_dmaFlipFlop   = false;
   m_dmaStatus     = 0;
 
-  m_HGCMemoryOffset = 0;
-  m_HGCModeReg      = 0;
-  m_HGCSwitchReg    = 0;
-  m_HGCVSyncQuery   = 0;
 
   m_speakerDataEnable = false;
 
@@ -470,7 +455,6 @@ void Machine::reset()
   m_COM2.reset();
 
   memset(m_CGA6845, 0, sizeof(m_CGA6845));
-  memset(m_HGC6845, 0, sizeof(m_HGC6845));
 
   m_BIOS.reset();
 
@@ -588,7 +572,7 @@ bool Machine::loadEGABios()
 void Machine::prepareVideoROM()
 {
   if (!m_egaBiosLoaded) {
-    // CGA/Hercules machine. The data area POST has just copied out of the BIOS carries the EGA's
+    // CGA machine. The data area POST has just copied out of the BIOS carries the EGA's
     // answers (the ROM rewrites them itself when it is fitted), so give a CGA machine the ones a
     // real CGA machine has: equipment bits 5-4 = 10, 80x25 colour, and nothing in the EGA bytes.
     uint8_t * bda = s_memory + 0x400;
@@ -1279,7 +1263,7 @@ void Machine::setCGAMode()
 
 // --- EGA ---------------------------------------------------------------------------------------
 //
-// The EGA's 128 KB of planar video memory and the 64 KB CGA/Hercules buffer cannot both be held
+// The EGA's 128 KB of planar video memory and the 64 KB CGA buffer cannot both be held
 // in internal RAM on this board, so entering an EGA mode releases the CGA buffer and leaving one
 // puts it back. The video memory callbacks tolerate s_videoMemory being null meanwhile: a guest
 // write to 0xB8000 while an EGA graphics mode is up is discarded, which is also what a real EGA
@@ -1614,7 +1598,7 @@ void Machine::leaveEGAMode()
 
   if (m_egaBiosLoaded && m_EGA.hasVRAM()) {
     // CGA modes on the EGA machine (4, 5, 6) borrow the first plane bank as their video RAM
-    // rather than allocating the 64 KB CGA/Hercules buffer, which cannot be had with the planes
+    // rather than allocating the 64 KB CGA buffer, which cannot be had with the planes
     // resident: the allocation failed quietly, setCGAMode() found no buffer, and the monitor lost
     // its signal. A bank is 16 KB, exactly a real CGA's memory at B8000 (mirrored at BC000), and
     // the planes are idle until the next EGA mode set, which clears them.
@@ -1767,82 +1751,6 @@ void Machine::setEGAAttributeReg(uint8_t value)
 }
 
 
-void Machine::setHGC6845Register(uint8_t value)
-{
-  m_HGC6845[m_HGC6845SelectRegister] = value;
-  switch (m_HGC6845SelectRegister) {
-
-    // cursor start: (bits 5,6 = cursor blink and visibility control), bits 0..4 cursor start scanline
-    case 0x0a:
-      m_graphicsAdapter.setCursorVisible((m_HGC6845[0xa] >> 5) >= 2);
-    // cursor end: bits 0..4 cursor end scanline
-    case 0x0b:
-      m_graphicsAdapter.setCursorShape((m_HGC6845[0xa] & 0x1f), (m_HGC6845[0xb] & 0x1f));
-      break;
-
-    // video memory start offset (0x0c = H, 0x0d = L)
-    case 0x0c:
-    case 0x0d:
-      m_HGCMemoryOffset = ((m_HGC6845[0xc] << 8) | m_HGC6845[0xd]) << 1;
-      setHGCMode();
-      break;
-
-    // cursor position (0x0e = H and 0x0f = L)
-    case 0x0e:
-    case 0x0f:
-    {
-      int pos = (m_HGC6845[0xe] << 8) | m_HGC6845[0xf];
-      m_graphicsAdapter.setCursorPos(pos / m_graphicsAdapter.getTextColumns(), pos % m_graphicsAdapter.getTextColumns());
-      break;
-    }
-
-  }
-}
-
-
-void Machine::setHGCMode()
-{
-  // same reasoning as setCGAMode()
-  if (m_EGAActive || !s_videoMemory)
-    return;
-
-  // Hercules is about to take the adapter, so a later CGA write must not be skipped as unchanged
-  invalidateCGAMode();
-
-  constexpr int HGC_OFFSET_PAGE0 = 0x0000;
-  constexpr int HGC_OFFSET_PAGE1 = 0x8000;
-
-  if ((m_HGCModeReg & HGC_MODECONTROLREG_ENABLED) == 0) {
-
-    // video disabled
-    //printf("Hercules, video disabled\n");
-    m_graphicsAdapter.enableVideo(false);
-
-  } else if ((m_HGCModeReg & HGC_MODECONTROLREG_GRAPHICS) == 0 || (m_HGCSwitchReg & HGC_CONFSWITCH_ALLOWGRAPHICSMODE) == 0) {
-
-    // text mode
-    //printf("Hercules, text mode\n");
-    m_frameBuffer = s_videoMemory + HGC_OFFSET_PAGE0;
-    m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
-    m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_80x25_16Colors);
-    m_graphicsAdapter.setBit7Blink(m_HGCModeReg & HGC_MODECONTROLREG_BIT7BLINK);
-    m_graphicsAdapter.enableVideo(true);
-
-  } else if ((m_HGCModeReg &HGC_MODECONTROLREG_GRAPHICS)) {
-
-    // graphics mode
-    //printf("Hercules, graphics mode\n");
-    int offset = (m_HGCModeReg & HGC_MODECONTROLREG_GRAPHICSPAGE) && (m_HGCSwitchReg & HGC_CONFSWITCH_ALLOWPAGE1) ? HGC_OFFSET_PAGE1 : HGC_OFFSET_PAGE0;
-    m_frameBuffer = s_videoMemory + offset;
-    m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
-    m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_HGC_720x348);
-    m_graphicsAdapter.enableVideo(true);
-
-  }
-
-}
-
-
 void Machine::writePort(void * context, int address, uint8_t value)
 {
   auto m = (Machine*)context;
@@ -1968,7 +1876,7 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
         m->m_COM2.write(address, value);
       break;
 
-    // EGA ports 0x3c0..0x3cf only exist when the EGA is fitted. On a CGA/Hercules machine nothing
+    // EGA ports 0x3c0..0x3cf only exist when the EGA is fitted. On a CGA machine nothing
     // decodes them: writes go nowhere and reads float to 0xff (see readPort()).
     //
     // EGA - Attribute Controller. Index and data share 0x3c0 through a flip flop, but the card
@@ -2090,36 +1998,9 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
       m->setCGAMode();
       break;
 
-    // Hercules (HGC). A Tandy 1000 has no monochrome adapter, so there nothing answers these, the
-    // same as on the read side: installers probe 3B4h/3B5h and 3BAh, and KQ5's found a Hercules.
-    // Hercules (HGC) - CRT 6845 - register selection register
-    case 0x3b4:
-      if (!m->m_tandy)
-        m->m_HGC6845SelectRegister = value & 0x1f;
-      break;
+    // 3B4h/3B5h/3B8h/3BFh: nothing answers. There is no Hercules any more (it needed its own
+    // 720x350 timing and a 64 KB buffer), and neither the CGA nor the Tandy has a monochrome port.
 
-    // Hercules (HGC) - CRT 6845 - selected register write
-    case 0x3b5:
-      if (!m->m_tandy)
-        m->setHGC6845Register(value);
-      break;
-
-    // Hercules (HGC) - Display Mode Control Port
-    case 0x3b8:
-      if (m->m_tandy)
-        break;
-      m->m_HGCModeReg = value;
-      m->setHGCMode();
-      break;
-
-    // Hercules (HGC) - Configuration Switch
-    case 0x3bf:
-      if (m->m_tandy)
-        break;
-      m->m_HGCSwitchReg = value;
-      m->setHGCMode();
-      break;
-      
     // COM1
     case 0x3f8 ... 0x3ff:
       if (m->m_COM1.assigned())
@@ -2307,26 +2188,11 @@ uint8_t Machine::readPortHW(void * context, int address)
       // which is how every EGA mode set routine starts
       return m->egaInputStatus1();
 
-    // Hercules (HGC) - register selection register. Nothing there on a Tandy (see writePortHW()).
-    case 0x3b4:
-      return m->m_tandy ? 0xff : 0x00;  // not readable
-
-    // Hercules (HGC) - selected register read
-    case 0x3b5:
-      if (m->m_tandy)
-        return 0xff;
-      return m->m_HGC6845SelectRegister >= 14 && m->m_HGC6845SelectRegister < 16 ? m->m_HGC6845[m->m_HGC6845SelectRegister] : 0x00;
-
-    // Hercules (HGC) - Display Status Port
-    // real vertical sync is too fast for our slowly emulated 8086, so
-    // here it is just a fake, just to allow programs that check it to keep going anyway.
     case 0x3ba:
-      if (m->m_tandy)
-        return 0xff;
+      // the EGA answers its status here when it drives a monochrome display; nothing else does
       if (m->m_EGAActive)
         return m->egaInputStatus1();
-      m->m_HGCVSyncQuery += 1;
-      return (m->m_HGCVSyncQuery & 0x7) != 0 ? 0x00 : 0x80; // "not VSync" (0x80) every 7 queries
+      return 0xff;
 
     // COM1
     case 0x3f8 ... 0x3ff:
@@ -2435,12 +2301,12 @@ bool Machine::COM2Interrupt(PC8250 * source, void * context)
 
 
 // The 0xA0000-0xAFFFF window belongs to the EGA when an EGA mode is up, and goes through the
-// planar engine. 0xB0000 upwards is the CGA/Hercules buffer, which is released while EGA is
+// planar engine. 0xB0000 upwards is the CGA buffer, which is released while EGA is
 // active -- hence the null checks, which also make a stray write during a mode change harmless.
 
 // When the EGA is live it answers whichever CPU window its Graphics Controller claims -- A0000
 // for the graphics modes, B8000 for text -- so the routing follows the card rather than a fixed
-// split. Outside that window the CGA/Hercules buffer still applies, when it exists.
+// split. Outside that window the CGA buffer still applies, when it exists.
 // The video memory callbacks run on every guest access to A0000-BFFFF, with the EGA planar engine
 // inlined into them, so they live in IRAM as well.
 void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t value)

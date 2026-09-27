@@ -165,8 +165,6 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     // Emulation::PC_Graphics_640x200_2Colors (CGA, Graphics Mode, 640x200x2)
     { false,    nullptr,  0,  0, 1, drawScanline_PC_Graphics_640x200_2Colors, VGA_640x240_60Hz,  640, 200 },
 
-    // Emulation::PC_Graphics_HGC_720x348 (Hercules, Graphics Mode, 720x348x2)
-    { false,    nullptr,  0,  0, 2,     drawScanline_PC_Graphics_HGC_720x348, VGA_720x350_70Hz,  -1,  -1 },
 
     // --- PCEmulator local addition: EGA planar modes ---
     // The 350 line modes are driven on the 640x480 60Hz timing with the image centred, the same
@@ -397,19 +395,6 @@ void GraphicsAdapter::setupLUT()
         for (int j = 0; j < 8; ++j) {
           bool pixel = (i >> (7 - j)) & 1;
           uint8_t rawPixel = m_VGADCtrl.createRawPixel(pixel ? CGAPalette[m_PCGraphicsForegroundColorIndex] : RGB222(0, 0, 0));
-          m_rawLUT[(i * 8) + (j ^ 2)] = rawPixel;
-        }
-      }
-      break;
-
-    case Emulation::PC_Graphics_HGC_720x348:
-      // each LUT item contains eight pixels (decodes as eight raw bytes)
-      if (!m_rawLUT)
-        m_rawLUT = (uint8_t*) heap_caps_malloc(256 * 8, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
-      for (int i = 0; i < 256; ++i) {
-        for (int j = 0; j < 8; ++j) {
-          bool pixel = (i >> (7 - j)) & 1;
-          uint8_t rawPixel = m_VGADCtrl.createRawPixel(RGB222(pixel * 3, pixel * 3, pixel * 3));
           m_rawLUT[(i * 8) + (j ^ 2)] = rawPixel;
         }
       }
@@ -967,35 +952,6 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Graphics_640x200_2Colors(void * 
   for (int col = 0; col < WIDTH; col += PIXELSPERBYTE) {
     *dest64++ = LUT64[*src++];
   }
-}
-
-
-// offset 0x0000 for lines 0, 4, 8, 12...
-// offset 0x2000 for lines 1, 5, 9, 13...
-// offset 0x4000 for lines 2, 6, 10, 14...
-// offset 0x6000 for lines 3, 7, 11, 15...
-void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Graphics_HGC_720x348(void * arg, uint8_t * dest, int scanLine)
-{
-  constexpr int WIDTH         = 720;
-  constexpr int PIXELSPERBYTE = 8;
-  constexpr int WIDTHINBYTES  = WIDTH / PIXELSPERBYTE;
-
-  auto ga = (GraphicsAdapter*) arg;
-
-  auto src = ga->m_videoBuffer + ((scanLine & 0b11) << 13) + WIDTHINBYTES * (scanLine >> 2);
-
-  auto dest64 = (uint64_t*) dest;
-
-  auto LUT64 = (uint64_t*) ga->m_rawLUT;
-
-  for (int col = 0; col < WIDTH; col += PIXELSPERBYTE)
-    *dest64++ = LUT64[*src++];
-
-  ++scanLine;
-  src = ga->m_videoBuffer + ((scanLine & 0b11) << 13) + WIDTHINBYTES * (scanLine >> 2);
-
-  for (int col = 0; col < WIDTH; col += PIXELSPERBYTE)
-    *dest64++ = LUT64[*src++];
 }
 
 

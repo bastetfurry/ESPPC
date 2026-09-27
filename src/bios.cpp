@@ -270,7 +270,7 @@ void BIOS::helpersEntry()
       break;
 
     // AH = 0x0E, is an EGA fitted?
-    //   returns AL = 1 on a machine with the EGA BIOS ROM, AL = 0 on a CGA/Hercules machine
+    //   returns AL = 1 on a machine with the EGA BIOS ROM, AL = 0 on a CGA machine
     //
     // AH = 0x10, INT 1Ah AH=81h..85h, the Tandy SL/TL DAC calls. SI = the caller's AX.
     //   returns AX and CF as the Tandy BIOS does (see Machine::tandyDACBios)
@@ -290,7 +290,7 @@ void BIOS::helpersEntry()
       break;
 
     // AH = 0x0E, which adapter is fitted?
-    //   returns AL = 0 CGA/Hercules, 1 EGA (the EGA BIOS ROM is loaded), 2 Tandy 1000
+    //   returns AL = 0 CGA, 1 EGA (the EGA BIOS ROM is loaded), 2 Tandy 1000
     //
     // INT 10h AH=10h..12h are EGA calls. A CGA BIOS leaves the registers alone for them, and
     // that is how software tells the two apart, so bios.asm only answers them when this says so.
@@ -1469,9 +1469,6 @@ void BIOS::videoHandlerEntry()
           printf("INT 10h, write pixel, unsupported 640x200x2 resolution\n");
           break;
 
-        case GraphicsAdapter::Emulation::PC_Graphics_HGC_720x348:
-          printf("INT 10h, write pixel, unsupported 720x348x2 resolution\n");
-          break;
 
         default:
           printf("INT 10h, write pixel, unsupported resolution\n");

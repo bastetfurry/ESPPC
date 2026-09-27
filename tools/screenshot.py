@@ -169,19 +169,6 @@ def decode_composite(data, table):
     return rows
 
 
-def decode_hgc(data, w, h):
-    rows = []
-    for y in range(h):
-        row = bytearray()
-        base = (y & 3) * 0x2000 + (y >> 2) * (w // 8)
-        for x in range(w // 8):
-            b = data[base + x]
-            for k in range(8):
-                row += bytes(CGA16[15] if (b >> (7 - k)) & 1 else CGA16[0])
-        rows.append(row)
-    return rows
-
-
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else 'screenshot.png'
     port = sorted(glob.glob('/dev/ttyUSB*'))[0]
@@ -235,8 +222,6 @@ def main():
         pal = [palette_entry(int(palhex[i * 2:i * 2 + 2], 16), h) for i in range(16)] if palhex \
               else CGA16
         rows = decode_ega(data, w, h, stride, pal)
-    elif fmt == 'hgc':
-        rows = decode_hgc(data, w, h)
     elif fmt == 'comp':
         rows = decode_composite(data, int(palhex[0:2], 16))
     elif fmt.startswith('cplus'):

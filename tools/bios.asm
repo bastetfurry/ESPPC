@@ -366,7 +366,7 @@ optrom_next:
   ; A video option ROM chooses its own initial mode from the configuration switches, and the EGA
   ; BIOS settles on 40 columns. A machine with a colour display should come up in 80x25, so set
   ; that here once the ROM has had its turn. Only when a ROM actually ran, so the plain
-  ; CGA/Hercules machine is left exactly as it was.
+  ; CGA machine is left exactly as it was.
   cmp  byte [cs:optrom_found], 0
   je   optrom_done
   mov  ax, 0x0003
@@ -732,7 +732,7 @@ int10:
   ; AH=10h..12h are EGA calls. A CGA BIOS does not implement them and returns with every register
   ; as it was, and software relies on exactly that to tell the two apart: EGA.SYS, games and
   ; QBasic all ask AH=12h BL=10h and take BL coming back unchanged as "no EGA". Answering them on
-  ; a CGA/Hercules machine made it half an EGA -- detected as one, then driven through EGA palette
+  ; a CGA machine made it half an EGA -- detected as one, then driven through EGA palette
   ; registers that do nothing to a CGA mode. So they are only answered when an EGA is fitted.
   cmp  ah, 0x10
   jb   int10_not_ega_call
@@ -742,7 +742,7 @@ int10:
   ; A Tandy 1000 has the PCjr palette calls, AH=10h AL=00h..02h, and none of the rest: no AH=11h
   ; fonts and, above all, no AH=12h, which would make software take it for an EGA.
   push ax
-  mov  ah, 0x0e ; which adapter? AL = 0 CGA/Hercules, 1 EGA, 2 Tandy
+  mov  ah, 0x0e ; which adapter? AL = 0 CGA, 1 EGA, 2 Tandy
   emu_helper
   cmp  al, 1
   pop  ax
@@ -6567,7 +6567,7 @@ lpt4addr         dw  0                   ; 40:0e
 equip            dw  0b0001010001000101  ; 40:10h
 ;                      5432109876543210
 ; bits 5-4 = 00: EGA or later, the display type comes from the video BIOS rather than from here.
-; Machine::prepareVideoROM() turns them into 10 (80x25 colour) on a CGA/Hercules machine, together
+; Machine::prepareVideoROM() turns them into 10 (80x25 colour) on a CGA machine, together
 ; with clearing the EGA bytes at 40:87..8A, so only a machine with the EGA ROM keeps these values.
 
                  db  0

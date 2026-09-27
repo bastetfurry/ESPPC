@@ -157,7 +157,7 @@ public:
   void setRamSize(int kb)                      { m_ramSizeKB = kb; }
 
   // Selects the EGA path: a real EGA BIOS option ROM is loaded at C000:0000 and POST lets it
-  // initialise itself, instead of the CGA/Hercules adapter with EGA modes bolted onto the system
+  // initialise itself, instead of the CGA adapter with EGA modes bolted onto the system
   // BIOS. romPath is copied. Must be called before run().
   void setEGABios(char const * romPath);
 
@@ -179,7 +179,7 @@ public:
   bool compositeCapable() const                { return !m_tandy && !m_egaBiosLoaded; }
 
   // Sets the CGA graphics mode up again from the registers, if the adapter is showing one -- after
-  // the monitor type changed. Hercules, text and the other adapters are left alone.
+  // the monitor type changed. Text modes and the other adapters are left alone.
   void refreshCGAGraphics();
 
   void setTandy(bool value)                    { m_tandy = value; }
@@ -398,8 +398,6 @@ private:
   uint8_t egaInputStatus1();
   void setCGA6845Register(uint8_t value);
 
-  void setHGCMode();
-  void setHGC6845Register(uint8_t value);
 
   static void writePort(void * context, int address, uint8_t value);
   static uint8_t readPort(void * context, int address);
@@ -497,7 +495,7 @@ private:
   uint8_t                  m_CGAColorReg;
   // What setCGAMode() last set the adapter up from, so it can skip a write that changes nothing
   // (SCUMM games rewrite the mode and colour registers every frame). Cleared by invalidateCGAMode()
-  // whenever something else -- EGA, Hercules, the system menu -- has had the adapter since.
+  // whenever something else -- EGA, the system menu -- has had the adapter since.
   uint8_t                  m_CGAModeRegCurrent;
   uint8_t                  m_CGAColorRegCurrent;
   uint16_t                 m_CGAMemoryOffsetCurrent;
@@ -547,13 +545,6 @@ private:
   bool                     m_dmaFlipFlop;       // false = the next byte is the low one
   uint8_t                  m_dmaStatus;         // bits 3-0 terminal count reached, cleared on read
 
-  // Hercules
-  uint8_t                  m_HGC6845SelectRegister;
-  uint8_t                  m_HGC6845[32];
-  uint16_t                 m_HGCMemoryOffset;
-  uint8_t                  m_HGCModeReg;
-  uint8_t                  m_HGCSwitchReg;
-  uint16_t                 m_HGCVSyncQuery;
 
   // speaker/audio
   bool                     m_speakerDataEnable;

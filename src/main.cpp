@@ -403,7 +403,7 @@ static void drawSetupFrame()
 
 static void drawSetupDetails(MachineConfItem * c)
 {
-  static char const * VIDEO[] = { "CGA / Hercules", "EGA", "Tandy 1000" };
+  static char const * VIDEO[] = { "CGA", "EGA", "Tandy 1000" };
   static char const * USB[]   = { "Off", "COM1", "COM2" };
 
   for (int y = 3; y < 19; ++y)
@@ -953,7 +953,7 @@ void setup()
   machine->setRamSize(conf->ramSizeKB);
 
   // EGA path: hand the machine a real EGA BIOS option ROM and let POST initialise it. Without
-  // this the machine keeps the original CGA/Hercules adapter, which is the default.
+  // this the machine keeps the original CGA adapter, which is the default.
   if (conf->videoAdapter == 1) {
     char const * rom = (conf->egaRom && conf->egaRom[0]) ? conf->egaRom
                                                          : SPIFFS_MOUNT_PATH "/ega.bin";

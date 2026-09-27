@@ -768,17 +768,15 @@ void SerialDebug::cmdScreenshot()
   auto fb = m_machine->frameBuffer();
 
   if (fb && (em == GraphicsAdapter::Emulation::PC_Graphics_320x200_4Colors ||
-             em == GraphicsAdapter::Emulation::PC_Graphics_640x200_2Colors ||
-             em == GraphicsAdapter::Emulation::PC_Graphics_HGC_720x348)) {
+             em == GraphicsAdapter::Emulation::PC_Graphics_640x200_2Colors)) {
 
-    bool   hgc    = (em == GraphicsAdapter::Emulation::PC_Graphics_HGC_720x348);
     bool   four   = (em == GraphicsAdapter::Emulation::PC_Graphics_320x200_4Colors);
-    int    w      = hgc ? 720 : (four ? 320 : 640);
-    int    h      = hgc ? 348 : 200;
-    uint32_t bytes = hgc ? 32768 : 16384;   // including the interleaved bank gaps
+    int    w      = four ? 320 : 640;
+    int    h      = 200;
+    uint32_t bytes = 16384;                  // including the interleaved bank gaps
 
     writeFmt("SCREENSHOT fmt=%s w=%d h=%d stride=%d bytes=%u pal=\r\n",
-             hgc ? "hgc" : (four ? "cga4" : "cga2"), w, h, w / (four ? 4 : 8), (unsigned)bytes);
+             four ? "cga4" : "cga2", w, h, w / (four ? 4 : 8), (unsigned)bytes);
 
     for (uint32_t i = 0; i < bytes; i += 256) {
       Serial.write(fb + i, 256);

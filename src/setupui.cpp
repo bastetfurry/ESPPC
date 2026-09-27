@@ -535,7 +535,7 @@ struct Field {
 char const * const BOOT_OPTS[]  = { "Floppy A", "Floppy B", "Hard Disk 0", "Hard Disk 1" };
 char const * const RAM_OPTS[]   = { "64 KB", "128 KB", "192 KB", "256 KB", "320 KB", "384 KB",
                                     "448 KB", "512 KB", "576 KB", "640 KB", "704 KB" };
-char const * const VIDEO_OPTS[] = { "CGA / Hercules", "EGA (BIOS ROM)", "Tandy 1000" };
+char const * const VIDEO_OPTS[] = { "CGA", "EGA (BIOS ROM)", "Tandy 1000" };
 char const * const ONOFF_OPTS[] = { "Disabled", "Enabled" };
 char const * const USB_OPTS[]   = { "Not Connected", "COM1", "COM2" };
 
@@ -555,7 +555,7 @@ Field const FIELDS[F_COUNT] = {
   { "  Cyl/Head/Sect",  Kind::CHS,    "Geometry of hard disk 1 as cylinders, heads, sectors. 0,0,0 lets the emulator guess it from the image size.", nullptr, 0 },
   { "Boot From",        Kind::Choice, "The drive the BIOS boots from.", BOOT_OPTS, 4 },
   { "Base Memory",      Kind::Choice, "Conventional memory. Above 640 KB the A000 segment becomes ordinary RAM, which only non-EGA machines can use.", RAM_OPTS, 11 },
-  { "Video Adapter",    Kind::Choice, "CGA / Hercules is the original adapter. EGA runs a real EGA BIOS option ROM. Tandy 1000 adds its 16 colour modes 8 and 9 and the three voice sound chip.", VIDEO_OPTS, 3 },
+  { "Video Adapter",    Kind::Choice, "CGA is the original adapter. EGA runs a real EGA BIOS option ROM. Tandy 1000 adds its 16 colour modes 8 and 9 and the three voice sound chip.", VIDEO_OPTS, 3 },
   { "  Composite Mon.", Kind::Choice, "A composite colour monitor instead of RGB: CGA graphics with the colour burst on show NTSC artifact colours, 160x200 in 16 colours, for games that offer a composite mode.", ONOFF_OPTS, 2 },
   { "EGA BIOS ROM",     Kind::Path,   "Option ROM image for the EGA adapter. None uses /spiffs/ega.bin.", nullptr, 0 },
   { "Tandy Sound",      Kind::Choice, "The Tandy 1000's three voice SN76496 at port C0h, as on the TNDY style sound cards, for games that offer Tandy sound. Tandy 1000 video always has it.", ONOFF_OPTS, 2 },
