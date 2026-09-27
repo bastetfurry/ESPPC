@@ -541,7 +541,7 @@ char const * const USB_OPTS[]   = { "Not Connected", "COM1", "COM2" };
 
 enum {
   F_DESC, F_FD0, F_FD1, F_HD0, F_HD0CHS, F_HD1, F_HD1CHS,
-  F_BOOT, F_RAM, F_VIDEO, F_COMPOSITE, F_EGAROM, F_TSOUND, F_TDAC, F_DEBUG, F_USB,
+  F_BOOT, F_RAM, F_VIDEO, F_COMPOSITE, F_EGAROM, F_TSOUND, F_TDAC, F_ADLIB, F_DEBUG, F_USB,
   F_COUNT
 };
 
@@ -560,6 +560,7 @@ Field const FIELDS[F_COUNT] = {
   { "EGA BIOS ROM",     Kind::Path,   "Option ROM image for the EGA adapter. None uses /spiffs/ega.bin.", nullptr, 0 },
   { "Tandy Sound",      Kind::Choice, "The Tandy 1000's three voice SN76496 at port C0h, as on the TNDY style sound cards, for games that offer Tandy sound. Tandy 1000 video always has it.", ONOFF_OPTS, 2 },
   { "  Tandy DAC",      Kind::Choice, "The Tandy 1000 SL/TL digital sound next to the sound chip, as KQ5 and other Sierra games use it for speech and effects. Played through the BIOS, INT 1Ah.", ONOFF_OPTS, 2 },
+  { "AdLib",            Kind::Choice, "An AdLib sound card: the Yamaha OPL2 FM synthesiser at port 388h, the music of most games from the late 1980s on. It is synthesised on the video core, after the picture.", ONOFF_OPTS, 2 },
   { "Serial Debug Cons.", Kind::Choice, "Host debug console on the USB serial line: screen mirror, monitor, breakpoints.", ONOFF_OPTS, 2 },
   { "USB Serial Port",  Kind::Choice, "Which emulated COM port reaches the host over the USB serial. Works alongside the debug console.", USB_OPTS, 3 },
 };
@@ -648,6 +649,7 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
   v->choice[F_TSOUND] = item->tandySound ? 1 : 0;
   v->choice[F_TDAC]   = item->tandyDAC ? 1 : 0;
   v->choice[F_COMPOSITE] = item->composite ? 1 : 0;
+  v->choice[F_ADLIB]  = item->adlib ? 1 : 0;
   v->choice[F_DEBUG] = item->debugConsole ? 1 : 0;
   v->choice[F_USB]   = item->effectiveUsbSerial() % 3;
 
@@ -851,6 +853,7 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
       item->tandySound   = v->choice[F_TSOUND] != 0;
       item->tandyDAC     = v->choice[F_TDAC] != 0;
       item->composite    = v->choice[F_COMPOSITE] != 0;
+      item->adlib        = v->choice[F_ADLIB] != 0;
       item->debugConsole = v->choice[F_DEBUG] != 0;
       // written explicitly once the page has been used, so the file records the choice
       item->setUsbSerial(v->choice[F_USB] == 2 ? "com2" : (v->choice[F_USB] == 1 ? "com1" : "off"));

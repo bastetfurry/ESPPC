@@ -427,6 +427,8 @@ static void drawSetupDetails(MachineConfItem * c)
   ui.text(61, 13, c->debugConsole ? "Enabled" : "Disabled", TUI_VALUE);
   ui.text(49, 14, "USB Serial", TUI_LABEL);
   ui.text(61, 14, USB[c->effectiveUsbSerial() % 3], TUI_VALUE);
+  ui.text(49, 16, "AdLib", TUI_LABEL);
+  ui.text(61, 16, c->adlib ? "Enabled" : "Disabled", TUI_VALUE);
   ui.text(49, 15, "Tandy Sound", TUI_LABEL);
   ui.text(61, 15, !(c->tandySound || c->videoAdapter == 2) ? "Disabled" : (c->tandyDAC ? "With DAC" : "Enabled"), TUI_VALUE);
 
@@ -964,6 +966,10 @@ void setup()
   if (conf->tandySound && conf->videoAdapter != 2) {
     printf("Sound: SN76496 at C0h\n");
     machine->setTandySound(true);
+  }
+  if (conf->adlib) {
+    printf("Sound: AdLib (OPL2) at 388h\n");
+    machine->setAdLib(true);
   }
   if (conf->composite && conf->videoAdapter == 0) {
     printf("Monitor: composite colour\n");

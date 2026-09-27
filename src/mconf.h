@@ -131,6 +131,7 @@ struct MachineConfItem {
   bool              tandySound;               // "tandysound": SN76496 at C0h without the Tandy video
   bool              tandyDAC;                 // "tandydac": the SL/TL DAC, needs the sound chip
   bool              composite;                // "composite": a composite colour monitor on the CGA
+  bool              adlib;                    // "adlib": an AdLib (OPL2) at 388h
 
   MachineConfItem()
     : next(nullptr),
@@ -148,7 +149,8 @@ struct MachineConfItem {
       egaRom(nullptr),
       tandySound(false),
       tandyDAC(false),
-      composite(false)
+      composite(false),
+      adlib(false)
   {
   }
 
@@ -199,6 +201,12 @@ struct MachineConfItem {
   void setComposite(char const * value)         {
     composite = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
                           value[0] == 't' || value[0] == 'T');
+  }
+
+  // "adlib 1": an AdLib card, the OPL2 FM synthesiser at ports 388h/389h
+  void setAdLib(char const * value)             {
+    adlib = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
+                      value[0] == 't' || value[0] == 'T');
   }
 
   // "enabledebug 1" turns the serial debug console on. It is off unless asked for, because it

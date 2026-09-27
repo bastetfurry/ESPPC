@@ -41,6 +41,7 @@
 #include "serialdbg.h"
 #include "sn76496.h"
 #include "tandydac.h"
+#include "adlib.h"
 #include "ega.h"
 
 
@@ -169,6 +170,9 @@ public:
   // Silences all sound output (PC speaker, SN76496, Tandy DAC) and brings it back, for while the
   // guest is frozen behind the system menu. Returns whether it was playing.
   bool pauseSound(bool pause)                  { return m_soundGen.play(!pause); }
+
+  // An AdLib (OPL2) at 388h/389h, see adlib.h. Must be called before run().
+  void setAdLib(bool value)                    { m_adlibEnabled = value; }
 
   void setComposite(bool value)                { m_composite = value; }
   bool composite() const                       { return m_composite; }
@@ -504,6 +508,8 @@ private:
   // bit 6 swap the planes for the CPU. m_plantronicsSwap is whether that swap is in effect now,
   // kept ready for the video memory callbacks.
   bool                     m_composite;
+  bool                     m_adlibEnabled;
+  AdLib *                  m_adlib;             // only allocated when enabled
   uint8_t                  m_plantronics;
   bool                     m_plantronicsSwap;
 

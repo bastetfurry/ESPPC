@@ -114,6 +114,8 @@ Machine::Machine() :
     m_ramSizeKB(640),
     m_CGAModeCurrentValid(false),
     m_composite(false),
+    m_adlibEnabled(false),
+    m_adlib(nullptr),
     m_plantronics(0),
     m_plantronicsSwap(false),
     m_tandy(false),
@@ -217,6 +219,14 @@ void Machine::init()
     m_sn76496.attach(&m_soundGen);
   if (tandyDAC())
     m_tandyDAC.attach(&m_soundGen);
+  // the synthesiser runs on the video core, below everything there (see adlib.h)
+  if (m_adlibEnabled) {
+    m_adlib = new AdLib;
+    if (!m_adlib || !m_adlib->begin(&m_soundGen, fabgl::CoreUsage::busiestCore())) {
+      printf("AdLib: could not start the synthesiser\n");
+      m_adlibEnabled = false;
+    }
+  }
 
   m_i8042.init();
   m_i8042.setCallbacks(this, keyboardInterrupt, mouseInterrupt, resetMachine, sysReq);
@@ -386,6 +396,9 @@ void Machine::reset()
 
   m_plantronics     = 0;
   m_plantronicsSwap = false;
+
+  if (m_adlibEnabled)
+    m_adlib->reset();
 
   resetTandyArray();
   m_tandyArrayIndex = 0;
@@ -2004,6 +2017,16 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
       m->setCGA6845Register(value);
       break;
 
+    // AdLib: register select and data
+    case 0x388:
+      if (m->m_adlibEnabled)
+        m->m_adlib->writeAddress(value);
+      break;
+    case 0x389:
+      if (m->m_adlibEnabled)
+        m->m_adlib->writeData(value);
+      break;
+
     // Tandy - video array index. On a CGA nothing decodes a write to the status port.
     case 0x3da:
       if (m->m_tandy)
@@ -2153,6 +2176,10 @@ uint8_t Machine::readPortHW(void * context, int address)
   auto m = (Machine*)context;
 
   switch (address) {
+
+    // AdLib status: the timers, which is how software detects the card
+    case 0x388:
+      return m->m_adlibEnabled ? m->m_adlib->readStatus() : 0xff;
 
     // the Tandy DAC and the 8237 it needs (see writePortHW())
     case 0xc4 ... 0xc7:

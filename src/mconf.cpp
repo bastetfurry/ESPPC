@@ -203,6 +203,8 @@ void MachineConf::loadFromFile(FILE * file)
       item->setTandyDAC(value);
     else if (strcmp("composite", tag) == 0)
       item->setComposite(value);
+    else if (strcmp("adlib", tag) == 0)
+      item->setAdLib(value);
     else if (tag[0])
       // Say so rather than ignoring it. A mistyped or over-long tag otherwise looks exactly
       // like a feature that does not work.
@@ -257,6 +259,8 @@ void MachineConf::saveToFile(FILE * file)
       fputs("tandydac 1 ", file);
     if (item->composite)
       fputs("composite 1 ", file);
+    if (item->adlib)
+      fputs("adlib 1 ", file);
     fputs("\r\n", file);
   }
 }
