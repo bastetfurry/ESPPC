@@ -111,6 +111,18 @@ public:
     // Tandy 160x200, 16 Colors (PC BIOS 08h). 16 KB: two banks, 80 bytes a line, every pixel
     // shown two pixels wide.
     PC_Graphics_Tandy_160x200_16Colors,
+
+    // --- PCEmulator local addition: Plantronics ColorPlus ---
+    //
+    // A CGA with a second 16 KB plane: plane 0 at B8000, plane 1 at BC000, both in the CGA layout
+    // (even and odd lines 8 KB apart, 80 bytes a line). The video buffer is plane 0; plane 1 is
+    // 16 KB after it.
+
+    // Plantronics 320x200, 16 Colors: 2 bits of each pixel in each plane.
+    PC_Graphics_Plantronics_320x200_16Colors,
+
+    // Plantronics 640x200, 4 Colors: 1 bit of each pixel in each plane, through the CGA palette.
+    PC_Graphics_Plantronics_640x200_4Colors,
   };
 
 
@@ -203,6 +215,8 @@ private:
   static void drawScanline_EGA_Text_80x25(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_Tandy_320x200_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_Tandy_160x200_16Colors(void * arg, uint8_t * dest, int scanLine);
+  static void drawScanline_Plantronics_320x200_16Colors(void * arg, uint8_t * dest, int scanLine);
+  static void drawScanline_Plantronics_640x200_4Colors(void * arg, uint8_t * dest, int scanLine);
 
   void setupEGALUT();
   void freeEGALUT();

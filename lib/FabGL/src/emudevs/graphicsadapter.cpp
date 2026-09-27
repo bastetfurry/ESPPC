@@ -191,6 +191,15 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     // Emulation::PC_Graphics_Tandy_160x200_16Colors (Tandy, BIOS 08h)
     { false,    nullptr,  0,  0, 1,     drawScanline_Tandy_160x200_16Colors, QVGA_320x240_60Hz, 320, 200 },
 
+    // --- PCEmulator local addition: Plantronics ColorPlus, on the timings of the CGA modes they
+    // extend
+
+    // Emulation::PC_Graphics_Plantronics_320x200_16Colors
+    { false,    nullptr,  0,  0, 1, drawScanline_Plantronics_320x200_16Colors, QVGA_320x240_60Hz, 320, 200 },
+
+    // Emulation::PC_Graphics_Plantronics_640x200_4Colors
+    { false,    nullptr,  0,  0, 1,  drawScanline_Plantronics_640x200_4Colors,  VGA_640x240_60Hz, 640, 200 },
+
   };
 
   if (emulation != Emulation::None) {
@@ -386,6 +395,38 @@ void GraphicsAdapter::setupLUT()
         uint8_t hi = m_VGADCtrl.createRawPixel(CGAPalette[m_tandyPalette[(i >> 4) & m_tandyMask] & 15]);
         uint8_t lo = m_VGADCtrl.createRawPixel(CGAPalette[m_tandyPalette[i & m_tandyMask] & 15]);
         ((uint16_t*)m_rawLUT)[i] = hi | (lo << 8);
+      }
+      break;
+
+    // PCEmulator: Plantronics. Both renderers look up a nibble of plane 0 and the same nibble of
+    // plane 1 together, (p0 << 4) | p1, with the palette baked in.
+    case Emulation::PC_Graphics_Plantronics_320x200_16Colors:
+      // a nibble pair is two pixels of 2 + 2 bits; the 4 bit value v = p0 bits | p1 bits << 2 is
+      // CGA colour (v & 7) << 1 | v >> 3, as on the card. First pixel in the low byte (see Tandy).
+      if (!m_rawLUT)
+        m_rawLUT = (uint8_t*) heap_caps_malloc(256 * 2, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+      for (int i = 0; i < 256; ++i) {
+        int p0 = i >> 4, p1 = i & 15;
+        uint16_t pair = 0;
+        for (int j = 0; j < 2; ++j) {
+          int v = ((p0 >> (2 - j * 2)) & 3) | (((p1 >> (2 - j * 2)) & 3) << 2);
+          pair |= m_VGADCtrl.createRawPixel(CGAPalette[((v & 7) << 1) | (v >> 3)]) << (j * 8);
+        }
+        ((uint16_t*)m_rawLUT)[i] = pair;
+      }
+      break;
+
+    case Emulation::PC_Graphics_Plantronics_640x200_4Colors:
+      // a nibble pair is four pixels of 1 + 1 bits, through the same four colours as CGA mode 4/5
+      if (!m_rawLUT)
+        m_rawLUT = (uint8_t*) heap_caps_malloc(256 * 4, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+      for (int i = 0; i < 256; ++i) {
+        int p0 = i >> 4, p1 = i & 15;
+        for (int j = 0; j < 4; ++j) {
+          int v = ((p0 >> (3 - j)) & 1) | (((p1 >> (3 - j)) & 1) << 1);
+          m_rawLUT[i * 4 + (j ^ 2)] = m_VGADCtrl.createRawPixel(v == 0 ? CGAPalette[m_PCGraphicsBackgroundColorIndex]
+                                                                       : CGAGraphics4ColorsPalette[m_PCGraphicsPaletteInUse][v]);
+        }
       }
       break;
 
@@ -1094,6 +1135,48 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_Tandy_160x200_16Colors(void * arg, 
 
   for (int col = 0; col < WIDTHINBYTES; ++col)
     *dest32++ = LUT32[*src++];
+}
+
+
+
+// PCEmulator: Plantronics 320x200x16. The CGA line layout in each plane, plane 1 16 KB after plane 0.
+// A byte of each plane is four pixels: its high nibbles give the first two, its low nibbles the
+// other two, one 32 bit store.
+void IRAM_ATTR GraphicsAdapter::drawScanline_Plantronics_320x200_16Colors(void * arg, uint8_t * dest, int scanLine)
+{
+  constexpr int WIDTHINBYTES = 80;
+
+  auto ga = (GraphicsAdapter*) arg;
+
+  auto p0     = ga->m_videoBuffer + ((scanLine & 1) << 13) + WIDTHINBYTES * (scanLine >> 1);
+  auto p1     = p0 + 0x4000;
+  auto dest32 = (uint32_t*) dest;
+  auto LUT16  = (uint16_t const *) ga->m_rawLUT;
+
+  for (int col = 0; col < WIDTHINBYTES; ++col) {
+    uint8_t a = p0[col], b = p1[col];
+    *dest32++ = ((uint32_t)LUT16[(a & 0xf0) | (b >> 4)] << 16) | LUT16[((a & 0x0f) << 4) | (b & 0x0f)];
+  }
+}
+
+
+// PCEmulator: Plantronics 640x200x4. Same layout; a byte of each plane is eight pixels, two stores.
+void IRAM_ATTR GraphicsAdapter::drawScanline_Plantronics_640x200_4Colors(void * arg, uint8_t * dest, int scanLine)
+{
+  constexpr int WIDTHINBYTES = 80;
+
+  auto ga = (GraphicsAdapter*) arg;
+
+  auto p0     = ga->m_videoBuffer + ((scanLine & 1) << 13) + WIDTHINBYTES * (scanLine >> 1);
+  auto p1     = p0 + 0x4000;
+  auto dest32 = (uint32_t*) dest;
+  auto LUT32  = (uint32_t const *) ga->m_rawLUT;
+
+  for (int col = 0; col < WIDTHINBYTES; ++col) {
+    uint8_t a = p0[col], b = p1[col];
+    *dest32++ = LUT32[(a & 0xf0) | (b >> 4)];
+    *dest32++ = LUT32[((a & 0x0f) << 4) | (b & 0x0f)];
+  }
 }
 
 

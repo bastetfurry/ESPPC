@@ -111,6 +111,37 @@ def decode_tandy(data, w, h, fmt, pal):
     return rows
 
 
+def decode_cplus(data, w, h, fmt, colreg, modereg):
+    # Plantronics ColorPlus: plane 0 at offset 0, plane 1 at 0x4000, each in the CGA line layout.
+    # 320x200x16 takes 2 bits a pixel from each plane, CGA colour (v & 7) << 1 | v >> 3; 640x200x4
+    # takes 1 bit from each and goes through the CGA mode 4/5 palette.
+    if fmt == 'cplus4':
+        intense = 8 if colreg & 0x10 else 0
+        if modereg & 0x04:
+            three = [3, 4, 7]
+        elif colreg & 0x20:
+            three = [3, 5, 7]
+        else:
+            three = [2, 4, 6]
+        pal4 = [colreg & 15] + [c + intense for c in three]
+    rows = []
+    for y in range(h):
+        row = bytearray()
+        base = (y & 1) * 0x2000 + (y >> 1) * 80
+        for x in range(80):
+            a, b = data[base + x], data[0x4000 + base + x]
+            if fmt == 'cplus16':
+                for k in range(4):
+                    v = ((a >> (6 - 2 * k)) & 3) | (((b >> (6 - 2 * k)) & 3) << 2)
+                    row += bytes(CGA16[((v & 7) << 1) | (v >> 3)])
+            else:
+                for k in range(8):
+                    v = ((a >> (7 - k)) & 1) | (((b >> (7 - k)) & 1) << 1)
+                    row += bytes(CGA16[pal4[v]])
+        rows.append(row)
+    return rows
+
+
 def decode_hgc(data, w, h):
     rows = []
     for y in range(h):
@@ -179,6 +210,8 @@ def main():
         rows = decode_ega(data, w, h, stride, pal)
     elif fmt == 'hgc':
         rows = decode_hgc(data, w, h)
+    elif fmt.startswith('cplus'):
+        rows = decode_cplus(data, w, h, fmt, int(palhex[0:2], 16), int(palhex[2:4], 16))
     elif fmt.startswith('tandy'):
         pal = [int(palhex[i * 2:i * 2 + 2], 16) for i in range(16)]
         rows = decode_tandy(data, w, h, fmt, pal)

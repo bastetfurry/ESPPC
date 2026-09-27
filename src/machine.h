@@ -188,6 +188,8 @@ public:
   void setTandyPaletteReg(int index, uint8_t value);
   void setTandyBorder(uint8_t value)           { m_tandyArray[2] = value & 0x0f; }
   uint8_t const * tandyArray() const           { return m_tandyArray; }   // for the monitor
+  uint8_t cgaColorReg() const                  { return m_CGAColorReg; }  // for the monitor
+  uint8_t cgaModeReg() const                   { return m_CGAModeReg; }   // for the monitor
   bool egaBiosInstalled() const                { return m_egaBiosLoaded; }
 
   // Called from POST once the IVT is in place: points the option ROM's own INT 10h handler at
@@ -357,6 +359,7 @@ private:
   void loadEGAFont(int charHeight);
   void setCGAMode();
   void writeTandyArray(uint8_t value);
+  void updatePlantronicsSwap();
   void hookTandyDACIrq();
   void writeDMA(int port, uint8_t value);
   uint8_t readDMA(int port);
@@ -475,6 +478,12 @@ private:
   uint16_t                 m_CGAMemoryOffsetCurrent;
   bool                     m_CGAModeCurrentValid;
   uint16_t                 m_CGAVSyncQuery;
+
+  // Plantronics ColorPlus, port 3DDh (see writePortHW()): bit 4 320x200x16, bit 5 640x200x4,
+  // bit 6 swap the planes for the CPU. m_plantronicsSwap is whether that swap is in effect now,
+  // kept ready for the video memory callbacks.
+  uint8_t                  m_plantronics;
+  bool                     m_plantronicsSwap;
 
   // Tandy 1000 (see setTandy())
   bool                     m_tandy;

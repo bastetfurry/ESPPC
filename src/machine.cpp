@@ -113,6 +113,8 @@ Machine::Machine() :
     m_baseDir(nullptr),
     m_ramSizeKB(640),
     m_CGAModeCurrentValid(false),
+    m_plantronics(0),
+    m_plantronicsSwap(false),
     m_tandy(false),
     m_tandySound(false),
     m_tandyDACRequested(false),
@@ -380,6 +382,9 @@ void Machine::reset()
   m_CGAColorReg     = 0;
   m_CGAVSyncQuery   = 0;
   invalidateCGAMode();
+
+  m_plantronics     = 0;
+  m_plantronicsSwap = false;
 
   resetTandyArray();
   m_tandyArrayIndex = 0;
@@ -993,6 +998,16 @@ bool Machine::tandyDACIrq()
 }
 
 
+// The ColorPlus swaps its planes for the CPU (B8000 <-> BC000) only while one of its modes is on
+// and the CGA is in a graphics mode. Worked out here, when those change, so the video memory
+// callbacks only have to test one flag.
+void Machine::updatePlantronicsSwap()
+{
+  m_plantronicsSwap = (m_plantronics & 0x40) && (m_plantronics & 0x30) &&
+                      (m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS);
+}
+
+
 // Tandy video array data, the register picked by the last write to 3DAh
 void Machine::writeTandyArray(uint8_t value)
 {
@@ -1148,6 +1163,24 @@ void Machine::setCGAMode()
     m_graphicsAdapter.setEmulation((m_CGAModeReg & CGA_MODECONTROLREG_TEXT80)
                                    ? GraphicsAdapter::Emulation::PC_Graphics_Tandy_320x200_16Colors
                                    : GraphicsAdapter::Emulation::PC_Graphics_Tandy_160x200_16Colors);
+    m_graphicsAdapter.enableVideo(true);
+
+  } else if ((m_plantronics & 0x30) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS)) {
+
+    // Plantronics ColorPlus: the two planes at B8000 and BC000. 320x200x16 has priority, as on the
+    // card; 640x200x4 takes its colours from the CGA registers exactly as mode 4/5 does.
+    m_frameBuffer = cga;
+    m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
+    if (m_plantronics & 0x10) {
+      m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_Plantronics_320x200_16Colors);
+    } else {
+      m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_Plantronics_640x200_4Colors);
+      int paletteIndex = (m_CGAModeReg & CGA_MODECONTROLREG_COLOR)
+                         ? 4 + (bool)(m_CGAColorReg & CGA_COLORCONTROLREG_HIGHINTENSITY)
+                         : (bool)(m_CGAColorReg & CGA_COLORCONTROLREG_PALETTESEL) * 2 + (bool)(m_CGAColorReg & CGA_COLORCONTROLREG_HIGHINTENSITY);
+      m_graphicsAdapter.setPCGraphicsPaletteInUse(paletteIndex);
+      m_graphicsAdapter.setPCGraphicsBackgroundColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
+    }
     m_graphicsAdapter.enableVideo(true);
 
   } else if ((m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPH640) == 0) {
@@ -1959,6 +1992,19 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
     // CGA - Mode Control Register
     case 0x3d8:
       m->m_CGAModeReg = value;
+      m->updatePlantronicsSwap();
+      m->setCGAMode();
+      break;
+
+    // Plantronics ColorPlus control register. It is a CGA card with more memory, so the CGA machine
+    // has it: software that never writes here sees a plain CGA. Not on the Tandy, whose video is not
+    // a CGA card, nor with the EGA fitted.
+    case 0x3dd:
+      if (m->m_tandy || m->m_egaBiosLoaded)
+        break;
+      m->m_plantronics = value & 0x70;
+      m->updatePlantronicsSwap();
+      m->invalidateCGAMode();
       m->setCGAMode();
       break;
 
@@ -2329,6 +2375,8 @@ void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t v
       m->m_CGABorrowed[(address - 0xb8000) & (CGA_BORROWED_SIZE - 1)] = value;
     return;
   }
+  if (m->m_plantronicsSwap && address >= 0xb8000)
+    address ^= 0x4000;
   if (address >= 0xb0000 && s_videoMemory)
     s_videoMemory[address - 0xb0000] = value;
 }
@@ -2347,6 +2395,8 @@ void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t
     writeVideoMemory8(context, address + 1, (uint8_t)(value >> 8));
     return;
   }
+  if (m->m_plantronicsSwap && address >= 0xb8000)
+    address ^= 0x4000;
   if (address >= 0xb0000 && s_videoMemory)
     *(uint16_t*)(s_videoMemory + address - 0xb0000) = value;
 }
@@ -2359,6 +2409,8 @@ uint8_t IRAM_ATTR Machine::readVideoMemory8(void * context, int address)
     return m->m_EGA.read8(address - m->m_EGA.mapBase());
   if (m->m_CGABorrowed)
     return address >= 0xb8000 ? m->m_CGABorrowed[(address - 0xb8000) & (CGA_BORROWED_SIZE - 1)] : 0xff;
+  if (m->m_plantronicsSwap && address >= 0xb8000)
+    address ^= 0x4000;
   if (address >= 0xb0000 && s_videoMemory)
     return s_videoMemory[address - 0xb0000];
   return 0xff;
@@ -2372,6 +2424,8 @@ uint16_t IRAM_ATTR Machine::readVideoMemory16(void * context, int address)
     return m->m_EGA.read16(address - m->m_EGA.mapBase());
   if (m->m_CGABorrowed)
     return readVideoMemory8(context, address) | ((uint16_t) readVideoMemory8(context, address + 1) << 8);
+  if (m->m_plantronicsSwap && address >= 0xb8000)
+    address ^= 0x4000;
   if (address >= 0xb0000 && s_videoMemory)
     return *(uint16_t*)(s_videoMemory + address - 0xb0000);
   return 0xffff;

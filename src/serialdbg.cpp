@@ -811,6 +811,24 @@ void SerialDebug::cmdScreenshot()
     return;
   }
 
+  // Plantronics: both planes, 32 KB. The 640x200x4 palette is the CGA one, so its header carries
+  // the colour register and the mode register for the decoder to pick the same four colours.
+  if (fb && (em == GraphicsAdapter::Emulation::PC_Graphics_Plantronics_320x200_16Colors ||
+             em == GraphicsAdapter::Emulation::PC_Graphics_Plantronics_640x200_4Colors)) {
+
+    bool sixteen = (em == GraphicsAdapter::Emulation::PC_Graphics_Plantronics_320x200_16Colors);
+    writeFmt("SCREENSHOT fmt=%s w=%d h=200 stride=80 bytes=32768 pal=%02x%02x\r\n",
+             sixteen ? "cplus16" : "cplus4", sixteen ? 320 : 640,
+             m_machine->cgaColorReg(), m_machine->cgaModeReg());
+    for (uint32_t i = 0; i < 32768; i += 256) {
+      Serial.write(fb + i, 256);
+      Serial.flush();
+      vTaskDelay(1);
+    }
+    write("\r\nSCREENSHOTEND\r\n");
+    return;
+  }
+
   write("text mode -- attach the screen mirror instead\r\n");
 }
 
