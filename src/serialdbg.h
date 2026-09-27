@@ -81,6 +81,7 @@ private:
   void cmdPortTrace(char const * args);
   void cmdCoreLoad(char const * args);
   void cmdOPLBench();
+  void cmdVideoStats(char const * args);
   void cmdVideoState();
   void cmdHeapMap();
   void cmdWriteReg(char const * args);

@@ -25,6 +25,7 @@
 
 
 #include "machine.h"
+#include "esp_cpu.h"
 #include "esp_timer.h"
 
 
@@ -375,7 +376,9 @@ void Machine::reset()
 {
   m_reset = false;
 
-  m_ticksCounter = 0;
+  m_ticksCounter  = 0;
+  m_pitCountdown  = 128;
+  m_pollCountdown = 16384;
 
   m_CGAMemoryOffset = 0;
   m_CGAModeReg      = 0;
@@ -471,10 +474,17 @@ void Machine::run()
 }
 
 
-// In IRAM: this loop, with tick() and the interrupt checks inlined, runs once per emulated
-// instruction around i8086::step(), which is in IRAM already.
+// In IRAM, with i8086::step() in IRAM as well. The instructions run in batches of BATCH, and the
+// housekeeping in tick() -- the device polls and the interrupt check -- once per batch rather than
+// after every instruction: it cost 91 host cycles per instruction against 318 for the instruction
+// itself (measured with the monitor's 'm'), about a fifth of all the emulator's time, since tick()
+// is an ordinary function in flash. Interrupts are therefore taken at most BATCH instructions late,
+// a few microseconds, as they are on real hardware at the end of a long instruction. The breakpoint
+// check stays per instruction, a compare with zero when none is set.
 void IRAM_ATTR Machine::runTask(void * pvParameters)
 {
+  constexpr int BATCH = 16;
+
   auto m = (Machine*)pvParameters;
 
   m->init();
@@ -484,20 +494,31 @@ void IRAM_ATTR Machine::runTask(void * pvParameters)
     if (m->m_reset)
       m->reset();
 
-    if (m->m_breakAddr &&
-        (((uint32_t)i8086::CS() << 4) + i8086::IP()) == m->m_breakAddr) {
-      m->m_breakAddr = 0;                 // one shot, so resuming does not trip instantly
-      m->m_serialDebug.breakNow();
-    }
-
     #ifdef FABGL_EMULATED
     taskEmuCheck();
     if (m->m_stepCallback)
       m->m_stepCallback(m);
     #endif
 
-    i8086::step();
-		m->tick();
+    bool stats = s_vmStats;
+    uint32_t t0 = stats ? esp_cpu_get_ccount() : 0;
+
+    for (int i = 0; i < BATCH; ++i) {
+      if (m->m_breakAddr &&
+          (((uint32_t)i8086::CS() << 4) + i8086::IP()) == m->m_breakAddr) {
+        m->m_breakAddr = 0;               // one shot, so resuming does not trip instantly
+        m->m_serialDebug.breakNow();
+      }
+      i8086::step();
+    }
+
+    if (__builtin_expect(stats, 0)) {
+      uint32_t t1 = esp_cpu_get_ccount();
+      m->tick(BATCH);
+      s_stepCycles += t1 - t0;
+      s_tickCycles += esp_cpu_get_ccount() - t1;
+    } else
+      m->tick(BATCH);
 
 	}
 }
@@ -622,50 +643,51 @@ void Machine::prepareVideoROM()
 void Machine::stepCPU()
 {
   i8086::step();
-  tick();
+  tick(1);
 }
 
 
-void Machine::tick()
+void Machine::tick(int n)
 {
-  ++m_ticksCounter;
+  m_ticksCounter += n;
 
-  if ((m_ticksCounter & 0x03) == 0x03) {
-  
-    if (m_COM1.assigned())
-      m_COM1.tick();
-    if (m_COM2.assigned())
-      m_COM2.tick();
-      
-    if ((m_ticksCounter & 0x7f) == 0x7f) {
-      m_PIT8253.tick();
-      // keep the DAC's ring topped up from guest RAM (this task is the one that may read it)
-      if (m_tandyDAC.busy()) {
-        bool dma = m_tandyDAC.dmaMode();
-        if (int ended = m_tandyDAC.pump(s_memory)) {
-          if (dma)
-            tandyDACTerminalCount(ended);
-          else
-            endTandyDACBlock();
-        }
+  // the serial ports, every batch (they only poll their status, so how often is not critical)
+  if (m_COM1.assigned())
+    m_COM1.tick();
+  if (m_COM2.assigned())
+    m_COM2.tick();
+
+  // every 128 instructions: the PIT (which runs on host time), the DAC's ring, the keyboard
+  // controller
+  if ((m_pitCountdown -= n) <= 0) {
+    m_pitCountdown += 128;
+    m_PIT8253.tick();
+    // keep the DAC's ring topped up from guest RAM (this task is the one that may read it)
+    if (m_tandyDAC.busy()) {
+      bool dma = m_tandyDAC.dmaMode();
+      if (int ended = m_tandyDAC.pump(s_memory)) {
+        if (dma)
+          tandyDACTerminalCount(ended);
+        else
+          endTandyDACBlock();
       }
-      // run keyboard controller every PIT tick (just to not overload CPU with continous checks)
-      m_i8042.tick();
     }
-
-    // Far rarer than the devices above: the console only has to notice bytes arriving on a
-    // 115200 baud line, and while the monitor is open this call does not return until the user
-    // resumes, which is what freezes the guest.
-    if ((m_ticksCounter & 0x3fff) == 0x3fff && m_serialDebug.enabled())
-      m_serialDebug.poll();
-
+    m_i8042.tick();
   }
-  
+
+  // Far rarer than the devices above: the console only has to notice bytes arriving on a
+  // 115200 baud line, and while the monitor is open this call does not return until the user
+  // resumes, which is what freezes the guest.
+  if ((m_pollCountdown -= n) <= 0) {
+    m_pollCountdown += 16384;
+    if (m_serialDebug.enabled())
+      m_serialDebug.poll();
+  }
+
   if (m_PIC8259A.pendingInterrupt() && i8086::IRQ(m_PIC8259A.pendingInterruptNum()))
     m_PIC8259A.ackPendingInterrupt();
   if (m_PIC8259B.pendingInterrupt() && i8086::IRQ(m_PIC8259B.pendingInterruptNum()))
     m_PIC8259B.ackPendingInterrupt();
-
 }
 
 
@@ -2311,7 +2333,7 @@ bool Machine::COM2Interrupt(PC8250 * source, void * context)
 // split. Outside that window the CGA buffer still applies, when it exists.
 // The video memory callbacks run on every guest access to A0000-BFFFF, with the EGA planar engine
 // inlined into them, so they live in IRAM as well.
-void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t value)
+inline __attribute__((always_inline)) void Machine::writeVideoMemory8Impl(void * context, int address, uint8_t value)
 {
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd()) {
@@ -2330,7 +2352,7 @@ void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t v
 }
 
 
-void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t value)
+inline __attribute__((always_inline)) void Machine::writeVideoMemory16Impl(void * context, int address, uint16_t value)
 {
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd()) {
@@ -2339,8 +2361,8 @@ void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t
   }
   if (m->m_CGABorrowed) {
     // byte by byte: a word at the end of the 16 KB wraps to its start, as the CGA's memory does
-    writeVideoMemory8(context, address, (uint8_t) value);
-    writeVideoMemory8(context, address + 1, (uint8_t)(value >> 8));
+    writeVideoMemory8Impl(context, address, (uint8_t) value);
+    writeVideoMemory8Impl(context, address + 1, (uint8_t)(value >> 8));
     return;
   }
   if (m->m_plantronicsSwap && address >= 0xb8000)
@@ -2354,7 +2376,7 @@ void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t
 }
 
 
-uint8_t IRAM_ATTR Machine::readVideoMemory8(void * context, int address)
+inline __attribute__((always_inline)) uint8_t Machine::readVideoMemory8Impl(void * context, int address)
 {
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd())
@@ -2369,19 +2391,79 @@ uint8_t IRAM_ATTR Machine::readVideoMemory8(void * context, int address)
 }
 
 
-uint16_t IRAM_ATTR Machine::readVideoMemory16(void * context, int address)
+inline __attribute__((always_inline)) uint16_t Machine::readVideoMemory16Impl(void * context, int address)
 {
   auto m = (Machine*)context;
   if (m->m_EGAActive && address >= (int)m->m_EGA.mapBase() && address < (int)m->m_EGA.mapEnd())
     return m->m_EGA.read16(address - m->m_EGA.mapBase());
   if (m->m_CGABorrowed)
-    return readVideoMemory8(context, address) | ((uint16_t) readVideoMemory8(context, address + 1) << 8);
+    return readVideoMemory8Impl(context, address) | ((uint16_t) readVideoMemory8Impl(context, address + 1) << 8);
   if (m->m_plantronicsSwap && address >= 0xb8000)
     address ^= 0x4000;
   if (address >= 0xb8000 && s_videoMemory)
     return address < 0xbffff ? *(uint16_t*)(s_videoMemory + address - 0xb8000)
                              : (uint16_t)(s_videoMemory[address - 0xb8000] | 0xff00);
   return 0xffff;
+}
+
+
+volatile bool Machine::s_vmStats  = false;
+uint32_t      Machine::s_vmReads  = 0;
+uint32_t      Machine::s_vmWrites = 0;
+uint64_t      Machine::s_vmCycles = 0;
+uint64_t      Machine::s_stepCycles = 0;
+uint64_t      Machine::s_tickCycles = 0;
+
+
+// The callbacks the CPU core calls: the access itself, and while the monitor's statistics are on,
+// its count and its time in cycles (see s_vmStats).
+void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t value)
+{
+  bool     stats = s_vmStats;
+  uint32_t t     = stats ? esp_cpu_get_ccount() : 0;
+  writeVideoMemory8Impl(context, address, value);
+  if (__builtin_expect(stats, 0)) {
+    s_vmCycles += esp_cpu_get_ccount() - t;
+    ++s_vmWrites;
+  }
+}
+
+
+void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t value)
+{
+  bool     stats = s_vmStats;
+  uint32_t t     = stats ? esp_cpu_get_ccount() : 0;
+  writeVideoMemory16Impl(context, address, value);
+  if (__builtin_expect(stats, 0)) {
+    s_vmCycles += esp_cpu_get_ccount() - t;
+    ++s_vmWrites;
+  }
+}
+
+
+uint8_t IRAM_ATTR Machine::readVideoMemory8(void * context, int address)
+{
+  bool     stats = s_vmStats;
+  uint32_t t     = stats ? esp_cpu_get_ccount() : 0;
+  uint8_t  v     = readVideoMemory8Impl(context, address);
+  if (__builtin_expect(stats, 0)) {
+    s_vmCycles += esp_cpu_get_ccount() - t;
+    ++s_vmReads;
+  }
+  return v;
+}
+
+
+uint16_t IRAM_ATTR Machine::readVideoMemory16(void * context, int address)
+{
+  bool     stats = s_vmStats;
+  uint32_t t     = stats ? esp_cpu_get_ccount() : 0;
+  uint16_t v     = readVideoMemory16Impl(context, address);
+  if (__builtin_expect(stats, 0)) {
+    s_vmCycles += esp_cpu_get_ccount() - t;
+    ++s_vmReads;
+  }
+  return v;
 }
 
 

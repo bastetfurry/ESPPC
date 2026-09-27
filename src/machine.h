@@ -318,6 +318,16 @@ public:
   // value is 6 bit rgbRGB, as on the port.
   void setEGAPaletteReg(int index, uint8_t value);
 
+  // Video memory access statistics for the debug monitor's 'm' command: while s_vmStats is set,
+  // every guest access to the video window is counted and timed with the cycle counter. Off, it
+  // costs one test per access.
+  static volatile bool     s_vmStats;
+  static uint32_t          s_vmReads;
+  static uint32_t          s_vmWrites;
+  static uint64_t          s_vmCycles;
+  static uint64_t          s_stepCycles;     // in i8086::step(), while s_vmStats is set
+  static uint64_t          s_tickCycles;     // in Machine::tick(), likewise
+
   // Enables the serial debug console (see serialdbg.h). Must be called before run(), and only
   // when COM1 is left unattached -- they share the same pins.
   void enableDebugConsole()            { m_debugConsoleRequested = true; }
@@ -377,7 +387,8 @@ private:
   void init();
   void reset();
 
-  void tick();
+  // housekeeping after n instructions: devices, interrupts (see runTask)
+  void tick(int n);
 
   bool egaPixelOffset(int x, int y, uint32_t * off, uint8_t * mask);
   bool loadEGABios();
@@ -412,6 +423,10 @@ private:
   static void writeVideoMemory16(void * context, int address, uint16_t value);
   static uint8_t readVideoMemory8(void * context, int address);
   static uint16_t readVideoMemory16(void * context, int address);
+  static void writeVideoMemory8Impl(void * context, int address, uint8_t value);
+  static void writeVideoMemory16Impl(void * context, int address, uint16_t value);
+  static uint8_t readVideoMemory8Impl(void * context, int address);
+  static uint16_t readVideoMemory16Impl(void * context, int address);
 
   static bool interrupt(void * context, int num);
   static bool interruptHandler(void * context, int num);
@@ -486,7 +501,9 @@ private:
 
   TaskHandle_t             m_taskHandle;
 
-  uint32_t                 m_ticksCounter;
+  uint32_t                 m_ticksCounter;       // instructions executed
+  int                      m_pitCountdown;       // instructions until the next PIT/8042/DAC poll
+  int                      m_pollCountdown;      // instructions until the next debug console poll
 
   // CGA
   uint8_t                  m_CGA6845SelectRegister;

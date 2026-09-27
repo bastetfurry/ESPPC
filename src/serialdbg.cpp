@@ -568,6 +568,7 @@ void SerialDebug::help()
   write("  t                 show the trace so far;  t off  stop it and free the buffer\r\n");
   write("  c [s]             free CPU time on the video core, measured over s seconds (default 2)\r\n");
   write("  a                 benchmark the OPL2 synthesiser: all nine channels, one second of samples\r\n");
+  write("  m on|off          video memory statistics: count and time the guest's accesses; m  report\r\n");
   write("  s [n]             single step n instructions, then show registers\r\n");
   write("  g                 resume, back to the screen\r\n");
   write("  q                 resume and detach completely\r\n");
@@ -1383,6 +1384,52 @@ void SerialDebug::cmdCoreLoad(char const * args)
 }
 
 
+// Video memory statistics: 'm on' zeroes and starts counting, 'g' lets the guest run, 'm' reports
+// how many instructions it executed, how many video memory accesses it made and what share of the
+// emulator core's cycles went into the video memory handlers (see Machine::s_vmStats).
+void SerialDebug::cmdVideoStats(char const * args)
+{
+  static uint32_t startTicks;
+  static int64_t  startTime;
+
+  if (strncmp(args, "on", 2) == 0) {
+    Machine::s_vmReads  = 0;
+    Machine::s_vmWrites = 0;
+    Machine::s_vmCycles = 0;
+    Machine::s_stepCycles = 0;
+    Machine::s_tickCycles = 0;
+    startTicks          = m_machine->ticksCounter();
+    startTime           = esp_timer_get_time();
+    Machine::s_vmStats  = true;
+    write("video memory statistics on; 'g' to run, then 'm' to report\r\n");
+    return;
+  }
+  if (strncmp(args, "off", 3) == 0) {
+    Machine::s_vmStats = false;
+    write("video memory statistics off\r\n");
+    return;
+  }
+  // the monitor itself stops the guest, so this is guest running time plus the monitor's; fine
+  // for shares and rates when the guest ran for some seconds
+  double   secs   = (esp_timer_get_time() - startTime) / 1e6;
+  uint32_t instr  = m_machine->ticksCounter() - startTicks;
+  double   cycles = secs * ESP.getCpuFreqMHz() * 1e6;
+  writeFmt("%s, %.1f s: %u instructions (%.0f k/s), %u video reads (%.0f k/s), %u writes (%.0f k/s)\r\n",
+           Machine::s_vmStats ? "counting" : "stopped", secs, (unsigned) instr, instr / secs / 1000,
+           (unsigned) Machine::s_vmReads, Machine::s_vmReads / secs / 1000,
+           (unsigned) Machine::s_vmWrites, Machine::s_vmWrites / secs / 1000);
+  uint32_t n = Machine::s_vmReads + Machine::s_vmWrites;
+  writeFmt("  %.1f%% of the emulator core's cycles in the video handlers, %u cycles per access\r\n",
+           cycles > 0 ? Machine::s_vmCycles * 100.0 / cycles : 0.0,
+           n ? (unsigned)(Machine::s_vmCycles / n) : 0u);
+  writeFmt("  per instruction: %u cycles in step(), %u in tick(); %.1f%% of the core in step, %.1f%% in tick\r\n",
+           instr ? (unsigned)(Machine::s_stepCycles / instr) : 0u,
+           instr ? (unsigned)(Machine::s_tickCycles / instr) : 0u,
+           cycles > 0 ? Machine::s_stepCycles * 100.0 / cycles : 0.0,
+           cycles > 0 ? Machine::s_tickCycles * 100.0 / cycles : 0.0);
+}
+
+
 // OPL2 cost on this CPU: all nine channels keyed on with a two operator FM voice and sustained, the
 // heaviest thing an AdLib does, generated at 16384 Hz for one second's worth of samples.
 void SerialDebug::cmdOPLBench()
@@ -1505,6 +1552,7 @@ void SerialDebug::runMonitor()
       case 't': cmdPortTrace(p); break;
       case 'c': cmdCoreLoad(p);  break;
       case 'a': cmdOPLBench();   break;
+      case 'm': cmdVideoStats(p); break;
       case '?': help();          break;
 
       case 's':
