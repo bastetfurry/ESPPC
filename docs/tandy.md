@@ -57,7 +57,8 @@ Tandy branch in the `write/readVideoMemory8/16` callbacks. B8000h-BFFFFh then ma
 
 - The renderer only ever reads internal RAM, never PSRAM, so the core affinity and cache
   problems of guest RAM do not apply.
-- It costs no extra memory, because the CGA/Hercules buffer is exactly 64 KB.
+- It would need the CGA buffer back at 64 KB: since Hercules was removed it is 32 KB, covering
+  B8000-BFFFF only.
 - It needs 640 KB or less, since the machine has to have that memory top. The Tandy 1000 never had
   more.
 - Pages 0-3 (80000h-8FFFFh) stay plain PSRAM. A game that points the **CRT** page there gets a
