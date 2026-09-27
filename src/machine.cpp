@@ -143,30 +143,6 @@ Machine::~Machine()
 }
 
 
-// A real EGA carries its own BIOS ROM at C000:0000, and a good deal of software decides whether
-// an EGA is fitted by looking for the 0x55AA option ROM signature there rather than by asking
-// INT 10h. This emulator implements INT 10h inside the system BIOS, so there is no video BIOS
-// code to put at C000 -- but the signature has to be there for that test to pass. The entry
-// point is a far return, so anything that does call into it gets control straight back, and the
-// block is checksummed the way a real option ROM is in case something verifies it.
-static void installVideoROMStub(uint8_t * memory)
-{
-  constexpr uint32_t ADDR = 0xc0000;
-  constexpr int      SIZE = 512;          // one block, the smallest a real option ROM can be
-
-  memset(memory + ADDR, 0, SIZE);
-  memory[ADDR + 0] = 0x55;
-  memory[ADDR + 1] = 0xaa;
-  memory[ADDR + 2] = SIZE / 512;
-  memory[ADDR + 3] = 0xcb;                // retf
-
-  uint8_t sum = 0;
-  for (int i = 0; i < SIZE - 1; ++i)
-    sum += memory[ADDR + i];
-  memory[ADDR + SIZE - 1] = (uint8_t)(0u - sum);
-}
-
-
 void Machine::init()
 {
   srand((uint32_t)time(NULL));
@@ -209,8 +185,9 @@ void Machine::init()
       m_egaBiosLoaded = false;
     }
   }
-  if (!m_egaBiosLoaded)
-    installVideoROMStub(s_memory);
+  // Without it C000 stays empty, as on a real CGA machine. A signature stub used to sit there so
+  // that software looking for an EGA ROM would find one, but on a CGA machine that is exactly the
+  // wrong answer: the software then believes in an EGA that is not there.
 
   m_soundGen.play(true);
   m_soundGen.attach(&m_sinWaveGen);
@@ -548,8 +525,15 @@ bool Machine::loadEGABios()
 // "mov word [0x40], imm16", and the immediate is the handler's offset within the ROM.
 void Machine::prepareVideoROM()
 {
-  if (!m_egaBiosLoaded)
+  if (!m_egaBiosLoaded) {
+    // CGA/Hercules machine. The data area POST has just copied out of the BIOS carries the EGA's
+    // answers (the ROM rewrites them itself when it is fitted), so give a CGA machine the ones a
+    // real CGA machine has: equipment bits 5-4 = 10, 80x25 colour, and nothing in the EGA bytes.
+    uint8_t * bda = s_memory + 0x400;
+    *(uint16_t*)(bda + 0x10) = (*(uint16_t*)(bda + 0x10) & ~0x0030) | 0x0020;
+    memset(bda + 0x87, 0, 4);       // 40:87..8A, EGA info, switches, feature, display combination
     return;
+  }
 
   uint16_t ourIP = *(uint16_t*)(s_memory + 0x10 * 4);
   uint16_t ourCS = *(uint16_t*)(s_memory + 0x10 * 4 + 2);
@@ -1343,34 +1327,43 @@ void Machine::writePort(void * context, int address, uint8_t value)
         m->m_COM2.write(address, value);
       break;
 
+    // EGA ports 0x3c0..0x3cf only exist when the EGA is fitted. On a CGA/Hercules machine nothing
+    // decodes them: writes go nowhere and reads float to 0xff (see readPort()).
+    //
     // EGA - Attribute Controller. Index and data share 0x3c0 through a flip flop, but the card
     // decodes 0x3c1 for the data half too, and IBM's own EGA BIOS relies on it: its register
     // write helper does "out dx,al / inc dx / out dx,al", so every attribute value it programs
     // arrives at 0x3c1. Dropping those writes left the attribute controller unprogrammed.
     case 0x3c0:
     case 0x3c1:
-      m->setEGAAttributeReg(value);
+      if (m->m_egaBiosLoaded)
+        m->setEGAAttributeReg(value);
       break;
 
     // EGA - Miscellaneous Output Register
     case 0x3c2:
-      m->m_EGAMiscOutput = value;
+      if (m->m_egaBiosLoaded)
+        m->m_EGAMiscOutput = value;
       break;
 
     // EGA - Sequencer
     case 0x3c4:
-      m->m_EGA.selectSequencer(value);
+      if (m->m_egaBiosLoaded)
+        m->m_EGA.selectSequencer(value);
       break;
     case 0x3c5:
-      m->m_EGA.writeSequencer(value);
+      if (m->m_egaBiosLoaded)
+        m->m_EGA.writeSequencer(value);
       break;
 
     // EGA - Graphics Controller
     case 0x3ce:
-      m->m_EGA.selectGraphics(value);
+      if (m->m_egaBiosLoaded)
+        m->m_EGA.selectGraphics(value);
       break;
     case 0x3cf:
-      m->m_EGA.writeGraphics(value);
+      if (m->m_egaBiosLoaded)
+        m->m_EGA.writeGraphics(value);
       break;
 
     // CGA - CRT 6845 - register selection register
@@ -1533,10 +1526,14 @@ uint8_t Machine::readPort(void * context, int address)
 
     // EGA - Attribute Controller readback
     case 0x3c1:
+      if (!m->m_egaBiosLoaded)
+        return 0xff;    // no EGA fitted, nothing drives the bus
       return m->m_EGAACIndex < 16 ? m->m_EGAACPalette[m->m_EGAACIndex] : 0x00;
 
     // EGA - Miscellaneous Output Register (readable at 0x3cc)
     case 0x3cc:
+      if (!m->m_egaBiosLoaded)
+        return 0xff;    // no EGA fitted, nothing drives the bus
       return m->m_EGAMiscOutput;
 
     // EGA - Input Status Register 0.
@@ -1553,6 +1550,9 @@ uint8_t Machine::readPort(void * context, int address)
     // reports; see the note there before changing either.
     case 0x3c2:
     {
+      if (!m->m_egaBiosLoaded)
+        return 0xff;    // no EGA fitted, nothing drives the bus
+
       int sw = (m->m_EGAMiscOutput >> 2) & 0x03;
       bool on = (m->m_EGASwitches >> sw) & 1;
       return (on ? 0x10 : 0x00) | 0x0f;
@@ -1560,10 +1560,14 @@ uint8_t Machine::readPort(void * context, int address)
 
     // EGA - Sequencer
     case 0x3c5:
+      if (!m->m_egaBiosLoaded)
+        return 0xff;    // no EGA fitted, nothing drives the bus
       return m->m_EGA.readSequencer();
 
     // EGA - Graphics Controller
     case 0x3cf:
+      if (!m->m_egaBiosLoaded)
+        return 0xff;    // no EGA fitted, nothing drives the bus
       return m->m_EGA.readGraphics();
 
     // CGA - Color Select register

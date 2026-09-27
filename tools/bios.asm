@@ -724,6 +724,22 @@ int10:
   je   int10_write_char_tty
   cmp  ah, 0x0f ; Get video mode
   je   int10_get_vm
+  ; AH=10h..12h are EGA calls. A CGA BIOS does not implement them and returns with every register
+  ; as it was, and software relies on exactly that to tell the two apart: EGA.SYS, games and
+  ; QBasic all ask AH=12h BL=10h and take BL coming back unchanged as "no EGA". Answering them on
+  ; a CGA/Hercules machine made it half an EGA -- detected as one, then driven through EGA palette
+  ; registers that do nothing to a CGA mode. So they are only answered when an EGA is fitted.
+  cmp  ah, 0x10
+  jb   int10_not_ega_call
+  cmp  ah, 0x12
+  ja   int10_not_ega_call
+  push ax
+  mov  ah, 0x0e ; is an EGA fitted? AL = 1 yes, 0 no
+  emu_helper
+  test al, al
+  pop  ax
+  jz   int10_no_ega
+int10_not_ega_call:
   cmp  ah, 0x10 ; Get/Set Palette registers
   je   int10_palette
   cmp  ax, 0x1123 ; Set int43 to 8x8 double dot font
@@ -753,6 +769,9 @@ int10:
   ; way, but nothing dispatches to it.
 
   emu_video_handler
+  iret
+
+int10_no_ega:
   iret
 
 
@@ -2734,7 +2753,14 @@ int10_get_state_info_pages_done:
 ; ************************* INT 11h - get equipment list
 
 int11:
-  mov  ax, [cs:equip]
+  ; From the BIOS data area, as a real BIOS does, not from the copy in ROM: the emulator adjusts
+  ; the display bits there for the fitted adapter (see Machine::prepareVideoROM), and DOS MODE
+  ; changes them when switching between colour and mono.
+  push ds
+  mov  ax, 0x40
+  mov  ds, ax
+  mov  ax, [equip-bios_data]
+  pop  ds
   iret
 
 
@@ -6477,7 +6503,8 @@ lpt4addr         dw  0                   ; 40:0e
 equip            dw  0b0001010001000101  ; 40:10h
 ;                      5432109876543210
 ; bits 5-4 = 00: EGA or later, the display type comes from the video BIOS rather than from here.
-; It was 10 (80x25 colour), which is how a CGA machine answers INT 11h.
+; Machine::prepareVideoROM() turns them into 10 (80x25 colour) on a CGA/Hercules machine, together
+; with clearing the EGA bytes at 40:87..8A, so only a machine with the EGA ROM keeps these values.
 
                  db  0
 memsize          dw  MEMSIZE

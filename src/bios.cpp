@@ -269,6 +269,15 @@ void BIOS::helpersEntry()
       m_machine->prepareVideoROM();
       break;
 
+    // AH = 0x0E, is an EGA fitted?
+    //   returns AL = 1 on a machine with the EGA BIOS ROM, AL = 0 on a CGA/Hercules machine
+    //
+    // INT 10h AH=10h..12h are EGA calls. A CGA BIOS leaves the registers alone for them, and
+    // that is how software tells the two apart, so bios.asm only answers them when this says so.
+    case 0x0e:
+      i8086::setAL(m_machine->egaBiosInstalled() ? 1 : 0);
+      break;
+
     // AH = 0x0B, video mode hook, called from int10_set_vm before it programs the CGA registers.
     //   AL = requested BIOS video mode
     //   returns AL = 1 when the emulator has set the mode up itself and the BIOS must skip its
@@ -283,9 +292,13 @@ void BIOS::helpersEntry()
 
       // On the EGA path the text modes belong to the EGA too: the glyphs live in plane 2 so the
       // guest can redefine them, which the CGA text path cannot do.
-      bool egaText = m_machine->egaBiosInstalled() && mode <= 0x03;
+      //
+      // Without the EGA ROM there is no EGA at all, so its graphics modes are refused too and
+      // the request falls through to the CGA path, as it would on a real CGA.
+      bool ega     = m_machine->egaBiosInstalled();
+      bool egaText = ega && mode <= 0x03;
 
-      if ((egaText || (mode >= 0x0d && mode <= 0x10)) && m_machine->setEGAMode(mode)) {
+      if (ega && (egaText || (mode >= 0x0d && mode <= 0x10)) && m_machine->setEGAMode(mode)) {
 
         int columns  = (mode == 0x0d || (egaText && mode <= 0x01)) ? 40 : 80;
         int charH    = egaText ? 16 : ((mode >= 0x0f) ? 14 : 8);
