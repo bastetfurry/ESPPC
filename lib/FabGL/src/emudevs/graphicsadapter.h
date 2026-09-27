@@ -266,6 +266,7 @@ private:
   uint8_t             m_cursorEnd;    // cursor shape scanline end
   bool                m_cursorVisible;
   uint8_t *           m_cursorGlyph;
+  bool                m_fontInFlash;  // m_font.data is the original, not a RAM copy (see setFont())
   bool                m_bit7blink;
 
   // PC graphics parameters

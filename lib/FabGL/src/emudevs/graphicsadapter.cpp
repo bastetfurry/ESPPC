@@ -267,6 +267,7 @@ GraphicsAdapter::GraphicsAdapter()
     m_cursorEnd(0),
     m_cursorVisible(false),
     m_cursorGlyph(nullptr),
+    m_fontInFlash(false),
     m_bit7blink(true),
     m_PCGraphicsBackgroundColorIndex(0),
     m_PCGraphicsForegroundColorIndex(15),
@@ -674,8 +675,10 @@ void GraphicsAdapter::setVideoBuffer(void const * videoBuffer)
 void GraphicsAdapter::cleanupFont()
 {
   if (m_font.data) {
-    heap_caps_free((void*)m_font.data);
-    m_font.data = nullptr;
+    if (!m_fontInFlash)
+      heap_caps_free((void*)m_font.data);
+    m_font.data  = nullptr;
+    m_fontInFlash = false;
   }
 }
 
@@ -687,8 +690,17 @@ void GraphicsAdapter::setFont(FontInfo const * font)
     m_font = *font;
     // copy font data into internal RAM
     auto size = 256 * ((m_font.width + 7) / 8) * m_font.height;
-    m_font.data = (uint8_t const *) heap_caps_malloc(size, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
-    memcpy((void*)m_font.data, font->data, size);
+    auto copy = (uint8_t *) heap_caps_malloc(size, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    if (copy) {
+      memcpy(copy, font->data, size);
+      m_font.data = copy;
+    } else {
+      // PCEmulator: out of internal RAM. Render from the font where it is (flash): slower, but the
+      // alternative was a memcpy to address 0 and a reboot. cleanupFont() must not free it then.
+      printf("GraphicsAdapter: no internal RAM for the font copy, using it from flash\n");
+      m_font.data = font->data;
+      m_fontInFlash = true;
+    }
   }
 }
 
