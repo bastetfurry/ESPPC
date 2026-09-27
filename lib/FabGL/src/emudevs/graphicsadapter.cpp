@@ -57,6 +57,32 @@ static const RGB222 CGAPalette[16] = {
 
 
 
+// PCEmulator: CGA composite artifact colours, the canonical ones from the Wikipedia article's
+// "CGA composite artifact color generation" pictures (read off the images pixel by pixel). Indexed by
+// a nibble of video memory, the leftmost dot or pixel in the high bits:
+//   [0] 640x200 dots, white foreground
+//   [1] 320x200 pixel pairs, palette 0 high intensity, black background
+//   [2] 320x200 pixel pairs, palette 1 high intensity, black background
+// The output has two bits per channel, so each is rounded to the nearest RGB222 when the table is
+// built.
+static const uint32_t CGACompositeColors[3][16] = {
+  { 0x000000, 0x006e31, 0x3109ff, 0x008aff, 0xa70031, 0x767676, 0xec11ff, 0xbb92ff,
+    0x315a00, 0x00db00, 0x767676, 0x45f7bb, 0xec6300, 0xbbe400, 0xff7fbb, 0xffffff },
+  { 0x000000, 0x0071d1, 0x0019ac, 0x0071f1, 0x954f00, 0x6dd441, 0xa27b1c, 0x74d461,
+    0xb82100, 0x90a69c, 0xc54e76, 0x97a6bb, 0xf36800, 0xcbed26, 0xff9501, 0xd2ed46 },
+  { 0x000000, 0x009aff, 0x0042ff, 0x0090ff, 0xaa4c00, 0x84fad2, 0xb9a2ad, 0x96f0ff,
+    0xcd1f00, 0xa7cdff, 0xdc75ff, 0xb9c3ff, 0xff5c00, 0xedffcc, 0xffb2a6, 0xffffff },
+};
+
+
+static RGB222 rgb888ToRGB222(uint32_t c)
+{
+  return RGB222(((c >> 16) & 0xff) * 3 / 255 + ((((c >> 16) & 0xff) * 3 % 255) > 127),
+                ((c >>  8) & 0xff) * 3 / 255 + ((((c >>  8) & 0xff) * 3 % 255) > 127),
+                ( c        & 0xff) * 3 / 255 + ((( c        & 0xff) * 3 % 255) > 127));
+}
+
+
 static const RGB222 CGAGraphics4ColorsPalette[6][4] = {
   // low intensity PC graphics 4 colors palette
   {
@@ -200,6 +226,10 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     // Emulation::PC_Graphics_Plantronics_640x200_4Colors
     { false,    nullptr,  0,  0, 1,  drawScanline_Plantronics_640x200_4Colors,  VGA_640x240_60Hz, 640, 200 },
 
+    // Emulation::PC_Graphics_CGA_Composite. A byte becomes four output pixels through one 32 bit
+    // table entry, exactly what the CGA 320x200 renderer does, so it is reused as it is.
+    { false,    nullptr,  0,  0, 1, drawScanline_PC_Graphics_320x200_4Colors, QVGA_320x240_60Hz, 320, 200 },
+
   };
 
   if (emulation != Emulation::None) {
@@ -248,7 +278,8 @@ GraphicsAdapter::GraphicsAdapter()
     m_egaCharHeight(16),
     m_egaTextColumns(80),
     m_egaPal2(nullptr),
-    m_tandyMask(0x0f)
+    m_tandyMask(0x0f),
+    m_compositeTable(0)
 {
   for (int i = 0; i < 16; ++i)
     m_tandyPalette[i] = i;
@@ -430,6 +461,22 @@ void GraphicsAdapter::setupLUT()
       }
       break;
 
+    // PCEmulator: composite. Each nibble is one colour two output pixels wide; the high nibble is
+    // the left one and goes to bytes 2 and 3 of the word (see the CGA 320x200 case).
+    case Emulation::PC_Graphics_CGA_Composite:
+    {
+      if (!m_rawLUT)
+        m_rawLUT = (uint8_t*) heap_caps_malloc(256 * 4, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+      uint8_t raw[16];
+      for (int i = 0; i < 16; ++i)
+        raw[i] = m_VGADCtrl.createRawPixel(rgb888ToRGB222(CGACompositeColors[m_compositeTable][i]));
+      for (int i = 0; i < 256; ++i) {
+        uint32_t hi = raw[i >> 4], lo = raw[i & 15];
+        ((uint32_t*)m_rawLUT)[i] = lo | (lo << 8) | (hi << 16) | (hi << 24);
+      }
+      break;
+    }
+
     case Emulation::PC_Graphics_Tandy_160x200_16Colors:
       // one source byte -> four raw pixels, each source pixel twice: output pixels 0 and 1 (the
       // high nibble) land in bytes 2 and 3, pixels 2 and 3 in bytes 0 and 1
@@ -554,6 +601,17 @@ void GraphicsAdapter::setPCGraphicsPaletteInUse(int paletteIndex)
 {
   m_PCGraphicsPaletteInUse = paletteIndex;
   setupLUT();
+}
+
+
+void GraphicsAdapter::setCompositeTable(int table)
+{
+  table = table < 0 ? 0 : (table > 2 ? 2 : table);
+  if (table == m_compositeTable)
+    return;
+  m_compositeTable = table;
+  if (m_emulation == Emulation::PC_Graphics_CGA_Composite)
+    setupLUT();
 }
 
 

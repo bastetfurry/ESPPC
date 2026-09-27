@@ -829,6 +829,20 @@ void SerialDebug::cmdScreenshot()
     return;
   }
 
+  // composite: the CGA memory as it is, plus which artifact table the adapter uses (0 = 640x200,
+  // 1/2 = 320x200 palette 0/1)
+  if (fb && em == GraphicsAdapter::Emulation::PC_Graphics_CGA_Composite) {
+    int table = (m_machine->cgaModeReg() & 0x10) ? 0 : ((m_machine->cgaColorReg() & 0x20) ? 2 : 1);
+    writeFmt("SCREENSHOT fmt=comp w=320 h=200 stride=80 bytes=16384 pal=%02x\r\n", table);
+    for (uint32_t i = 0; i < 16384; i += 256) {
+      Serial.write(fb + i, 256);
+      Serial.flush();
+      vTaskDelay(1);
+    }
+    write("\r\nSCREENSHOTEND\r\n");
+    return;
+  }
+
   write("text mode -- attach the screen mirror instead\r\n");
 }
 

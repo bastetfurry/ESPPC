@@ -422,7 +422,7 @@ static void drawSetupDetails(MachineConfItem * c)
   ui.text(49, 11, "Memory", TUI_LABEL);
   ui.textf(61, 11, TUI_VALUE, "%d KB", c->ramSizeKB);
   ui.text(49, 12, "Video", TUI_LABEL);
-  ui.text(61, 12, VIDEO[c->videoAdapter % 3], TUI_VALUE);
+  ui.text(61, 12, (c->videoAdapter == 0 && c->composite) ? "CGA, composite" : VIDEO[c->videoAdapter % 3], TUI_VALUE);
   ui.text(49, 13, "Debug Cons.", TUI_LABEL);
   ui.text(61, 13, c->debugConsole ? "Enabled" : "Disabled", TUI_VALUE);
   ui.text(49, 14, "USB Serial", TUI_LABEL);
@@ -618,8 +618,12 @@ void sysReqCallback()
   }
   drawGuestBackdrop();
 
-  enum { M_FDA, M_FDB, M_RESTART_GUEST, M_RESTART_HOST, M_RETURN, M_COUNT };
-  static char const * LABELS[M_COUNT] = { "Floppy A", "Floppy B", "Restart Guest", "Restart Host", "Return to Guest" };
+  enum { M_FDA, M_FDB, M_MONITOR, M_RESTART_GUEST, M_RESTART_HOST, M_RETURN, M_COUNT };
+  static char const * LABELS[M_COUNT] = { "Floppy A", "Floppy B", "Monitor", "Restart Guest", "Restart Host", "Return to Guest" };
+
+  // RGBI or composite colour monitor, switchable here on the CGA machine; the row stays empty
+  // on the others
+  bool const canMonitor = machine->compositeCapable();
 
   constexpr int W = 50, H = 13;
   constexpr int X = (80 - W) / 2, Y = (25 - H) / 2;
@@ -636,7 +640,14 @@ void sysReqCallback()
       uint8_t a = (i == sel) ? TUI_DIALOG_SEL : TUI_DIALOG;
       int row = Y + 2 + i + (i >= M_RESTART_GUEST ? 1 : 0);    // a gap after the drives
       ui.text(X + 2, row, "", a, W - 4);
+      if (i == M_MONITOR && !canMonitor)
+        continue;
       ui.text(X + 4, row, LABELS[i], a);
+      if (i == M_MONITOR) {
+        ui.text(X + 16, row, "[", a);
+        ui.text(X + 17, row, machine->composite() ? "Composite" : "RGBI", a);
+        ui.text(X + W - 4, row, "]", a);
+      }
       if (i <= M_FDB) {
         char const * fn = machine->diskFilename(i);
         char const * s  = (fn && *fn) ? strrchr(fn, '/') : nullptr;
@@ -652,8 +663,16 @@ void sysReqCallback()
     TextUI::Key k;
     ui.getKey(&k);
     switch (k.vk) {
-      case VirtualKey::VK_UP:   case VirtualKey::VK_KP_UP:   sel = (sel + M_COUNT - 1) % M_COUNT; break;
-      case VirtualKey::VK_DOWN: case VirtualKey::VK_KP_DOWN: sel = (sel + 1) % M_COUNT; break;
+      case VirtualKey::VK_UP:   case VirtualKey::VK_KP_UP:
+        sel = (sel + M_COUNT - 1) % M_COUNT;
+        if (sel == M_MONITOR && !canMonitor)
+          sel = (sel + M_COUNT - 1) % M_COUNT;
+        break;
+      case VirtualKey::VK_DOWN: case VirtualKey::VK_KP_DOWN:
+        sel = (sel + 1) % M_COUNT;
+        if (sel == M_MONITOR && !canMonitor)
+          sel = (sel + 1) % M_COUNT;
+        break;
       case VirtualKey::VK_ESCAPE:
         done = true;
         break;
@@ -662,6 +681,11 @@ void sysReqCallback()
           case M_FDA:
           case M_FDB:
             sysReqFloppy(sel);
+            break;
+          // takes effect when the menu closes (see below); for this session only, the machine
+          // configuration keeps its own setting
+          case M_MONITOR:
+            machine->setComposite(!machine->composite());
             break;
           case M_RESTART_GUEST:
             if (ui.message("Restart Guest", "Restart the guest machine (Y/N)?", "No;Yes") == 1) {
@@ -688,6 +712,9 @@ void sysReqCallback()
   // The menu had the adapter. TextUI puts the mode back, but let the CGA set itself up in full on
   // its next register write instead of relying on that alone.
   machine->invalidateCGAMode();
+  // and apply a monitor change at once, rather than on the guest's next register write, which a
+  // game that has set its mode may never make
+  machine->refreshCGAGraphics();
 }
 
 
@@ -929,6 +956,10 @@ void setup()
   if (conf->tandySound && conf->videoAdapter != 2) {
     printf("Sound: SN76496 at C0h\n");
     machine->setTandySound(true);
+  }
+  if (conf->composite && conf->videoAdapter == 0) {
+    printf("Monitor: composite colour\n");
+    machine->setComposite(true);
   }
   if (conf->tandyDAC && (conf->tandySound || conf->videoAdapter == 2)) {
     printf("Sound: Tandy SL/TL DAC through INT 1Ah\n");

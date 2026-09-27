@@ -123,6 +123,14 @@ public:
 
     // Plantronics 640x200, 4 Colors: 1 bit of each pixel in each plane, through the CGA palette.
     PC_Graphics_Plantronics_640x200_4Colors,
+
+    // --- PCEmulator local addition: CGA on a composite colour monitor ---
+    //
+    // The CGA graphics modes as an NTSC monitor shows them with the colour burst on: every nibble
+    // of video memory (four dots of 640x200, or two pixels of 320x200) becomes one artifact colour,
+    // so the picture is 160x200 in 16 colours. Same memory layout as the CGA modes; the colour
+    // table is picked with setCompositeTable().
+    PC_Graphics_CGA_Composite,
   };
 
 
@@ -166,6 +174,10 @@ public:
   // PCEmulator: the Tandy palette registers (4 bit IRGB, an index into the 16 CGA colours) and the
   // palette mask the pixel value is ANDed with first. Takes effect at once in a Tandy mode.
   void setTandyPalette(uint8_t const * palette16, uint8_t mask);
+
+  // PCEmulator: which artifact colours the composite mode shows: 0 = from 640x200, 1 = from
+  // 320x200 palette 0, 2 = from 320x200 palette 1
+  void setCompositeTable(int table);
   int getGraphWidth()                                      { return m_VGADCtrl.getViewPortWidth(); }
   int getGraphHeight()                                     { return m_VGADCtrl.getViewPortHeight(); }
 
@@ -264,6 +276,9 @@ private:
   // --- PCEmulator: Tandy mode state ---
   uint8_t             m_tandyPalette[16];
   uint8_t             m_tandyMask;
+
+  // --- PCEmulator: composite ---
+  int8_t              m_compositeTable;
 
 };
 

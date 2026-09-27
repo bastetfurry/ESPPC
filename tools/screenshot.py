@@ -142,6 +142,33 @@ def decode_cplus(data, w, h, fmt, colreg, modereg):
     return rows
 
 
+# CGA composite artifact colours, as in GraphicsAdapter (the Wikipedia article's pictures):
+# 640x200 dots, 320x200 palette 0, 320x200 palette 1; indexed by a nibble, leftmost dot high
+COMPOSITE = [
+    [0x000000, 0x006e31, 0x3109ff, 0x008aff, 0xa70031, 0x767676, 0xec11ff, 0xbb92ff,
+     0x315a00, 0x00db00, 0x767676, 0x45f7bb, 0xec6300, 0xbbe400, 0xff7fbb, 0xffffff],
+    [0x000000, 0x0071d1, 0x0019ac, 0x0071f1, 0x954f00, 0x6dd441, 0xa27b1c, 0x74d461,
+     0xb82100, 0x90a69c, 0xc54e76, 0x97a6bb, 0xf36800, 0xcbed26, 0xff9501, 0xd2ed46],
+    [0x000000, 0x009aff, 0x0042ff, 0x0090ff, 0xaa4c00, 0x84fad2, 0xb9a2ad, 0x96f0ff,
+     0xcd1f00, 0xa7cdff, 0xdc75ff, 0xb9c3ff, 0xff5c00, 0xedffcc, 0xffb2a6, 0xffffff],
+]
+
+
+def decode_composite(data, table):
+    # every nibble of the CGA memory is one colour, two pixels wide at 320
+    rows = []
+    for y in range(200):
+        row = bytearray()
+        base = (y & 1) * 0x2000 + (y >> 1) * 80
+        for x in range(80):
+            b = data[base + x]
+            for nib in (b >> 4, b & 15):
+                c = COMPOSITE[table][nib]
+                row += bytes((c >> 16, (c >> 8) & 255, c & 255)) * 2
+        rows.append(row)
+    return rows
+
+
 def decode_hgc(data, w, h):
     rows = []
     for y in range(h):
@@ -210,6 +237,8 @@ def main():
         rows = decode_ega(data, w, h, stride, pal)
     elif fmt == 'hgc':
         rows = decode_hgc(data, w, h)
+    elif fmt == 'comp':
+        rows = decode_composite(data, int(palhex[0:2], 16))
     elif fmt.startswith('cplus'):
         rows = decode_cplus(data, w, h, fmt, int(palhex[0:2], 16), int(palhex[2:4], 16))
     elif fmt.startswith('tandy'):

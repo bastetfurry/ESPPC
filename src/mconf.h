@@ -130,6 +130,7 @@ struct MachineConfItem {
   char            * egaRom;                   // "egarom": path to the EGA BIOS option ROM
   bool              tandySound;               // "tandysound": SN76496 at C0h without the Tandy video
   bool              tandyDAC;                 // "tandydac": the SL/TL DAC, needs the sound chip
+  bool              composite;                // "composite": a composite colour monitor on the CGA
 
   MachineConfItem()
     : next(nullptr),
@@ -146,7 +147,8 @@ struct MachineConfItem {
       videoAdapter(0),
       egaRom(nullptr),
       tandySound(false),
-      tandyDAC(false)
+      tandyDAC(false),
+      composite(false)
   {
   }
 
@@ -190,6 +192,13 @@ struct MachineConfItem {
   void setTandyDAC(char const * value)          {
     tandyDAC = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
                          value[0] == 't' || value[0] == 'T');
+  }
+
+  // "composite 1": the CGA machine drives a composite colour monitor, so graphics modes with the
+  // colour burst on show NTSC artifact colours
+  void setComposite(char const * value)         {
+    composite = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
+                          value[0] == 't' || value[0] == 'T');
   }
 
   // "enabledebug 1" turns the serial debug console on. It is off unless asked for, because it

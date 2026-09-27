@@ -113,6 +113,7 @@ Machine::Machine() :
     m_baseDir(nullptr),
     m_ramSizeKB(640),
     m_CGAModeCurrentValid(false),
+    m_composite(false),
     m_plantronics(0),
     m_plantronicsSwap(false),
     m_tandy(false),
@@ -998,6 +999,18 @@ bool Machine::tandyDACIrq()
 }
 
 
+void Machine::refreshCGAGraphics()
+{
+  auto em = m_graphicsAdapter.emulation();
+  if (em == GraphicsAdapter::Emulation::PC_Graphics_320x200_4Colors ||
+      em == GraphicsAdapter::Emulation::PC_Graphics_640x200_2Colors ||
+      em == GraphicsAdapter::Emulation::PC_Graphics_CGA_Composite) {
+    invalidateCGAMode();
+    setCGAMode();
+  }
+}
+
+
 // The ColorPlus swaps its planes for the CPU (B8000 <-> BC000) only while one of its modes is on
 // and the CGA is in a graphics mode. Worked out here, when those change, so the video memory
 // callbacks only have to test one flag.
@@ -1181,6 +1194,19 @@ void Machine::setCGAMode()
       m_graphicsAdapter.setPCGraphicsPaletteInUse(paletteIndex);
       m_graphicsAdapter.setPCGraphicsBackgroundColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     }
+    m_graphicsAdapter.enableVideo(true);
+
+  } else if (m_composite && !m_tandy && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS) &&
+             (m_CGAModeReg & CGA_MODECONTROLREG_COLOR) == 0) {
+
+    // Composite colour monitor with the colour burst on (mode control bit 2 clear): artifact
+    // colours. 640x200 has its own table; 320x200 uses palette 0 or 1 by the colour select
+    // register. With the burst off (BIOS modes 5 and 6) the RGB picture below is kept.
+    m_frameBuffer = cga;
+    m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
+    m_graphicsAdapter.setCompositeTable((m_CGAModeReg & CGA_MODECONTROLREG_GRAPH640) ? 0
+                                        : ((m_CGAColorReg & CGA_COLORCONTROLREG_PALETTESEL) ? 2 : 1));
+    m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_CGA_Composite);
     m_graphicsAdapter.enableVideo(true);
 
   } else if ((m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPH640) == 0) {

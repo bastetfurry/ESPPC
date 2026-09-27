@@ -163,6 +163,17 @@ public:
   // Tandy 1000 video and sound on top of the CGA: the 16 colour modes 8 and 9, the video array
   // (palette) at 3DAh/3DEh, the page register at 3DFh, and the SN76496 at C0h. Must be called
   // before run().
+  // A composite colour monitor on the CGA: with the colour burst on, the graphics modes show NTSC
+  // artifact colours (160x200 in 16 colours) instead of their RGB picture. Must be called before
+  // run(); only the CGA machine uses it.
+  void setComposite(bool value)                { m_composite = value; }
+  bool composite() const                       { return m_composite; }
+  bool compositeCapable() const                { return !m_tandy && !m_egaBiosLoaded; }
+
+  // Sets the CGA graphics mode up again from the registers, if the adapter is showing one -- after
+  // the monitor type changed. Hercules, text and the other adapters are left alone.
+  void refreshCGAGraphics();
+
   void setTandy(bool value)                    { m_tandy = value; }
   bool tandy() const                           { return m_tandy; }
 
@@ -482,6 +493,7 @@ private:
   // Plantronics ColorPlus, port 3DDh (see writePortHW()): bit 4 320x200x16, bit 5 640x200x4,
   // bit 6 swap the planes for the CPU. m_plantronicsSwap is whether that swap is in effect now,
   // kept ready for the video memory callbacks.
+  bool                     m_composite;
   uint8_t                  m_plantronics;
   bool                     m_plantronicsSwap;
 
