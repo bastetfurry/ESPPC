@@ -1969,7 +1969,7 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
 
     // CGA - CRT 6845 - register selection register
     case 0x3d4:
-      m->m_CGA6845SelectRegister = value;
+      m->m_CGA6845SelectRegister = value & 0x1f;   // the index register has five bits
       break;
 
     // CGA - CRT 6845 - selected register write
@@ -2045,7 +2045,7 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
     // Hercules (HGC) - CRT 6845 - register selection register
     case 0x3b4:
       if (!m->m_tandy)
-        m->m_HGC6845SelectRegister = value;
+        m->m_HGC6845SelectRegister = value & 0x1f;
       break;
 
     // Hercules (HGC) - CRT 6845 - selected register write

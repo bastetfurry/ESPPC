@@ -481,7 +481,9 @@ private:
 
   // CGA
   uint8_t                  m_CGA6845SelectRegister;
-  uint8_t                  m_CGA6845[18];
+  // 32, not 18: the EGA's CRTC has registers up to 18h, and its BIOS programs all of them. With 18
+  // the writes to 12h-18h landed in the members below (the CGA offset, mode and colour registers).
+  uint8_t                  m_CGA6845[32];
   uint16_t                 m_CGAMemoryOffset;
   uint8_t                  m_CGAModeReg;
   uint8_t                  m_CGAColorReg;
@@ -537,7 +539,7 @@ private:
 
   // Hercules
   uint8_t                  m_HGC6845SelectRegister;
-  uint8_t                  m_HGC6845[18];
+  uint8_t                  m_HGC6845[32];
   uint16_t                 m_HGCMemoryOffset;
   uint8_t                  m_HGCModeReg;
   uint8_t                  m_HGCSwitchReg;
