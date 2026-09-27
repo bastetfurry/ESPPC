@@ -151,6 +151,11 @@ public:
   void setEGAPalette(uint8_t const * palette16);
   void setEGAStartAddress(uint32_t byteOffset)             { m_egaStart = byteOffset; }
 
+  // EGA line compare (CRTC 18h with bit 8 in 07h): the split screen. The scanlines after this one
+  // are drawn from address 0, whatever the start address; a value past the last line turns it off.
+  // Software keeps a status bar there while it page flips the part above.
+  void setEGALineCompare(int line)                         { m_egaLineCompare = line; }
+
   // EGA text: character height in scanlines (14 for mode 3 on an EGA, 8 for 43 line mode)
   void setEGACharHeight(int h)                             { m_egaCharHeight = h; }
 
@@ -267,6 +272,7 @@ private:
   uint32_t            m_egaBankMask;   // banks - 1; video memory is sized to the mode
   uint32_t            m_egaOffsetMask; // banks * EGA_BANK_ENTRIES - 1
   uint32_t            m_egaStart;      // first byte-column of the displayed page
+  int32_t             m_egaLineCompare;// split screen: lines after this one start from address 0
   int16_t             m_egaCharHeight; // scanlines per character in EGA text
   int16_t             m_egaTextColumns;
   uint8_t             m_egaPalette[16];

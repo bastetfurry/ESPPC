@@ -290,7 +290,10 @@ public:
   // setEGAMode() takes a BIOS mode number (0x0d, 0x0e, 0x0f, 0x10) and returns false if it is
   // not an EGA mode or the planar video memory could not be allocated, in which case the caller
   // must fall back to the CGA path.
-  bool setEGAMode(int biosMode);
+  // clear = false is the caller's "keep video memory" (bit 7 of the requested mode): the planes keep
+  // their contents, as on a real EGA. Catacomb 3-D goes to its help screen and back that way and
+  // expects its status bar still to be there.
+  bool setEGAMode(int biosMode, bool clear = true);
 
   // Draw one character into the planes for an EGA graphics mode, at the BIOS cursor.
   // The BIOS asks for this because there is no linear frame buffer to poke in these modes.
@@ -375,6 +378,7 @@ private:
   void setCGAMode();
   void writeTandyArray(uint8_t value);
   void updatePlantronicsSwap();
+  void resetEGALineCompare();
   void hookTandyDACIrq();
   void writeDMA(int port, uint8_t value);
   uint8_t readDMA(int port);

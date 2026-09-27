@@ -275,6 +275,7 @@ GraphicsAdapter::GraphicsAdapter()
     m_egaBankMask(3),
     m_egaOffsetMask(0x7fff),
     m_egaStart(0),
+    m_egaLineCompare(0x3ff),
     m_egaCharHeight(16),
     m_egaTextColumns(80),
     m_egaPal2(nullptr),
@@ -989,7 +990,10 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_
   // FabGL's line buffers are contiguous, so the next scanline is one viewport width along
   for (int line = 0; line < LINES; ++line) {
 
-    uint32_t off = (ga->m_egaStart + (scanLine + line) * ga->m_egaStride) & ga->m_egaOffsetMask;
+    // above the split the page at the start address, below it the memory from address 0
+    int      y   = scanLine + line;
+    uint32_t off = (y > ga->m_egaLineCompare ? (uint32_t)(y - ga->m_egaLineCompare - 1) * ga->m_egaStride
+                                             : ga->m_egaStart + y * ga->m_egaStride) & ga->m_egaOffsetMask;
     auto     d32 = (uint32_t*) (dest + line * SCREENWIDTH);
 
     // A line is 80 consecutive byte-columns and a bank is EGA_BANK_INDEXMASK + 1 of them, so it
@@ -1034,7 +1038,9 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_
   uint32_t const * L3 = ga->m_egaSpread[3];
   uint16_t const * P  = ga->m_egaPal2;
 
-  uint32_t off  = (ga->m_egaStart + scanLine * ga->m_egaStride) & ga->m_egaOffsetMask;
+  // above the split the page at the start address, below it the memory from address 0
+  uint32_t off  = (scanLine > ga->m_egaLineCompare ? (uint32_t)(scanLine - ga->m_egaLineCompare - 1) * ga->m_egaStride
+                                                   : ga->m_egaStart + scanLine * ga->m_egaStride) & ga->m_egaOffsetMask;
   auto     d16  = (uint16_t*) dest;
 
   for (int col = 0; col < WIDTHINBYTES; ++col) {

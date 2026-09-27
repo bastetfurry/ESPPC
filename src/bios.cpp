@@ -319,7 +319,9 @@ void BIOS::helpersEntry()
       bool ega     = m_machine->egaBiosInstalled();
       bool egaText = ega && mode <= 0x03;
 
-      if (ega && (egaText || (mode >= 0x0d && mode <= 0x10)) && m_machine->setEGAMode(mode)) {
+      // BL bit 7 is the caller's "keep video memory" (AL bit 7 of the request, see bios.asm)
+      if (ega && (egaText || (mode >= 0x0d && mode <= 0x10)) &&
+          m_machine->setEGAMode(mode, (i8086::BL() & 0x80) == 0)) {
 
         int columns  = (mode == 0x0d || (egaText && mode <= 0x01)) ? 40 : 80;
         int charH    = egaText ? 16 : ((mode >= 0x0f) ? 14 : 8);

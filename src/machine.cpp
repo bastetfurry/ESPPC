@@ -687,6 +687,14 @@ void Machine::setCGA6845Register(uint8_t value)
       m_graphicsAdapter.setCursorShape(2 * (m_CGA6845[0xa] & 0x1f), 2 * (m_CGA6845[0xb] & 0x1f));
       break;
 
+    // EGA line compare (18h, with bit 8 in the overflow register 07h bit 4): the split screen.
+    // Catacomb 3-D keeps its status bar below it at address 0 while it page flips the view above.
+    case 0x07:
+    case 0x18:
+      if (m_EGAActive)
+        m_graphicsAdapter.setEGALineCompare(m_CGA6845[0x18] | ((m_CGA6845[0x07] & 0x10) << 4));
+      break;
+
     // video memory start offset (0x0c = H, 0x0d = L)
     case 0x0c:
     case 0x0d:
@@ -1008,6 +1016,18 @@ void Machine::refreshCGAGraphics()
     invalidateCGAMode();
     setCGAMode();
   }
+}
+
+
+// No split screen after an EGA mode set: line compare 1FFh, past the last line of every mode,
+// which is what the EGA BIOS's CRTC tables leave (overflow bit 4 set, 18h = FFh). Our mode set does
+// not program the CRTC itself, so without this whatever was last in those registers applied --
+// with 0 there, everything below the first line would come from address 0.
+void Machine::resetEGALineCompare()
+{
+  m_CGA6845[0x18]  = 0xff;
+  m_CGA6845[0x07] |= 0x10;
+  m_graphicsAdapter.setEGALineCompare(0x1ff);
 }
 
 
@@ -1380,7 +1400,7 @@ void Machine::egaDrawChar(uint8_t ch, uint8_t colour)
 }
 
 
-bool Machine::setEGAMode(int biosMode)
+bool Machine::setEGAMode(int biosMode, bool clear)
 {
   // Text modes on the EGA path. These are not the CGA text modes: characters live in plane 0,
   // attributes in plane 1 and the glyphs in plane 2, so the renderer draws whatever font the
@@ -1416,7 +1436,8 @@ bool Machine::setEGAMode(int biosMode)
     m_EGAActive = true;
     m_CGABorrowed = nullptr;     // the planes are the EGA's again
     m_EGA.reset();
-    m_EGA.clearVRAM();
+    if (clear)
+      m_EGA.clearVRAM();
 
     // Program the card the way an EGA BIOS does for an alphanumeric mode. Without this the
     // registers are still at their power-on planar defaults and the guest's character writes go
@@ -1437,7 +1458,10 @@ bool Machine::setEGAMode(int biosMode)
     // it was masked by POST's own "clear video memory", which writes 0x0700 through the CPU and
     // so sets the attributes; that runs once, so the first mode set after a graphics mode left
     // the screen permanently dark.
-    for (uint32_t i = 0; i < (uint32_t)textColumns * 25; ++i) {
+    //
+    // Asked to keep video memory, the characters and attributes stay as they were; the font above is
+    // loaded regardless, as the BIOS does.
+    for (uint32_t i = 0; clear && i < (uint32_t)textColumns * 25; ++i) {
       m_EGA.writePlaneByte(0, i, 0x20);      // space
       m_EGA.writePlaneByte(1, i, 0x07);      // light grey on black
     }
@@ -1447,6 +1471,7 @@ bool Machine::setEGAMode(int biosMode)
     m_EGAStride = textColumns;
     m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), textColumns, m_EGA.bankMask(), m_EGA.offsetMask());
     m_graphicsAdapter.setEGAStartAddress(0);
+    resetEGALineCompare();
     m_graphicsAdapter.setEGACharHeight(16);
     m_graphicsAdapter.setEGATextColumns(textColumns);
     m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
@@ -1526,7 +1551,8 @@ bool Machine::setEGAMode(int biosMode)
   m_CGABorrowed = nullptr;     // the planes are the EGA's again
 
   m_EGA.reset();
-  m_EGA.clearVRAM();
+  if (clear)
+    m_EGA.clearVRAM();
 
   // Claim the 64 KB window at A0000 that the graphics modes use. reset() leaves Graphics
   // Controller register 6 at zero, which is the 128 KB window A0000..BFFFF, and that is not
@@ -1541,6 +1567,7 @@ bool Machine::setEGAMode(int biosMode)
   m_EGAStride = stride;
   m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), stride, m_EGA.bankMask(), m_EGA.offsetMask());
   m_graphicsAdapter.setEGAStartAddress(0);
+  resetEGALineCompare();
   m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
   printf("EGA: planes allocated, internal heap free %d (largest %d)\n",
          heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
