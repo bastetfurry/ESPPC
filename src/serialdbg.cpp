@@ -10,6 +10,8 @@
 
 #include "fabgl.h"
 #include "esp_heap_caps.h"
+#include "esp_cpu.h"
+#include "opl/dbopl.h"
 
 #include "machine.h"
 #include "bios.h"
@@ -564,6 +566,8 @@ void SerialDebug::help()
   write("  t lo hi [r|w|rw] [int lo [hi]]\r\n");
   write("                    trace port accesses lo..hi (default writes), optionally INTs too\r\n");
   write("  t                 show the trace so far;  t off  stop it and free the buffer\r\n");
+  write("  c [s]             free CPU time on the video core, measured over s seconds (default 2)\r\n");
+  write("  a                 benchmark the OPL2 synthesiser: all nine channels, one second of samples\r\n");
   write("  s [n]             single step n instructions, then show registers\r\n");
   write("  g                 resume, back to the screen\r\n");
   write("  q                 resume and detach completely\r\n");
@@ -940,7 +944,8 @@ void SerialDebug::cmdVideoState()
   {
     // The SysReq menu is a text screen over the running guest: a 4000 byte cell buffer, the
     // 4096 byte font copy and the VGA line buffers, 8 lines of 640 bytes in DMA capable RAM, plus
-    // 4000 bytes per open pop up. It no longer needs the planes out of the way.
+    // 4000 bytes per open pop up. Opening it from a 320 wide mode also takes the 640x480 timing's
+    // larger buffers, so this is a rough guide rather than a guarantee.
     size_t dmaLargest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
     size_t freeTotal  = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     writeFmt("sysreq menu %s\r\n",
@@ -1306,6 +1311,138 @@ void SerialDebug::cmdPortTrace(char const * args)
 }
 
 
+// Free CPU time on the video core (the one the scanline interrupt runs on), for judging what else
+// could run there -- an FM synthesiser, for one. A task at the lowest priority above idle reads the
+// cycle counter in a tight loop: two readings only a few cycles apart mean it ran undisturbed, a
+// longer gap means an interrupt or another task had the core. The undisturbed cycles, over the
+// clock, are the share nothing else wanted. No calibration needed. The picture keeps being drawn
+// while the monitor has the guest frozen, so this works from the monitor.
+namespace {
+
+struct CoreLoadRun {
+  volatile bool     stop;
+  volatile uint64_t freeCycles;
+  volatile uint64_t totalCycles;
+  volatile bool     done;
+};
+
+void IRAM_ATTR coreLoadTask(void * arg)
+{
+  auto run = (CoreLoadRun*) arg;
+  uint32_t last = esp_cpu_get_ccount();
+  uint64_t freeC = 0, totalC = 0;
+  while (!run->stop) {
+    uint32_t now = esp_cpu_get_ccount();
+    uint32_t d   = now - last;
+    last = now;
+    totalC += d;
+    if (d < 64)           // one pass of this loop is a few tens of cycles; more means preempted
+      freeC += d;
+  }
+  run->freeCycles  = freeC;
+  run->totalCycles = totalC;
+  run->done        = true;
+  vTaskDelete(nullptr);
+}
+
+}   // namespace
+
+
+void SerialDebug::cmdCoreLoad(char const * args)
+{
+  int seconds = 2;
+  if (*args) {
+    bool ok = false;
+    uint32_t v = parseHex(args, &ok);    // hex like everything else here; 1-9 read the same
+    if (ok && v > 0 && v <= 0x3c)
+      seconds = v;
+  }
+  int core = fabgl::CoreUsage::busiestCore();
+  if (core < 0) {
+    write("no video core configured\r\n");
+    return;
+  }
+
+  static CoreLoadRun run;
+  run.stop = false;
+  run.done = false;
+  TaskHandle_t h;
+  if (xTaskCreatePinnedToCore(coreLoadTask, "coreload", 2048, &run, 1, &h, core) != pdPASS) {
+    write("cannot start the measuring task\r\n");
+    return;
+  }
+  writeFmt("measuring core %d for %d s ...\r\n", core, seconds);
+  vTaskDelay(pdMS_TO_TICKS(seconds * 1000));
+  run.stop = true;
+  while (!run.done)
+    vTaskDelay(1);
+
+  auto em = m_machine->graphicsAdapter()->emulation();
+  uint32_t pct10 = run.totalCycles ? (uint32_t)(run.freeCycles * 1000 / run.totalCycles) : 0;
+  writeFmt("core %d free: %u.%u %%  (%u of %u Mcycles), video emulation %d\r\n", core,
+           (unsigned)(pct10 / 10), (unsigned)(pct10 % 10),
+           (unsigned)(run.freeCycles / 1000000), (unsigned)(run.totalCycles / 1000000), (int)em);
+}
+
+
+// OPL2 cost on this CPU: all nine channels keyed on with a two operator FM voice and sustained, the
+// heaviest thing an AdLib does, generated at 16384 Hz for one second's worth of samples.
+void SerialDebug::cmdOPLBench()
+{
+  constexpr int RATE  = 16384;
+  constexpr int BLOCK = 256;
+
+  auto chip = new DBOPL::Chip(false);
+  if (!chip) {
+    write("no memory for the chip\r\n");
+    return;
+  }
+  uint32_t t0 = esp_cpu_get_ccount();
+  DBOPL::InitTables();
+  chip->Setup(RATE);
+  uint32_t initCycles = esp_cpu_get_ccount() - t0;
+
+  chip->WriteReg(0x01, 0x20);                        // waveform select enable
+  for (int c = 0; c < 9; ++c) {
+    int mod = (c / 3) * 8 + (c % 3), car = mod + 3;
+    for (int op : { mod, car }) {
+      chip->WriteReg(0x20 + op, 0x21);               // sustain, multiplier 1
+      chip->WriteReg(0x60 + op, 0xf2);               // fast attack, slow decay
+      chip->WriteReg(0x80 + op, 0x24);               // sustain level, release
+      chip->WriteReg(0xe0 + op, c & 3);              // a mix of waveforms
+    }
+    chip->WriteReg(0x40 + mod, 0x18);                // modulator level
+    chip->WriteReg(0x40 + car, 0x00);                // carrier at full volume
+    chip->WriteReg(0xc0 + c, 0x0e);                  // feedback 7, FM
+    int fnum = 0x157 + c * 23;
+    chip->WriteReg(0xa0 + c, fnum & 0xff);
+    chip->WriteReg(0xb0 + c, 0x20 | (4 << 2) | (fnum >> 8));   // key on, block 4
+  }
+
+  static int32_t buf[BLOCK];
+  int64_t peak = 0;
+  uint32_t start = esp_cpu_get_ccount();
+  for (int n = 0; n < RATE; n += BLOCK) {
+    chip->GenerateBlock2(BLOCK, buf);
+    for (int i = 0; i < BLOCK; ++i)
+      peak = buf[i] > peak ? buf[i] : (-buf[i] > peak ? -buf[i] : peak);
+  }
+  uint32_t cycles = esp_cpu_get_ccount() - start;
+
+  uint32_t perSample = cycles / RATE;
+  uint32_t mhz       = ESP.getCpuFreqMHz();
+  writeFmt("OPL2 (DBOPL), 9 channels FM: %u cycles per sample, %u Mcycles for one second at %d Hz\r\n",
+           (unsigned) perSample, (unsigned)(cycles / 1000000), RATE);
+  writeFmt("  share of a %u MHz core:  16384 Hz %u%%,  32768 Hz %u%%,  49716 Hz %u%%\r\n", (unsigned) mhz,
+           (unsigned)(perSample * 16384ull * 100 / (mhz * 1000000ull)),
+           (unsigned)(perSample * 32768ull * 100 / (mhz * 1000000ull)),
+           (unsigned)(perSample * 49716ull * 100 / (mhz * 1000000ull)));
+  writeFmt("  chip struct %u bytes, tables + setup %u kcycles, peak output %d\r\n",
+           (unsigned) sizeof(DBOPL::Chip), (unsigned)(initCycles / 1000), (int) peak);
+  delete chip;
+}
+
+
 void SerialDebug::runMonitor()
 {
   write("\r\n--- monitor, the guest is frozen. '?' for help, 'g' to resume ---\r\n");
@@ -1368,6 +1505,8 @@ void SerialDebug::runMonitor()
       case 'i': cmdInPort(p);    break;
       case 'o': cmdOutPort(p);   break;
       case 't': cmdPortTrace(p); break;
+      case 'c': cmdCoreLoad(p);  break;
+      case 'a': cmdOPLBench();   break;
       case '?': help();          break;
 
       case 's':
