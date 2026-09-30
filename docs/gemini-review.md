@@ -51,25 +51,25 @@ This review examines the design decisions, validates the optimizations, identifi
 The original ESP32 silicon has a notorious hardware errata: simultaneous access to external PSRAM across cores or between CPU instructions and data cache can lock the bus or corrupt cache lines. The standard Espressif workaround (`-mfix-esp32-psram-cache-issue`) inserts instruction paddings and fences that cripple CPU emulation performance by 30–50%.
 
 The codebase implements an elegant architectural solution:
-1. **Manual SPIRAM Init:** In [`src/main.cpp`](file:///home/bastet/Projekte/PCEmulator/src/main.cpp#L775-L784), PSRAM is initialized manually at runtime via `esp_spiram_init()` and `esp_spiram_init_cache()`, explicitly avoiding `-DBOARD_HAS_PSRAM` in [`platformio.ini`](file:///home/bastet/Projekte/PCEmulator/platformio.ini#L40-L43).
-2. **Core Spatial Partitioning:** In [`Machine::init()`](file:///home/bastet/Projekte/PCEmulator/src/machine.cpp#L164-L167):
+1. **Manual SPIRAM Init:** In [`src/main.cpp`](../src/main.cpp#L775-L784), PSRAM is initialized manually at runtime via `esp_spiram_init()` and `esp_spiram_init_cache()`, explicitly avoiding `-DBOARD_HAS_PSRAM` in [`platformio.ini`](../platformio.ini#L40-L43).
+2. **Core Spatial Partitioning:** In [`Machine::init()`](../src/machine.cpp#L164-L167):
    ```cpp
    s_memory = (uint8_t*)(SOC_EXTRAM_DATA_LOW + (xPortGetCoreID() == 1 ? 2 * 1024 * 1024 : 0));
    ```
-   Core 0 exclusively touches the lower 2 MB half for guest RAM, while Core 1 exclusively touches the upper 2 MB half (used by the AdLib DBOPL state in [`src/adlib.cpp`](file:///home/bastet/Projekte/PCEmulator/src/adlib.cpp#L146)). Cross-core PSRAM thrashing is eliminated by design.
+   Core 0 exclusively touches the lower 2 MB half for guest RAM, while Core 1 exclusively touches the upper 2 MB half (used by the AdLib DBOPL state in [`src/adlib.cpp`](../src/adlib.cpp#L146)). Cross-core PSRAM thrashing is eliminated by design.
 
 ### 2.2 IRAM Budgeting & Cold Code Offloading
 
 Instruction RAM (`.iram0.text`) on the ESP32 is capped at 128 KB. Because guest memory accesses in PSRAM compete with flash code fetches across the shared internal bus cache, running hot emulator paths from flash incurs catastrophic cache refill penalties.
 
 Key optimizations implemented:
-- In [`lib/FabGL/src/emudevs/i8086.cpp`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/src/emudevs/i8086.cpp#L713), [`i8086::step()`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/src/emudevs/i8086.cpp#L713) and [`i8086::stepEx()`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/src/emudevs/i8086.cpp#L1204) are decorated with `IRAM_ATTR`.
-- To prevent `stepEx()` (21 KB) from overflowing IRAM, commit `3ec367b` created [`i8086::stepExCold()`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/src/emudevs/i8086.cpp#L1935): rare opcodes (DAA, DAS, AAA, AAS, INT 3, INTO, AAM, AAD, SALC, HLT, ESC/x87, LOCK) are offloaded to flash with `__attribute__((noinline))`.
+- In [`lib/FabGL/src/emudevs/i8086.cpp`](../lib/FabGL/src/emudevs/i8086.cpp#L713), [`i8086::step()`](../lib/FabGL/src/emudevs/i8086.cpp#L713) and [`i8086::stepEx()`](../lib/FabGL/src/emudevs/i8086.cpp#L1204) are decorated with `IRAM_ATTR`.
+- To prevent `stepEx()` (21 KB) from overflowing IRAM, commit `3ec367b` created [`i8086::stepExCold()`](../lib/FabGL/src/emudevs/i8086.cpp#L1935): rare opcodes (DAA, DAS, AAA, AAS, INT 3, INTO, AAM, AAD, SALC, HLT, ESC/x87, LOCK) are offloaded to flash with `__attribute__((noinline))`.
 - As verified via `xtensa-esp32-elf-size`, `.iram0.text` sits at **129,355 bytes**, leaving **~1.7 KB of IRAM headroom**. This is razor-sharp budgeting.
 
 ### 2.3 Flash Bandwidth Optimization
 
-[`platformio.ini`](file:///home/bastet/Projekte/PCEmulator/platformio.ini#L38) sets `board_build.flash_mode = qio` at 80 MHz. Because cold instruction fetches and data tables in flash share the cache controller with PSRAM, QIO doubles SPI read bandwidth over DIO, cutting Topbench's opcode exercise from 1383 µs to 1077 µs.
+[`platformio.ini`](../platformio.ini#L38) sets `board_build.flash_mode = qio` at 80 MHz. Because cold instruction fetches and data tables in flash share the cache controller with PSRAM, QIO doubles SPI read bandwidth over DIO, cutting Topbench's opcode exercise from 1383 µs to 1077 µs.
 
 ---
 
@@ -78,10 +78,10 @@ Key optimizations implemented:
 ### 3.1 CPU Core (`i8086.cpp` / `i8086.h`)
 
 #### Instruction Batching
-In [`Machine::runTask()`](file:///home/bastet/Projekte/PCEmulator/src/machine.cpp#L484-L536), instructions are executed in batches of 16 (`BATCH = 16`). Calling peripheral housekeeping ([`Machine::tick()`](file:///home/bastet/Projekte/PCEmulator/src/machine.cpp#L664)) after every single instruction previously cost 91 cycles vs 318 cycles for the instruction itself. Amortizing `tick()` across 16 instructions regained roughly 20% CPU throughput.
+In [`Machine::runTask()`](../src/machine.cpp#L484-L536), instructions are executed in batches of 16 (`BATCH = 16`). Calling peripheral housekeeping ([`Machine::tick()`](../src/machine.cpp#L664)) after every single instruction previously cost 91 cycles vs 318 cycles for the instruction itself. Amortizing `tick()` across 16 instructions regained roughly 20% CPU throughput.
 
 #### Fast Paths in `step()`
-Common instructions are decoded and executed directly in `step()` via a lookup table [`optcodes[]`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/src/emudevs/i8086.cpp#L544), bypassing the heavy ModR/M and micro-function decoding in `stepEx()`:
+Common instructions are decoded and executed directly in `step()` via a lookup table [`optcodes[]`](../lib/FabGL/src/emudevs/i8086.cpp#L544), bypassing the heavy ModR/M and micro-function decoding in `stepEx()`:
 - `INC`/`DEC` 16-bit registers (Case 19)
 - `MOV` register/memory 8-bit and 16-bit (Case 21)
 - Immediate ALU operations (Case 22: `ADD`, `OR`, `ADC`, `SBB`, `AND`, `SUB`, `XOR`, `CMP`)
@@ -89,7 +89,7 @@ Common instructions are decoded and executed directly in `step()` via a lookup t
 - Immediate `MOV` to r/m (Case 25)
 
 #### String Operation Pointer Loops
-In [`lib/FabGL/src/emudevs/i8086.cpp`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/src/emudevs/i8086.cpp#L1113-L1139), `REP MOVSB` and `REP STOSB` forward operations over plain guest RAM bypass the per-byte `RMEM8`/`WMEM8` callbacks:
+In [`lib/FabGL/src/emudevs/i8086.cpp`](../lib/FabGL/src/emudevs/i8086.cpp#L1113-L1139), `REP MOVSB` and `REP STOSB` forward operations over plain guest RAM bypass the per-byte `RMEM8`/`WMEM8` callbacks:
 ```cpp
 if (plain) {
   uint8_t * d = s_memory + dst;
@@ -104,7 +104,7 @@ if (plain) {
 Because the loop executes strictly in ascending order, overlapping memory copies (commonly used in DOS graphics for run-length expansion) behave identically to a physical 8086.
 
 #### Verification Against Hardware Traces
-The CPU modifications are validated using [`tools/cputest/run.py`](file:///home/bastet/Projekte/PCEmulator/tools/cputest/run.py) and [`tools/cputest/harness.cpp`](file:///home/bastet/Projekte/PCEmulator/tools/cputest/harness.cpp), driving the core against the hardware-verified **SingleStepTests 8088** test suite. This provides high confidence that speedups did not introduce instruction or flag discrepancies.
+The CPU modifications are validated using [`tools/cputest/run.py`](../tools/cputest/run.py) and [`tools/cputest/harness.cpp`](../tools/cputest/harness.cpp), driving the core against the hardware-verified **SingleStepTests 8088** test suite. This provides high confidence that speedups did not introduce instruction or flag discrepancies.
 
 ---
 
@@ -112,13 +112,13 @@ The CPU modifications are validated using [`tools/cputest/run.py`](file:///home/
 
 #### Interleaved Planar EGA Engine
 Traditional EGA emulation maintains 4 separate plane buffers (`plane[4][65536]`). Every CPU write requires 4 loads, 4 ALU operations, and 4 stores.
-In [`src/ega.h`](file:///home/bastet/Projekte/PCEmulator/src/ega.h#L15-L20) and [`src/ega.cpp`](file:///home/bastet/Projekte/PCEmulator/src/ega.cpp), the 4 planes are interleaved into a single `uint32_t` per byte-column (Plane $N$ resides in byte-lane $N$):
+In [`src/ega.h`](../src/ega.h#L15-L20) and [`src/ega.cpp`](../src/ega.cpp), the 4 planes are interleaved into a single `uint32_t` per byte-column (Plane $N$ resides in byte-lane $N$):
 ```
 [ Byte Lane 3: Plane 3 ] [ Byte Lane 2: Plane 2 ] [ Byte Lane 1: Plane 1 ] [ Byte Lane 0: Plane 0 ]
 ```
 - Latch reads load all 4 planes in a single 32-bit read: `m_latch = *p;`
 - Graphics Controller Set/Reset, ALU, Bit Mask, and Map Mask operations run as single 32-bit branchless operations across all 4 planes simultaneously.
-- A fast path [`m_simpleWrite`](file:///home/bastet/Projekte/PCEmulator/src/ega.h#L173) optimizes solid fills (`rep stosw` in Write Mode 0):
+- A fast path [`m_simpleWrite`](../src/ega.h#L173) optimizes solid fills (`rep stosw` in Write Mode 0):
   ```cpp
   if (m_simpleWrite) {
     *p = (uint32_t)value * 0x01010101u;
@@ -127,25 +127,25 @@ In [`src/ega.h`](file:///home/bastet/Projekte/PCEmulator/src/ega.h#L15-L20) and 
   ```
 
 #### Banked Memory Allocation (Surviving Heap Fragmentation)
-A real EGA has 64 KB per plane (256 KB total). On the ESP32, 128 KB of internal SRAM is the maximum feasible. Rather than allocating 4 contiguous 32 KB blocks (which repeatedly failed due to internal heap fragmentation), [`EGA::allocVRAM()`](file:///home/bastet/Projekte/PCEmulator/src/ega.cpp#L36-L70) splits the buffer into **8 banks of 16 KB** ([`EGA_BANK_ENTRIES = 4096`](file:///home/bastet/Projekte/PCEmulator/src/ega.h#L46)). Banks are allocated once and retained across mode changes, preventing heap churn.
+A real EGA has 64 KB per plane (256 KB total). On the ESP32, 128 KB of internal SRAM is the maximum feasible. Rather than allocating 4 contiguous 32 KB blocks (which repeatedly failed due to internal heap fragmentation), [`EGA::allocVRAM()`](../src/ega.cpp#L36-L70) splits the buffer into **8 banks of 16 KB** ([`EGA_BANK_ENTRIES = 4096`](../src/ega.h#L46)). Banks are allocated once and retained across mode changes, preventing heap churn.
 
 #### CGA Optimization & Write Skipping
-In [`Machine::setCGAMode()`](file:///home/bastet/Projekte/PCEmulator/src/machine.cpp#L1180-L1188), register writes to 0x3D8/0x3D9/0x3D4 are checked against current state. Games built on the SCUMM engine (e.g. *Monkey Island*) rewrite video registers on every frame; skipping redundant reconfiguration saves 1–2% of CPU time.
+In [`Machine::setCGAMode()`](../src/machine.cpp#L1180-L1188), register writes to 0x3D8/0x3D9/0x3D4 are checked against current state. Games built on the SCUMM engine (e.g. *Monkey Island*) rewrite video registers on every frame; skipping redundant reconfiguration saves 1–2% of CPU time.
 
 #### Extended Display Modes
-- **Plantronics ColorPlus:** Port `0x3DD` supports 320x200 16-color and 640x200 4-color modes, including CPU plane flipping (`address ^= 0x4000` in [`Machine::writeVideoMemory8Impl`](file:///home/bastet/Projekte/PCEmulator/src/machine.cpp#L2377)).
-- **CGA Composite Artifacting:** Realistic NTSC artifact color decoding for 320x200 and 640x200 modes via [`GraphicsAdapter::setCompositeTable`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/src/emudevs/graphicsadapter.cpp).
+- **Plantronics ColorPlus:** Port `0x3DD` supports 320x200 16-color and 640x200 4-color modes, including CPU plane flipping (`address ^= 0x4000` in [`Machine::writeVideoMemory8Impl`](../src/machine.cpp#L2377)).
+- **CGA Composite Artifacting:** Realistic NTSC artifact color decoding for 320x200 and 640x200 modes via [`GraphicsAdapter::setCompositeTable`](../lib/FabGL/src/emudevs/graphicsadapter.cpp).
 - **Tandy 1000 Graphics:** Modes 8 (160x200x16) and 9 (320x200x16), driven via the 3DAh/3DEh video array and palette mask.
-- **On-Screen Drive LED:** In [`lib/FabGL/src/emudevs/graphicsadapter.cpp`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/src/emudevs/graphicsadapter.cpp), scanline rendering injects a drive activity indicator directly into the scanline buffer without disturbing video memory.
+- **On-Screen Drive LED:** In [`lib/FabGL/src/emudevs/graphicsadapter.cpp`](../lib/FabGL/src/emudevs/graphicsadapter.cpp), scanline rendering injects a drive activity indicator directly into the scanline buffer without disturbing video memory.
 
 ---
 
 ### 3.3 Audio Subsystem (`adlib.cpp`, `sn76496.cpp`, `tandydac.cpp`)
 
 #### AdLib (OPL2 / YM3812)
-- Ported DOSBox-X's **DBOPL** FM synthesizer into [`src/opl/`](file:///home/bastet/Projekte/PCEmulator/src/opl/).
-- Tables are precomputed into flash ([`src/opl/dbopl_tables.h`](file:///home/bastet/Projekte/PCEmulator/src/opl/dbopl_tables.h)).
-- The [`AdLib::Voice`](file:///home/bastet/Projekte/PCEmulator/src/adlib.h#L52) synthesizer runs in a FreeRTOS worker task pinned to the **video core** (`CoreUsage::busiestCore()`) at priority 1.
+- Ported DOSBox-X's **DBOPL** FM synthesizer into [`src/opl/`](../src/opl/).
+- Tables are precomputed into flash ([`src/opl/dbopl_tables.h`](../src/opl/dbopl_tables.h)).
+- The [`AdLib::Voice`](../src/adlib.h#L52) synthesizer runs in a FreeRTOS worker task pinned to the **video core** (`CoreUsage::busiestCore()`) at priority 1.
 - Synthesized at native 16,384 Hz into a 1024-sample ring buffer, matching FabGL's `SoundGenerator` sample rate without resampling overhead.
 - Timer 1 and Timer 2 (ports 0x388/0x389) are accurately emulated on the 8086 host-time side for sound card detection loops.
 
@@ -158,22 +158,22 @@ In [`Machine::setCGAMode()`](file:///home/bastet/Projekte/PCEmulator/src/machine
 ### 3.4 BIOS & System Integration
 
 #### POST & Boot Architecture (`bios.asm` / `bios.cpp`)
-- BIOS code was converted from a rigid image into a maintainable NASM source ([`tools/bios.asm`](file:///home/bastet/Projekte/PCEmulator/tools/bios.asm)) compiled to [`src/biosrom.h`](file:///home/bastet/Projekte/PCEmulator/src/biosrom.h).
+- BIOS code was converted from a rigid image into a maintainable NASM source ([`tools/bios.asm`](../tools/bios.asm)) compiled to [`src/biosrom.h`](../src/biosrom.h).
 - Warm boots (`Ctrl+Alt+Del`) properly reset the 8042 keyboard controller (`0xAE`) and fetch the boot drive via helper `AH=0x0A`, avoiding hung boots.
 - Unbootable disks or missing AA55 boot signatures report descriptive errors (`NO BOOT DEVICE`) instead of jumping to 0000:7C00 and crashing.
 
 #### Fast Native Text Video (`fastTextVideo`)
-In [`src/bios.cpp`](file:///home/bastet/Projekte/PCEmulator/src/bios.cpp#L418-L494), BIOS `INT 10h` services `AH=02h` (set cursor), `09h` (write char/attr), `0Ah` (write char), and `0Eh` (teletype output) are intercepted and handled directly in native C++. By bypassing emulated 8086 instruction execution for BIOS text output, DOS prompt scrolling and text-heavy DOS applications run orders of magnitude faster.
+In [`src/bios.cpp`](../src/bios.cpp#L418-L494), BIOS `INT 10h` services `AH=02h` (set cursor), `09h` (write char/attr), `0Ah` (write char), and `0Eh` (teletype output) are intercepted and handled directly in native C++. By bypassing emulated 8086 instruction execution for BIOS text output, DOS prompt scrolling and text-heavy DOS applications run orders of magnitude faster.
 
 #### Selectable Conventional Memory
-Supports 64 KB to 704 KB in 64 KB steps. For 704 KB, the video window start is moved from `0xA0000` to `0xB0000` via [`i8086::setVideoMemStart()`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/src/emudevs/i8086.h#L52), transforming `0xA0000–0xAFFFF` into physical guest RAM while updating BDA `40:13h` and the EBDA base address.
+Supports 64 KB to 704 KB in 64 KB steps. For 704 KB, the video window start is moved from `0xA0000` to `0xB0000` via [`i8086::setVideoMemStart()`](../lib/FabGL/src/emudevs/i8086.h#L52), transforming `0xA0000–0xAFFFF` into physical guest RAM while updating BDA `40:13h` and the EBDA base address.
 
 #### Serial Debugging & Postbox Communication
-- **`SerialDebug` ([`src/serialdbg.cpp`](file:///home/bastet/Projekte/PCEmulator/src/serialdbg.cpp)):** Line-based remote debugger providing register inspection, memory search/dump, execution tracing, and binary frame grabs ([`tools/screenshot.py`](file:///home/bastet/Projekte/PCEmulator/tools/screenshot.py)).
-- **Postbox ([`src/machine.h`](file:///home/bastet/Projekte/PCEmulator/src/machine.h#L89-L106)):** A framed host-guest communication protocol on `INT 0xFF AX=0x55EE` paired with [`tools/postbox.py`](file:///home/bastet/Projekte/PCEmulator/tools/postbox.py) and [`tools/postbox.asm`](file:///home/bastet/Projekte/PCEmulator/tools/postbox.asm), enabling bidirectional file transfers without network or disk swapping.
+- **`SerialDebug` ([`src/serialdbg.cpp`](../src/serialdbg.cpp)):** Line-based remote debugger providing register inspection, memory search/dump, execution tracing, and binary frame grabs ([`tools/screenshot.py`](../tools/screenshot.py)).
+- **Postbox ([`src/machine.h`](../src/machine.h#L89-L106)):** A framed host-guest communication protocol on `INT 0xFF AX=0x55EE` paired with [`tools/postbox.py`](../tools/postbox.py) and [`tools/postbox.asm`](../tools/postbox.asm), enabling bidirectional file transfers without network or disk swapping.
 
 #### Award-Style `TextUI`
-Replaced FabGL's heavy graphical UI with [`src/textui.cpp`](file:///home/bastet/Projekte/PCEmulator/src/textui.cpp) and [`src/setupui.cpp`](file:///home/bastet/Projekte/PCEmulator/src/setupui.cpp). Reuses the emulator's 80x25 character/attribute text buffer, saving ~50 KB of RAM and 16 KB of IRAM while rendering a clean, authentic BIOS setup utility.
+Replaced FabGL's heavy graphical UI with [`src/textui.cpp`](../src/textui.cpp) and [`src/setupui.cpp`](../src/setupui.cpp). Reuses the emulator's 80x25 character/attribute text buffer, saving ~50 KB of RAM and 16 KB of IRAM while rendering a clean, authentic BIOS setup utility.
 
 ---
 
@@ -181,7 +181,7 @@ Replaced FabGL's heavy graphical UI with [`src/textui.cpp`](file:///home/bastet/
 
 ### 4.1 [BUG] `downloadURL()` Flags Incomplete Downloads as Successful
 
-**Location:** [`src/main.cpp`](file:///home/bastet/Projekte/PCEmulator/src/main.cpp#L304-L320)  
+**Location:** [`src/main.cpp`](../src/main.cpp#L304-L320)  
 ```cpp
 while (http.connected() && (len > 0 || len == -1)) {
   size_t size = stream->available();
@@ -228,7 +228,7 @@ Even better: if `tlen == -1`, verify whether the stream encountered a clean EOF 
 
 ### 4.2 [BUG] INT 13h Sector 0 Arithmetic Underflow
 
-**Location:** [`src/bios.cpp`](file:///home/bastet/Projekte/PCEmulator/src/bios.cpp#L1369-L1382)  
+**Location:** [`src/bios.cpp`](../src/bios.cpp#L1369-L1382)  
 ```cpp
 bool BIOS::diskHandler_calcAbsAddr(int drive, uint32_t * pos, uint32_t * dest, uint32_t * count)
 {
@@ -265,7 +265,7 @@ Additionally, `track` and `head` should be validated against `m_machine->diskCyl
 
 ### 4.3 [EDGE CASE] Potential Buffer Overflow in Multi-Sector INT 13h Reads Near 1 MB
 
-**Location:** [`src/bios.cpp`](file:///home/bastet/Projekte/PCEmulator/src/bios.cpp#L1186-L1189) & [`src/bios.cpp`](file:///home/bastet/Projekte/PCEmulator/src/bios.cpp#L1449-L1451)  
+**Location:** [`src/bios.cpp`](../src/bios.cpp#L1186-L1189) & [`src/bios.cpp`](../src/bios.cpp#L1449-L1451)  
 ```cpp
 sects = service == 0x02 ?
           fread(m_memory + dest, 1, count, m_machine->disk(drive)) :
@@ -291,7 +291,7 @@ if (dest + count > RAM_SIZE)
 
 ### 4.4 [VULNERABILITY / STABILITY] `runTask` FreeRTOS Stack Size vs SysReq File Dialogs
 
-**Location:** [`src/machine.cpp`](file:///home/bastet/Projekte/PCEmulator/src/machine.cpp#L473)  
+**Location:** [`src/machine.cpp`](../src/machine.cpp#L473)  
 ```cpp
 void Machine::run()
 {
@@ -302,9 +302,9 @@ void Machine::run()
 **Impact:**  
 On ESP-IDF, `usStackDepth` in `xTaskCreatePinnedToCore` is measured in **bytes**, not words.  
 When the user presses `Alt+PrintScreen` (SysReq):
-1. `i8042` invokes [`Machine::sysReq()`](file:///home/bastet/Projekte/PCEmulator/src/machine.cpp#L2291).
-2. Runs inside `runTask()`, calling [`sysReqCallback()`](file:///home/bastet/Projekte/PCEmulator/src/main.cpp#L615).
-3. If the user mounts a floppy, [`setupFileDialog()`](file:///home/bastet/Projekte/PCEmulator/src/setupui.cpp#L182) is invoked.
+1. `i8042` invokes [`Machine::sysReq()`](../src/machine.cpp#L2291).
+2. Runs inside `runTask()`, calling [`sysReqCallback()`](../src/main.cpp#L615).
+3. If the user mounts a floppy, [`setupFileDialog()`](../src/setupui.cpp#L182) is invoked.
 4. `setupFileDialog` instantiates `DirList dl` containing `FileBrowser fb`.
 5. `FileBrowser` performs VFS and SD-card FatFs directory traversal. FatFs on ESP-IDF can consume 1.8 KB to 2.5 KB of stack space for directory sector buffers, path resolution, and recursive reentrancy.
 
@@ -317,7 +317,7 @@ Increase `runTask` stack size to at least **6144 or 8192 bytes**. The emulator c
 
 ### 4.5 [DOCUMENTATION DRIFT] `lib/FabGL/VENDORED.md` Inaccuracy
 
-**Location:** [`lib/FabGL/VENDORED.md`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/VENDORED.md#L27-L29)  
+**Location:** [`lib/FabGL/VENDORED.md`](../lib/FabGL/VENDORED.md#L27-L29)  
 `VENDORED.md` lists only two modified files:
 - `src/emudevs/i8086.cpp` / `.h` (`s_videoMemStart`)
 - `src/emudevs/i8042.cpp` (`m_keyboard->resumePort()`)
@@ -329,13 +329,13 @@ In reality, git history reveals **13 modified files** in `lib/FabGL/` with **1,5
 - `displaycontroller.cpp` (Queue size adjustments)
 
 **Recommendation:**  
-Update `lib/FabGL/VENDORED.md` to document all local changes, or execute Step 2 of [`docs/platform-split.md`](file:///home/bastet/Projekte/PCEmulator/docs/platform-split.md#L93-L96) to extract these modified classes into project-owned directories (`core/` and `display/`).
+Update `lib/FabGL/VENDORED.md` to document all local changes, or execute Step 2 of [`docs/platform-split.md`](../docs/platform-split.md#L93-L96) to extract these modified classes into project-owned directories (`core/` and `display/`).
 
 ---
 
 ### 4.6 [RESOURCE HAZARD] SysReq Resolution Switch Without RAM Verification
 
-**Location:** Described in [`docs/TODO.md`](file:///home/bastet/Projekte/PCEmulator/docs/TODO.md#L6-L14)  
+**Location:** Described in [`docs/TODO.md`](../docs/TODO.md#L6-L14)  
 Opening the SysReq menu triggers a video mode switch to 640x480 text mode. If the guest was running in a 320-wide mode (e.g. CGA 320x200 or Tandy mode 9), FabGL allocates new scanline DMA buffers and descriptors (~14 KB additional internal RAM). If internal RAM is heavily fragmented or exhausted by the sound card, FabGL hangs.
 
 **Recommendation:**  
@@ -375,21 +375,21 @@ The roadmap to target the **Raspberry Pi RP2350** alongside the ESP32 WROVER is 
 
 | Priority | Task | Affected Files | Effort |
 | :---: | :--- | :--- | :---: |
-| **High** | **Fix `downloadURL` truncated download bug** by checking abort status and clean EOF | [`src/main.cpp`](file:///home/bastet/Projekte/PCEmulator/src/main.cpp) | 30 mins |
-| **High** | **Fix INT 13h sector 0 underflow** and add cylinder/head bounds checks | [`src/bios.cpp`](file:///home/bastet/Projekte/PCEmulator/src/bios.cpp) | 30 mins |
-| **High** | **Increase `runTask` stack size** from 4000 to 8192 bytes | [`src/machine.cpp`](file:///home/bastet/Projekte/PCEmulator/src/machine.cpp) | 10 mins |
-| **Medium** | **Guard SysReq menu memory** against current video mode DMA requirements | [`src/main.cpp`](file:///home/bastet/Projekte/PCEmulator/src/main.cpp), [`src/textui.cpp`](file:///home/bastet/Projekte/PCEmulator/src/textui.cpp) | 2 hours |
-| **Medium** | **Update `lib/FabGL/VENDORED.md`** or extract devices to `core/` | [`lib/FabGL/VENDORED.md`](file:///home/bastet/Projekte/PCEmulator/lib/FabGL/VENDORED.md) | 1 hour |
-| **Low** | **Clamp multi-sector INT 13h buffer addresses** to 1 MB limit | [`src/bios.cpp`](file:///home/bastet/Projekte/PCEmulator/src/bios.cpp) | 30 mins |
+| **High** | **Fix `downloadURL` truncated download bug** by checking abort status and clean EOF | [`src/main.cpp`](../src/main.cpp) | 30 mins |
+| **High** | **Fix INT 13h sector 0 underflow** and add cylinder/head bounds checks | [`src/bios.cpp`](../src/bios.cpp) | 30 mins |
+| **High** | **Increase `runTask` stack size** from 4000 to 8192 bytes | [`src/machine.cpp`](../src/machine.cpp) | 10 mins |
+| **Medium** | **Guard SysReq menu memory** against current video mode DMA requirements | [`src/main.cpp`](../src/main.cpp), [`src/textui.cpp`](../src/textui.cpp) | 2 hours |
+| **Medium** | **Update `lib/FabGL/VENDORED.md`** or extract devices to `core/` | [`lib/FabGL/VENDORED.md`](../lib/FabGL/VENDORED.md) | 1 hour |
+| **Low** | **Clamp multi-sector INT 13h buffer addresses** to 1 MB limit | [`src/bios.cpp`](../src/bios.cpp) | 30 mins |
 
 ---
 
 ## Annotations by Claude (added 2026-09-30, not part of Gemini's review)
 
-> Everything above this line is Gemini's review exactly as it was delivered. This section was added
-> afterwards by Claude (Claude Code, Opus 5.5), which checked each finding against the code and
-> acted on it with the maintainer. The `file:///` links above point into the maintainer's checkout
-> and do not work elsewhere; the paths after `PCEmulator/` are the repository paths.
+> Everything above this line is Gemini's review as it was delivered, with one change: its links
+> were absolute `file:///` paths into the maintainer's checkout and were rewritten as paths
+> relative to this file. This section was added afterwards by Claude (Claude Code, Opus 5.5),
+> which checked each finding against the code and acted on it with the maintainer.
 
 ### Findings, as checked
 
