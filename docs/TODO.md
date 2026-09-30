@@ -124,3 +124,32 @@ needs only three pins) mapped to keyboard keys, for games with no joystick suppo
 - A pad on such a board could just as well drive the game port directly; the per machine option
   then chooses between game port and keys.
 - Belongs to the port, see [platform-split.md](platform-split.md).
+
+## Cleanup before publishing
+
+- **README rewrite.** It still describes the FabGL example: "CGA/Hercules", the TTGO VGA32, "press
+  Run". Missing: the Olimex ESP32-SBC-FabGL, EGA / Tandy / Plantronics / composite / AdLib / Tandy
+  DAC, the setup screens and SysReq menu as they are now, the `mconfs.txt` tags, the debug console
+  and postbox, and speed figures. It must say where `ega.bin` comes from: it is not in the repo
+  (`*.bin` is ignored) and not redistributable, so without a note EGA fails for everyone else.
+- **Tests in the build.** One script that builds the firmware and runs the SingleStepTests harness
+  (`tools/cputest/run.py`), usable as a pre-commit hook and later as CI once there is a remote.
+- **Rescue disk** on FreeDOS instead of retail DOS, so it can be committed (see `.gitignore`).
+  The maintainer is building it in 86Box.
+- Then a remote, and publish.
+
+## A speed limit for the guest
+
+At Topbench 17 the emulator is a turbo XT, and early games that time themselves by the CPU run too
+fast. A per machine setting (full speed, or about 4.77 MHz) that paces instruction batches against
+the emulated PIT clock, not host time. The planned game port needs that same clock for its
+one-shots.
+
+## Save states
+
+For long games without a save option: from the SysReq menu, write guest RAM (1 MB from PSRAM) and
+every device's state (CPU, PIC, PIT, 8042, RTC, video adapter and its memory, EGA planes, sound
+chips, DAC, floppy/disk state) to the SD card, and restore it. The work is in the devices: each one
+needs a versioned save and load of its state, and the vendored FabGL ones have none. Possibly one
+for the port (see [platform-split.md](platform-split.md)), where the device code gets restructured
+anyway.
