@@ -77,3 +77,50 @@ A local repository first: a folder with `files.list` and a few small images, ser
 with `python3 -m http.server` (which answers HTTP/1.0, like the board asks). Cover: a valid list,
 more than 20 lines, a header line, bad memory and type values, quoting, a missing `files.list`, an
 image without Content-Length, Esc during the list fetch, and a floppy and a hard disk image.
+
+## Numpad as a joypad, and later a joypad as keys
+
+### Numpad to game port (this board)
+
+A digital two button joystick on the game port, played on the numpad:
+
+- **Directions:** 1 to 9 as on the keypad; 5 is neutral. The state is worked out from the set of
+  keys held, not from the last key: left = any of 1/4/7, right = 3/6/9, up = 7/8/9, down = 1/2/3,
+  and each axis is `right - left` (`down - up`). So 4 + 6 cancel to centre, 7 + 3 as well, and
+  typematic repeats change nothing.
+- **Buttons:** numpad 0 is button 1 (primary fire), numpad Enter is button 2.
+- **Catching the keys:** at scancode level, in `i8042::tick()` before the set 2 to set 1
+  conversion, through a filter callback the machine installs (a vendored FabGL change, record it in
+  `VENDORED.md`). Keypad keys arrive without the `E0` prefix (`70 69 72 7A 6B 73 74 6C 75 7D`,
+  break `F0 xx`); the grey arrow keys and numpad Enter carry `E0` (Enter is `E0 5A`). So the grey
+  arrows stay arrows. Caught keys never reach the guest; the fake shift codes some keyboards wrap
+  around keypad keys pass through untouched. Whether NumLock is on does not matter.
+- **Switching it on:** a per machine option (`numpadjoy` in `mconfs.txt`, a checkbox in the
+  editor), plus a row in the SysReq menu to toggle it for the session, like "Monitor". Games that
+  want the numpad for numbers are then only one toggle away.
+- **Game port at 201h:** nothing answers there today. A write starts the four one-shots, a read
+  gives the timer bits 0-3 (X1, Y1, X2, Y2) and the buttons in bits 4-7, active low. A digital
+  stick puts each axis at minimum, centre or maximum, so the one-shot lengths are roughly 25 us,
+  about 575 us (a 50k pot) and about 1.1 ms. They must run on the clock the guest sees (the PIT's
+  time base), not host time, or games that count loop iterations will calibrate differently at
+  every emulator speed. The second stick's axes read as not connected (bits stay 0 at once, so
+  software sees one stick); its two buttons stay released.
+- Optional: INT 15h AH=84h (read joystick) in `tools/bios.asm`. The original XT BIOS has no such
+  call and most games read 201h directly, so this can wait.
+- **Test:** a game port test program (CheckIt has one, and so do many games' setup screens), then
+  a game that calibrates at start and one that does not.
+
+### Joypad to keys (later boards, when there are pins to spare)
+
+The other way round: a physical pad (DB9 digital, or a SNES/NES style shift register pad, which
+needs only three pins) mapped to keyboard keys, for games with no joystick support.
+
+- The mapping is per machine: each pad input to a key, stored as set 2 scancodes in `mconfs.txt`
+  (arrows and Space/Ctrl/Alt as the default).
+- The keys have to go into the **8042 scancode stream**, not into the BIOS buffer through
+  `BIOS::injectKey()`, because games that hook INT 9 or read port 60h never see the latter. That
+  wants an injection path in `i8042` next to the filter above (the serial console's key injection
+  has the same limit and could move to it).
+- A pad on such a board could just as well drive the game port directly; the per machine option
+  then chooses between game port and keys.
+- Belongs to the port, see [platform-split.md](platform-split.md).
