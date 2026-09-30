@@ -103,8 +103,8 @@ A digital two button joystick on the game port, played on the numpad:
   stick puts each axis at minimum, centre or maximum, so the one-shot lengths are roughly 25 us,
   about 575 us (a 50k pot) and about 1.1 ms. They must run on the clock the guest sees (the PIT's
   time base), not host time, or games that count loop iterations will calibrate differently at
-  every emulator speed. The second stick's axes read as not connected (bits stay 0 at once, so
-  software sees one stick); its two buttons stay released.
+  every emulator speed. The second stick's axes read as not connected: with no pot the one-shot never
+  ends, so those bits stay 1 and software times out and sees one stick. Its buttons stay released.
 - Optional: INT 15h AH=84h (read joystick) in `tools/bios.asm`. The original XT BIOS has no such
   call and most games read 201h directly, so this can wait.
 - **Test:** a game port test program (CheckIt has one, and so do many games' setup screens), then
