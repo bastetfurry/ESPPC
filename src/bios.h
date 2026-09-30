@@ -155,6 +155,7 @@ private:
 
   void diskHandler_floppy();
   bool diskHandler_calcAbsAddr(int drive, uint32_t * pos, uint32_t * dest, uint32_t * count);
+  size_t diskHandler_transfer(int drive, bool read, uint32_t pos, uint32_t dest, uint32_t count);
   void diskHandler_floppyExit(uint8_t err, bool setErrStat);
   void diskHandler_HD();
   void diskHandler_HDExit(uint8_t err, bool setErrStat);

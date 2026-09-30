@@ -50,6 +50,7 @@ public:
   // 0xA0000 is the IBM default; a machine with more than 640KB of conventional memory sets
   // 0xB0000 so that 0xA0000-0xAFFFF becomes ordinary RAM (see Machine::setRamSize).
   static void setVideoMemStart(int value) { s_videoMemStart = value; }
+  static int videoMemStart()              { return s_videoMemStart; }
 
   static void reset();
 

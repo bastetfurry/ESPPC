@@ -292,6 +292,9 @@ bool downloadURL(char const * URL, FILE * file)
     p.update(0, "Preparing to download %s", filename);
     HTTPClient http;
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    // getStreamPtr() is the raw socket and does not decode chunked transfer encoding, which would
+    // write the chunk headers into the image. HTTP/1.0 keeps servers from sending chunked bodies.
+    http.useHTTP10(true);
     http.begin(URL);
     int httpCode = http.GET();
     if (httpCode == HTTP_CODE_OK) {
@@ -301,23 +304,29 @@ bool downloadURL(char const * URL, FILE * file)
         auto buf = (uint8_t*) SOC_EXTRAM_DATA_LOW; // use PSRAM as buffer
         WiFiClient * stream = http.getStreamPtr();
         int dsize = 0;
-        while (http.connected() && (len > 0 || len == -1)) {
+        bool failed = (stream == nullptr);
+        while (!failed && http.connected() && (len > 0 || len == -1)) {
           size_t size = stream->available();
           if (size) {
             int c = stream->readBytes(buf, size);
             auto wr = fwrite(buf, 1, c, file);
             if (wr != c) {
-              dsize = 0;
-              break;  // writing failure!
+              failed = true;  // writing failure!
+              break;
             }
             dsize += c;
             if (len > 0)
               len -= c;
-            if (!p.update(tlen > 0 ? (int)((int64_t)dsize * 100 / tlen) : 0, "%s  %.2f / %.2f MB", filename, (double)dsize / 1048576.0, tlen / 1048576.0))
+            // Esc: without this flag an aborted download of unknown size (len == -1) passed as complete
+            if (!p.update(tlen > 0 ? (int)((int64_t)dsize * 100 / tlen) : 0, "%s  %.2f / %.2f MB", filename, (double)dsize / 1048576.0, tlen / 1048576.0)) {
+              failed = true;
               break;
+            }
           }
         }
-        downloadOK = (len == 0 || (len == -1 && dsize > 0));
+        // with no Content-Length the body ends when the server closes, so a dropped connection
+        // cannot be told apart from the end there
+        downloadOK = !failed && (len == 0 || (len == -1 && dsize > 0));
       }
     }
     http.end();
@@ -569,6 +578,17 @@ static void sysReqFloppy(int drive)
   char const * cur = machine->diskFilename(drive);
 
   if (a == 0) {
+    // The file dialog walks the SD card (VFS, FatFs, printf) on the emulator task, 4000 bytes of
+    // stack, called from deep inside its tick. Refuse rather than overflow it. Measured on
+    // 2026-09-30: 3588 bytes free here, the dialog took about 2530 of them; the limit leaves some
+    // room for deeper paths. The log line after the dialog shows what it really left.
+    constexpr size_t DIALOG_STACK = 3072;
+    size_t stackLeft = (uint8_t *) __builtin_frame_address(0) - pxTaskGetStackStart(nullptr);
+    if (stackLeft < DIALOG_STACK) {
+      printf("SysReq: %u bytes of stack left, the file dialog needs %u\n", (unsigned) stackLeft, (unsigned) DIALOG_STACK);
+      ui.message(title, "Not enough stack for the file dialog.");
+      return;
+    }
     constexpr int MAXPATH = 256;
     char * dir  = (char*) malloc(MAXPATH);
     char * name = (char*) malloc(MAXPATH);
@@ -592,6 +612,8 @@ static void sysReqFloppy(int drive)
         snprintf(path, MAXPATH * 2, "%s%s%s", dir, strcmp(dir, "/") ? "/" : "", name);
         machine->setDriveImage(drive, path);
       }
+      printf("SysReq: stack %u bytes free before the file dialog, %u at the low water mark\n",
+             (unsigned) stackLeft, (unsigned) uxTaskGetStackHighWaterMark(nullptr));
     }
     free(dir);
     free(name);

@@ -1180,14 +1180,9 @@ void BIOS::diskHandler_floppy()
         diskHandler_floppyExit(4, true);  // sector not found
         return;
       }
-      fseek(m_machine->disk(drive), pos, 0);
       size_t sects = i8086::AL();
-      if (service != 0x04) {
-        sects = service == 0x02 ?
-                  fread(m_memory + dest, 1, count, m_machine->disk(drive)) :
-                  fwrite(m_memory + dest, 1, count, m_machine->disk(drive));
-        sects /= 512;
-      }
+      if (service != 0x04)
+        sects = diskHandler_transfer(drive, service == 0x02, pos, dest, count) / 512;
       i8086::setAL(sects);
       diskHandler_floppyExit(sects == 0 ? 4 : 0, true);
       m_machine->resetDiskChanged(drive);
@@ -1373,12 +1368,43 @@ bool BIOS::diskHandler_calcAbsAddr(int drive, uint32_t * pos, uint32_t * dest, u
   int track  = i8086::CH() | (((uint16_t)i8086::CL() & 0xc0) << 2);
   int sector = i8086::CL() & 0x3f;
   int head   = i8086::DH();
-  if (sector > sectorsPerTrack)
+  // sectors count from 1: sector 0 made pos wrap to 0xFFFFFE00, the fseek failed, and the transfer
+  // silently used whatever position the file was left at. A head past the geometry would alias
+  // into the next cylinder.
+  if (sector < 1 || sector > sectorsPerTrack || head >= heads)
     return false;
   *pos   = 512 * ((track * heads + head) * sectorsPerTrack + (sector - 1));
   *dest  = i8086::ES() * 16 + i8086::BX();
   *count = i8086::AL() * 512;
   return true;
+}
+
+
+// Moves count bytes between the image at pos and guest memory at dest, as the DMA would. Only
+// memory below the video window is taken directly; the rest of the transfer is open bus, so a read
+// into it is dropped and a write from it stores 0xFF. Straight to m_memory, a transfer there went
+// past the video adapter, overwrote the ROMs, or past 1MB ran off the end of guest RAM.
+size_t BIOS::diskHandler_transfer(int drive, bool read, uint32_t pos, uint32_t dest, uint32_t count)
+{
+  FILE * file = m_machine->disk(drive);
+  uint32_t ramEnd = i8086::videoMemStart();
+  uint32_t direct = dest < ramEnd ? fabgl::tmin<uint32_t>(count, ramEnd - dest) : 0;
+  size_t done = 0;
+  fseek(file, pos, SEEK_SET);
+  if (direct)
+    done = read ? fread(m_memory + dest, 1, direct, file) : fwrite(m_memory + dest, 1, direct, file);
+  if (done < direct)
+    return done;
+  uint32_t rest = count - direct;
+  if (read) {
+    // nothing to store, but the sectors must still exist on the image
+    uint64_t size = m_machine->diskSize(drive);
+    uint64_t from = (uint64_t) pos + direct;
+    return done + (from >= size ? 0 : (size_t) fabgl::tmin<uint64_t>(rest, size - from));
+  }
+  for (; rest && fputc(0xFF, file) != EOF; --rest)
+    ++done;
+  return done;
 }
 
 
@@ -1442,14 +1468,9 @@ void BIOS::diskHandler_HD()
         diskHandler_HDExit(4, true);  // sector not found
         return;
       }
-      fseek(m_machine->disk(drive), pos, 0);
       size_t sects = i8086::AL();
-      if (service != 0x04) {
-        sects = service == 0x02 ?
-                  fread(m_memory + dest, 1, count, m_machine->disk(drive)) :
-                  fwrite(m_memory + dest, 1, count, m_machine->disk(drive));
-        sects /= 512;
-      }
+      if (service != 0x04)
+        sects = diskHandler_transfer(drive, service == 0x02, pos, dest, count) / 512;
       i8086::setAL(sects);
       diskHandler_HDExit(sects == 0 ? 4 : 0, true);
       return;
