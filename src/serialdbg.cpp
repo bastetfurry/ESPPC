@@ -1141,6 +1141,12 @@ void SerialDebug::cmdUsbSerial(char const * args)
     ++args;
 
   if (*args) {
+    // a port with a physical UART behind it (the U1 header) is not the USB serial's to take
+    int want = !strncmp(args, "com1", 4) ? 1 : (!strncmp(args, "com2", 4) ? 2 : 0);
+    if (want && (want == 1 ? m_machine->com1() : m_machine->com2())->hasSerialPort()) {
+      writeFmt("COM%d is on the U1 serial header, it cannot go over USB as well\r\n", want);
+      return;
+    }
     if      (!strncmp(args, "off",  3)) setUsbSerialRoute(0);
     else if (!strncmp(args, "com1", 4)) setUsbSerialRoute(1);
     else if (!strncmp(args, "com2", 4)) setUsbSerialRoute(2);

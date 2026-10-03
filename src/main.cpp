@@ -66,6 +66,11 @@ extern "C" {
 #define UART_URX 3
 #define UART_UTX 1
 
+// the U1 ("Access_Bus") header of the ESP32-SBC-FabGL, 3.3V levels, driven by UART1
+#define U1_URX   34
+#define U1_UTX   2
+#define U1_UART  1
+
 
 
 
@@ -436,17 +441,23 @@ static void drawSetupDetails(MachineConfItem * c)
   ui.text(61, 13, c->debugConsole ? "Enabled" : "Disabled", TUI_VALUE);
   ui.text(49, 14, "USB Serial", TUI_LABEL);
   ui.text(61, 14, USB[c->effectiveUsbSerial() % 3], TUI_VALUE);
-  ui.text(49, 16, "AdLib", TUI_LABEL);
-  ui.text(61, 16, c->adlib ? "Enabled" : "Disabled", TUI_VALUE);
-  ui.text(49, 15, "Tandy Sound", TUI_LABEL);
-  ui.text(61, 15, !(c->tandySound || c->videoAdapter == 2) ? "Disabled" : (c->tandyDAC ? "With DAC" : "Enabled"), TUI_VALUE);
+  ui.text(49, 15, "U1 Serial", TUI_LABEL);
+  ui.text(61, 15, USB[c->hwSerial % 3], TUI_VALUE);
+  ui.text(49, 16, "Tandy Sound", TUI_LABEL);
+  ui.text(61, 16, !(c->tandySound || c->videoAdapter == 2) ? "Disabled" : (c->tandyDAC ? "With DAC" : "Enabled"), TUI_VALUE);
+  ui.text(49, 17, "AdLib", TUI_LABEL);
+  ui.text(61, 17, c->adlib ? "Enabled" : "Disabled", TUI_VALUE);
 
-  // a disk given as a URL is fetched on boot if the SD card does not have it yet
-  for (int i = 0; i < DISKCOUNT; ++i)
-    if (c->disk[i] && (!strncmp(c->disk[i], "http://", 7) || !strncmp(c->disk[i], "https://", 8))) {
-      ui.text(49, 17, "Downloads missing disks", TUI_DIM);
-      break;
-    }
+  // the U1 header wins a shared COM port, see setup()
+  if (c->serialConflict())
+    ui.textf(49, 18, TUI_LABEL, "COM%d on USB and U1: U1 wins", c->hwSerial);
+  else
+    // a disk given as a URL is fetched on boot if the SD card does not have it yet
+    for (int i = 0; i < DISKCOUNT; ++i)
+      if (c->disk[i] && (!strncmp(c->disk[i], "http://", 7) || !strncmp(c->disk[i], "https://", 8))) {
+        ui.text(49, 18, "Downloads missing disks", TUI_DIM);
+        break;
+      }
 }
 
 
@@ -1006,6 +1017,23 @@ void setup()
   // those pins over, so printf() output stops reaching the host from here on. The serial debug
   // console needs those pins too, so the machine gets one or the other, never both.
   int usbSerial = conf->effectiveUsbSerial();   // 0 = none, 1 = COM1, 2 = COM2
+
+  // The U1 header has UART1 to itself, so it gets along with whatever is on the USB serial -- except
+  // when both were given the same COM port. Then the header has it and the USB serial goes without,
+  // as the machine editor warned when it was saved.
+  if (conf->hwSerial) {
+    if (conf->serialConflict()) {
+      printf("COM%d is set for both the USB serial and U1; it goes to U1, the USB serial gets none.\n", conf->hwSerial);
+      usbSerial = 0;
+    }
+    printf("COM%d on the U1 serial header\n", conf->hwSerial);
+    auto serial = new SerialPort;
+    serial->setSignals(U1_URX, U1_UTX);
+    if (conf->hwSerial == 2)
+      machine->setCOM2(serial, U1_UART);
+    else
+      machine->setCOM1(serial, U1_UART);
+  }
 
   if (conf->debugConsole) {
     // The console owns the pins, so a COM port cannot have them. It is carried in software

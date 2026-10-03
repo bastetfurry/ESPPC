@@ -193,6 +193,8 @@ void MachineConf::loadFromFile(FILE * file)
       item->setDebugConsole(value);
     else if (strcmp("usbserial", tag) == 0)
       item->setUsbSerial(value);
+    else if (strcmp("hwserial", tag) == 0)
+      item->setHwSerial(value);
     else if (strcmp("video", tag) == 0)
       item->setVideoAdapter(value);
     else if (strcmp("egarom", tag) == 0)
@@ -242,6 +244,8 @@ void MachineConf::saveToFile(FILE * file)
       fprintf(file, "usbserial %s ", item->usbSerial == 2 ? "com2" : "com1");
     else if (item->usbSerialSet)
       fputs("usbserial off ", file);
+    if (item->hwSerial != 0)
+      fprintf(file, "hwserial %s ", item->hwSerial == 2 ? "com2" : "com1");
     if (item->videoAdapter == 1) {
       fputs("video ega ", file);
       if (item->egaRom && item->egaRom[0]) {

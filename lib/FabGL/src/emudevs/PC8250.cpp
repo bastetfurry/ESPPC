@@ -108,11 +108,11 @@ void PC8250::reset()
 }
 
 
-void PC8250::setSerialPort(SerialPort * value)
+void PC8250::setSerialPort(SerialPort * value, int uartIndex)
 {
   m_serialPort = value;
   m_serialPort->setCallbacks(this, rxReadyCallback, rxCallback);
-  m_serialPort->setup(2, 115200, 8, 'N', 1, fabgl::FlowControl::None);
+  m_serialPort->setup(uartIndex, 115200, 8, 'N', 1, fabgl::FlowControl::None);
 }
 
 

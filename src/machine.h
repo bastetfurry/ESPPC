@@ -234,9 +234,9 @@ public:
   // but can never raise IRQ4, and nothing it transmits gets anywhere.
   void bridgeCOM(int port, void * context, PC8250::TXCallback txCallback);
 
-  void setCOM1(SerialPort * serialPort);
+  void setCOM1(SerialPort * serialPort, int uartIndex = 2);
   
-  void setCOM2(SerialPort * serialPort);
+  void setCOM2(SerialPort * serialPort, int uartIndex = 2);
 
   void run();
 

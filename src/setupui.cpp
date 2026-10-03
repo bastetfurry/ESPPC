@@ -541,7 +541,7 @@ char const * const USB_OPTS[]   = { "Not Connected", "COM1", "COM2" };
 
 enum {
   F_DESC, F_FD0, F_FD1, F_HD0, F_HD0CHS, F_HD1, F_HD1CHS,
-  F_BOOT, F_RAM, F_VIDEO, F_COMPOSITE, F_EGAROM, F_TSOUND, F_TDAC, F_ADLIB, F_DEBUG, F_USB,
+  F_BOOT, F_RAM, F_VIDEO, F_COMPOSITE, F_EGAROM, F_TSOUND, F_TDAC, F_ADLIB, F_DEBUG, F_USB, F_HWSER,
   F_COUNT
 };
 
@@ -563,6 +563,7 @@ Field const FIELDS[F_COUNT] = {
   { "AdLib",            Kind::Choice, "An AdLib sound card: the Yamaha OPL2 FM synthesiser at port 388h, the music of most games from the late 1980s on. It is synthesised on the video core, after the picture.", ONOFF_OPTS, 2 },
   { "Serial Debug Cons.", Kind::Choice, "Host debug console on the USB serial line: screen mirror, monitor, breakpoints.", ONOFF_OPTS, 2 },
   { "USB Serial Port",  Kind::Choice, "Which emulated COM port reaches the host over the USB serial. Works alongside the debug console.", USB_OPTS, 3 },
+  { "U1 Serial Port",   Kind::Choice, "Which emulated COM port is on the U1 header: pin 5 TXD, 6 RXD, 3 GND. 3.3V levels, no 5V. Must not be the USB serial's port.", USB_OPTS, 3 },
 };
 
 // the values being edited, apart from the configuration item until they are saved
@@ -652,6 +653,7 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
   v->choice[F_ADLIB]  = item->adlib ? 1 : 0;
   v->choice[F_DEBUG] = item->debugConsole ? 1 : 0;
   v->choice[F_USB]   = item->effectiveUsbSerial() % 3;
+  v->choice[F_HWSER] = item->hwSerial % 3;
 
   // --- screen ---
   ui.clear(TUI_SCREEN);
@@ -668,15 +670,32 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
   ui.text(2, 22, "F10:Save & Exit   Esc:Exit", TUI_SCREEN);
 
   int  sel      = 0;
+  int  top      = 0;      // first visible item shown: with every optional row on, they outgrow the box
   bool modified = false;
   bool saved    = false;
 
+  constexpr int ROWS = 16;
+
   while (true) {
 
+    // scroll so the selection is on screen
+    int pos = 0, shown = 0;
+    for (int f = 0; f < F_COUNT; ++f)
+      if (isVisible(*v, f)) {
+        if (f == sel)
+          pos = shown;
+        ++shown;
+      }
+    if (pos < top)
+      top = pos;
+    if (pos >= top + ROWS)
+      top = pos - ROWS + 1;
+    top = imax(0, imin(top, shown - ROWS));
+
     // items, one row each, hidden ones skipped
-    int row = 3;
-    for (int f = 0; f < F_COUNT; ++f) {
-      if (!isVisible(*v, f))
+    int row = 3, idx = 0;
+    for (int f = 0; f < F_COUNT && row < 3 + ROWS; ++f) {
+      if (!isVisible(*v, f) || idx++ < top)
         continue;
       bool isSel = (f == sel);
       char val[40];
@@ -687,8 +706,11 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
       ui.text(49, row, "]", TUI_SCREEN);
       ++row;
     }
-    for (; row < 19; ++row)
+    for (; row < 3 + ROWS; ++row)
       ui.text(2, row, "", TUI_SCREEN, 49);
+    // the frame's own column says when there is more above or below
+    ui.put(1, 3,  top > 0 ? 0x18 : ' ', TUI_DIM);
+    ui.put(1, 18, top + ROWS < shown ? 0x19 : ' ', TUI_DIM);
 
     // help, and the full value where it did not fit
     wrapText(ui, 54, 5, 24, 9, FIELDS[sel].help, TUI_SCREEN);
@@ -714,7 +736,7 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
       continue;
     }
     if (k.vk == VirtualKey::VK_HOME || k.vk == VirtualKey::VK_KP_HOME) { sel = 0; continue; }
-    if (k.vk == VirtualKey::VK_END || k.vk == VirtualKey::VK_KP_END)   { sel = F_USB; continue; }
+    if (k.vk == VirtualKey::VK_END || k.vk == VirtualKey::VK_KP_END)   { sel = F_COUNT - 1; continue; }
 
     Field const & fd = FIELDS[sel];
 
@@ -838,6 +860,14 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
           continue;
       }
 
+      // One COM port cannot be on two lines. The U1 header gets it at boot and the USB serial none.
+      if (v->choice[F_HWSER] != 0 && v->choice[F_HWSER] == v->choice[F_USB]) {
+        char q[120];
+        snprintf(q, sizeof(q), "COM%d is set for both the USB serial\nand the U1 header. U1 will get it,\nthe USB serial will carry nothing.", v->choice[F_HWSER]);
+        if (ui.message("Warning", q, "Cancel;Save Anyway") != 1)
+          continue;
+      }
+
       item->setDesc(v->text[F_DESC]);
       for (int d = 0; d < DISKCOUNT; ++d)
         item->setDisk(d, v->text[diskField[d]]);
@@ -857,6 +887,7 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
       item->debugConsole = v->choice[F_DEBUG] != 0;
       // written explicitly once the page has been used, so the file records the choice
       item->setUsbSerial(v->choice[F_USB] == 2 ? "com2" : (v->choice[F_USB] == 1 ? "com1" : "off"));
+      item->hwSerial     = v->choice[F_HWSER];
 
       saveMachineConfiguration(&mconf);
       saved = true;

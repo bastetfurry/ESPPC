@@ -126,6 +126,7 @@ struct MachineConfItem {
   bool              debugConsole;             // "enabledebug": serial debug console instead of COM1
   uint8_t           usbSerial;                // "usbserial": 0 = off, 1 = COM1, 2 = COM2
   bool              usbSerialSet;             // whether the file said so, see applyUsbSerial()
+  uint8_t           hwSerial;                 // "hwserial": port on the U1 header, 0 = off, 1 = COM1, 2 = COM2
   uint8_t           videoAdapter;             // "video": 0 = CGA (default), 1 = EGA, 2 = Tandy 1000
   char            * egaRom;                   // "egarom": path to the EGA BIOS option ROM
   bool              tandySound;               // "tandysound": SN76496 at C0h without the Tandy video
@@ -145,6 +146,7 @@ struct MachineConfItem {
       debugConsole(false),
       usbSerial(0),
       usbSerialSet(false),
+      hwSerial(0),
       videoAdapter(0),
       egaRom(nullptr),
       tandySound(false),
@@ -230,9 +232,25 @@ struct MachineConfItem {
   // What the machine should actually do when nothing was written down. A machine without the debug
   // console has always had COM1 on the USB serial, so that stays the default; one with the console
   // has always had no COM port at all, and silently bridging one would put guest output into the
-  // middle of the console stream.
+  // middle of the console stream. The default never takes the port the U1 header already has.
   uint8_t effectiveUsbSerial() const            {
-    return usbSerialSet ? usbSerial : (debugConsole ? 0 : 1);
+    if (usbSerialSet)
+      return usbSerial;
+    return (debugConsole || hwSerial == 1) ? 0 : 1;
+  }
+
+  // "hwserial com1" or "com2" puts that emulated port on the U1 header (TXD GPIO2, RXD GPI34,
+  // 3.3V levels) through UART1; "off" or no tag leaves the header unused.
+  void setHwSerial(char const * value)          {
+    if      (value && (value[0] == '1' || !strncasecmp(value, "com1", 4))) hwSerial = 1;
+    else if (value && (value[0] == '2' || !strncasecmp(value, "com2", 4))) hwSerial = 2;
+    else                                                                  hwSerial = 0;
+  }
+
+  // Both the USB serial and the U1 header asked for the same COM port. Only one can have it: the
+  // header wins, see setup() in main.cpp.
+  bool serialConflict() const                   {
+    return hwSerial != 0 && hwSerial == effectiveUsbSerial();
   }
 
   void setRamSize(char const * value)           {

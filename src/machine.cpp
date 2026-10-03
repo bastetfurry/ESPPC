@@ -358,17 +358,17 @@ void Machine::bridgeCOM(int port, void * context, PC8250::TXCallback txCallback)
 }
 
 
-void Machine::setCOM1(SerialPort * serialPort)
+void Machine::setCOM1(SerialPort * serialPort, int uartIndex)
 {
   m_COM1.setCallbacks(this, COM1Interrupt);
-  m_COM1.setSerialPort(serialPort);
+  m_COM1.setSerialPort(serialPort, uartIndex);
 }
 
 
-void Machine::setCOM2(SerialPort * serialPort)
+void Machine::setCOM2(SerialPort * serialPort, int uartIndex)
 {
   m_COM2.setCallbacks(this, COM2Interrupt);
-  m_COM2.setSerialPort(serialPort);
+  m_COM2.setSerialPort(serialPort, uartIndex);
 }
 
 
