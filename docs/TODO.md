@@ -13,119 +13,29 @@ roughly 14 KB more (37.6 KB free in SQ3's mode 0Dh against 23.6 KB at the DOS pr
 opened in both with 16 KB to spare). A proper check would estimate the need from the current mode
 and refuse with a log line rather than hang. The monitor's `v` line is only a rough guide so far.
 
-## Machine repositories: add machines from any URL
+## Machine repositories: what is left
 
-**Built on branch `machine-repository`** (F6 on the machine list, `src/repository.cpp`, the parser
-in `src/repolist.cpp` with host tests in `tools/repotest/`), as specified below except where the
-notes under "Open points" say otherwise. Still to do: the testing list at the end on the board, and
-paging through a repository bigger than one page beyond typing the page URL.
+Repositories are done and merged, see [repositories.md](repositories.md). Still open:
 
-Replaces the hardcoded machine list (`DefaultConfFile` in `src/mconf.h`, 13 fabglib.org entries
-written into a fresh `mconfs.txt`) with a repository the user points the board at.
+- **Untested on the board:** a list with more than 20 lines, a missing `files.list`, an image
+  without Content-Length (the "floppy or hard disk?" question), Esc during the list fetch and
+  during a download, the "Try Again / Machine List" question after a failed download, and a floppy
+  image from a repository.
+- **Paging:** a repository with more than 20 machines is only reachable by typing the page URL
+  (`.../2`). A key to go to the next page would be nicer.
+- **Faster downloads:** about 180 KB/s now. The next limit is the lwIP and Wi-Fi buffer sizes the
+  Arduino framework is compiled with (TCP window 5760), which means building those libraries
+  ourselves.
+- Seen once, not reproduced: a LoadProhibited in lwIP's `poll_tcp` (tcp_slowtmr) during a
+  download, before the Wi-Fi power fix.
 
-### The repository format
+## The 16550 UART, waiting for another modem
 
-A repository is a URL, for example `http://foo.test/pcimages/1`. The board fetches
-`<URL>/files.list` from it (a trailing `/` is tolerated, and a URL already ending in `files.list`
-is used as is). The list is CSV, one machine per line, **at most 20 machines**:
-
-```
-"Name", "Full-Imagefile-URL", "Memory in KB", "Machine-Type", "Explanation"
-"FreeDOS 1.3", "http://foo.test/pcimages/img/freedos.img", "640", "CGA Adlib", "FreeDOS only"
-"Tandy DeskMate", "http://foo.test/pcimages/img/deskmate.img", "640", "Tandy TandyDAC", "DeskMate in autoboot"
-```
-
-- Fields may be quoted; `""` inside quotes is a literal quote. Blank lines and lines starting with
-  `#` are skipped. A first line whose name field is literally `Name` is taken as a header and
-  skipped, so the example above is valid as written.
-- A repository with more machines splits itself into numbered pages (`.../1`, `.../2`, `.../3`);
-  the user enters the page they want. Lines after the 20th are ignored, and the list says so.
-- Memory: 64 to 704 in steps of 64, as in the machine editor. Anything else rejects that line.
-- Machine type: one of `CGA`, `EGA`, `Tandy` (not case sensitive), then optionally `Adlib` and
-  `TandyDAC`, in any order. Maps to `videoAdapter` 0 / 1 / 2, `adlib`, `tandyDAC`. `TandyDAC` on
-  CGA or EGA also sets `tandySound`, since the DAC needs the sound chip. EGA leaves `egarom` empty,
-  so the flash `ega.bin` is used, as it is today. Unknown words reject the line, so a typo does not
-  quietly produce a different machine.
-- A rejected line shows up in the list greyed out with the reason, rather than disappearing.
-- The explanation field is truncated to 78 chars.
-
-### On the board
-
-- Machine selection screen: **F6 : Add from Repository**. It asks for the URL with the existing
-  text input (the one behind "Type a Path or URL..."), prefilled with the last URL used, which is
-  kept in Preferences next to the other host settings.
-- Wi-Fi as for downloads today (`checkWiFi()`), then fetch the list into a PSRAM buffer, capped at
-  a few KB, with the same HTTP/1.0 and abort handling as `downloadURL()`.
-- Show the up to 20 entries (name, type, memory); Enter adds the selected one to `mconfs.txt`, and
-  the list stays open to add more. An entry whose image URL is already in `mconfs.txt` asks first.
-- The image itself is **not** downloaded here: the new machine stores the URL, and `getDisk()`
-  fetches it on first boot, as it already does for URLs.
-- Floppy or hard disk: the CSV does not say, and the entry needs `fd0` or `hd0` (and `boot hd0`)
-  before anything is downloaded. Plan: an HTTP HEAD for the image's size when it is added; a
-  standard floppy size (160K to 2.88M, the table in `Machine::autoDetectDriveGeometry`) means
-  `fd0`, anything else `hd0` with `boot hd0`. No length in the answer means asking the user.
-- Drop `DefaultConfFile`'s entries: a fresh `mconfs.txt` starts empty, and an empty machine list
-  shows a hint pointing at F6. Existing `mconfs.txt` files are left alone.
-
-### Open points, and how they were settled
-
-- **Name collisions on the SD card.** `getDisk()` saves a download under the URL's base name in the
-  SD root and reuses an existing file of that name. Adding a machine whose image would share a file
-  with another machine's warns and asks; per host folders were not done, as they would make every
-  existing URL machine download again.
-- **HTTPS** works without a CA bundle: `HTTPClient::begin()` falls back to `setInsecure()`, so it
-  is encrypted but not authenticated. There was internal RAM for it during setup (25-50 KB free
-  while downloading).
-- **Redirects across protocols** were the surprise: a server that moves http to https answers 301,
-  and HTTPClient will not follow a redirect that changes the protocol. `httpOpen()` (src/httpopen.*)
-  follows them itself, for the list, the size check and the image download.
-- Relative image URLs: not allowed, the spec says full URLs.
-
-### Downloads (getDisk)
-
-Reworked along the way, since a 40 MB image showed every weakness:
-
-- Resumable: the data goes to `<name>.part`, kept when an attempt fails, continued with a Range
-  request (on the spot after a dropped connection, or at the next boot) and renamed when complete.
-  The part is synced every 512 KB, since FAT only records a file's length on close or sync.
-- A failed download no longer restarts into the same machine (an endless loop with Auto Boot); it
-  asks "Try Again / Machine List", and the list comes up after the restart.
-- Wi-Fi that drops during a download is reconnected between attempts.
-- The progress box shows MB, KB/s and the time left; the serial line gets a line every 10 s.
-- **The SD card now runs at 20 MHz from the start.** Below 20 MHz this card wrote 30 times slower
-  (45 against 1400 KB/s, in any order: `pio run -e sdbench`), and FabGL kept 19 MHz until after the
-  downloads. Writes go in 16 KB sector aligned blocks from internal (DMA capable) RAM.
-- **Wi-Fi transmits at 8.5 dBm instead of 19.5.** At full power the 3.3V rail dipped on transmit
-  bursts (board on a USB 3 port): during downloads Wi-Fi went deaf every few minutes while still
-  reporting itself connected, and the SD card stopped answering mid-transfer until powered off.
-  At half power 26 MB ran through without a stall at 180 KB/s, with the signal unchanged around
-  -50 dBm. A board far from its access point may need more; a bulk capacitor on the 3.3V rail
-  would be the hardware fix. Stalls are still handled: after 10 s without data, or a refused
-  request, the Wi-Fi association is renewed, and drops log their disconnect reason.
-- The free internal RAM matters as well: TLS takes about 60 KB of the ~98 KB free, and the Wi-Fi
-  driver's receive buffers come out of the rest, so the download's own buffers stay small (4 KB
-  block, 8 KB task stack, 2.5 KB of it unused).
-- The network ceiling measured before the power fix (100-170 KB/s, `pio run -e dltest`) was partly
-  lost packets; the lwIP and Wi-Fi buffer sizes compiled into the framework (TCP window 5760) are
-  the next limit. A 40 MB image takes about 4 minutes.
-- Seen once, not reproduced: a LoadProhibited in lwIP's `poll_tcp` (tcp_slowtmr) during a download.
-- The download runs in a task on core 0, next to Wi-Fi: on core 1 it starved the VGA interrupt
-  into visible glitches.
-- **A reset in the middle of an SD transfer leaves the card stuck** until it loses power: it keeps
-  its power over a reset of the ESP32, and then answers nothing, not even CMD0 (reproduced with a
-  timer restart while writing; a restart while idle is harmless, with or without Wi-Fi). Software
-  restarts now flush the guest's disks and unmount the card first (the shutdown handler), and the
-  mount at boot tries to talk a stuck card round (`src/sdrecover.cpp`: stop token, CMD12, clocks),
-  which worked in most tries. It deliberately does not finish a half sent data block, as that
-  would write filler into whatever sector was being written. If nothing helps, the POST says to
-  unplug the board.
-
-### Testing
-
-A local repository first: a folder with `files.list` and a few small images, served from the PC
-with `python3 -m http.server` (which answers HTTP/1.0, like the board asks). Cover: a valid list,
-more than 20 lines, a header line, bad memory and type values, quoting, a missing `files.list`, an
-image without Content-Length, Esc during the list fetch, and a floppy and a hard disk image.
+On branch `serial-16550` (53c63a0, not merged): the emulated UART as a 16550A with a 2 KB receive
+ring, THRE pacing from the host UART, traffic counters (monitor `n` and the SysReq menu), and the
+IRAM margin check in the build. The ESP8266 softmodem on U1 showed framing errors and lost pings
+even at 2400 baud, so the user is getting a different modem before this is tested further. Note:
+`main` has moved on since (download task, Wi-Fi power), so the branch needs a rebase or merge.
 
 ## Numpad as a joypad, and later a joypad as keys
 
