@@ -121,6 +121,25 @@ After that the RP2350 port is "write the platform layer": display backend (PIO V
 input (PIO PS/2 or USB HID), audio (PWM or I2S), storage (SD over PIO/SPI with FatFs), settings
 (flash), tasks (bare metal per core or FreeRTOS SMP), time (the hardware timer).
 
+## More targets (added 2026-10-04)
+
+The same split serves two more platforms, which is a good test of whether the line is clean:
+
+- **ESP32-S3.** FabGL does not run on it (no I2S parallel mode as the ESP32 has it, a different
+  ULP, different peripherals), so here the split is not optional: everything FabGL does today has
+  to come from our own backends. VGA through the S3's LCD_CAM peripheral (as the S3 VGA libraries
+  do it), keyboard by USB OTG HID or PS/2 through GPIO, Wi-Fi as on the ESP32. More internal RAM
+  and octal PSRAM than the WROVER, so the memory and speed picture changes too.
+- **SDL on the host.** Step 12's host platform with interactive backends: the display in a window,
+  keyboard from SDL events, sound through SDL audio, disks and settings as plain files. For trying
+  changes without flashing, for debugging with a real debugger, and for the boot tests. The
+  headless host stays for automated runs.
+- **No Wi-Fi.** An RP2350 board without a radio module (or with one added separately) reports the
+  network capability absent: no NTP (the clock from the RTC or a fixed date), no repositories or
+  URL disks, and the setup screens hide what needs it. The repository list and the downloads
+  already live in their own files (`src/repository.cpp`, `src/httpopen.cpp`, `downloadURL()`),
+  so they move behind the network interface as one piece.
+
 ## Open questions, for later
 
 - **RP2350 video:** VGA through a resistor DAC (PIO, e.g. RGB565 -- MCGA and beyond become possible)

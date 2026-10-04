@@ -37,6 +37,15 @@ IRAM margin check in the build. The ESP8266 softmodem on U1 showed framing error
 even at 2400 baud, so the user is getting a different modem before this is tested further. Note:
 `main` has moved on since (download task, Wi-Fi power), so the branch needs a rebase or merge.
 
+## A clean line between the emulator and FabGL
+
+Parked 2026-10-04, for porting. The emulator should not reach into FabGL (or the ESP32, or
+Arduino) directly but through a platform layer of its own, so that other targets only need that
+layer written: an RP2350 board (no Wi-Fi unless added separately), an ESP32-S3 (where FabGL does
+not run at all), and an SDL build on the PC for local tests. The plan, its steps and the ground
+rules (no speed loss on the ESP32, no behaviour change per step) are in
+[platform-split.md](platform-split.md), now with the S3 and SDL as targets.
+
 ## Numpad as a joypad, and later a joypad as keys
 
 ### Numpad to game port (this board)
