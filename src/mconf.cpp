@@ -280,10 +280,10 @@ void loadMachineConfiguration(MachineConf * mconf)
 {
   FileBrowser fb(SD_MOUNT_PATH);
 
-  // saves a default configuration file if necessary
+  // A fresh SD card starts with an empty list: machines come from a repository (F6 on the
+  // selection screen) or the editor. There used to be a built-in list of fabglib.org images here.
   if (!fb.exists(MACHINE_CONF_FILENAME, false)) {
     auto confFile = fb.openFile(MACHINE_CONF_FILENAME, "wb");
-    fwrite(DefaultConfFile, 1, sizeof(DefaultConfFile), confFile);
     fclose(confFile);
   }
 

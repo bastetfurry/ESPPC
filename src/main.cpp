@@ -52,6 +52,9 @@ extern "C" {
 #include <Preferences.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "fabgl.h"
 
@@ -59,6 +62,10 @@ extern "C" {
 #include "machine.h"
 #include "textui.h"
 #include "setupui.h"
+#include "repository.h"
+#include "httpopen.h"
+#include "sdrecover.h"
+#include "driver/spi_master.h"
 
 
 
@@ -83,7 +90,7 @@ bool tryToConnect();
 bool checkWiFi();
 void shutdownHandler();
 void updateDateTime();
-bool downloadURL(char const * URL, FILE * file);
+bool downloadURL(char const * URL, char const * path);
 char const * getDisk(char const * url);
 void sysReqCallback();
 void setup();
@@ -98,6 +105,11 @@ Machine     * machine;
 
 // noinit! Used to maintain datetime between reboots
 __NOINIT_ATTR static timeval savedTimeValue;
+
+// noinit as well: set before a restart that should come back to the machine list rather than boot
+// the selected machine, ie after a download failed, which with Auto Boot would only start it again
+__NOINIT_ATTR static uint32_t showListAfterRestart;
+static constexpr uint32_t SHOW_LIST_MAGIC = 0x4c495354;    // "LIST"
 
 
 static bool wifiConnected = false;
@@ -144,6 +156,11 @@ bool tryToConnect()
         connected = (WiFi.status() == WL_CONNECTED);
       });
       if (connected) {
+        // Half the transmit power. At full power the 3.3V rail dips on every transmit burst: during
+        // a download Wi-Fi went deaf every few minutes and the SD card stopped answering until it
+        // was powered off (2026-10-04, board on a USB 3 port). At 8.5 dBm a 26 MB download ran
+        // through without a stall, at 180 KB/s against 100 before, with the signal still at -50 dBm.
+        WiFi.setTxPower(WIFI_POWER_8_5dBm);
         ui.postResult(WiFi.localIP().toString().c_str(), TUI_POST_OK);
       } else {
         WiFi.disconnect();
@@ -220,6 +237,35 @@ void shutdownHandler()
 {
   // save current datetime into Preferences
   gettimeofday(&savedTimeValue, nullptr);
+
+  // Leave the SD card idle. It keeps its power over the restart, and one reset in the middle of
+  // a transfer stops answering until it is powered off (reproduced with "pio run -e sdbench").
+  // The guest's disk writes may still sit in stdio's buffers.
+  if (machine)
+    for (int i = 0; i < DISKCOUNT; ++i)
+      if (machine->disk(i))
+        fflush(machine->disk(i));
+  FileBrowser::unmountSDCard();
+}
+
+
+// Mounts the SD card, and gets it back first if a reset left it stuck in the middle of a transfer
+// (see sdRecoverCard()). That works most of the time; the rest needs a power cycle.
+static bool mountSD()
+{
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    if (FileBrowser::mountSDCard(false, SD_MOUNT_PATH, 8))   // @TODO: reduce to 4?
+      return true;
+    printf("SD card: mount failed, attempt %d, trying to recover it\n", attempt + 1);
+    // the pins as FileBrowser::mountSDCard() picks them; the bus is given up so that the next
+    // mount sets the pins up again after the recovery has used them as plain GPIOs
+    bool d0wdq5 = fabgl::getChipPackage() == fabgl::ChipPackage::ESP32D0WDQ5;
+    bool picod4 = fabgl::getChipPackage() == fabgl::ChipPackage::ESP32PICOD4;
+    spi_bus_free(HSPI_HOST);
+    sdRecoverCard(d0wdq5 ? 35 : (picod4 ? 2 : 16), (d0wdq5 || picod4) ? 12 : 17, 14, 13);
+    delay(300);
+  }
+  return false;
 }
 
 
@@ -286,58 +332,303 @@ void updateDateTime()
 }
 
 
-// download specified filename from URL
-bool downloadURL(char const * URL, FILE * file)
+// Runs work in a task of its own on core 0 and waits for it. During setup the main task runs on core
+// 1, which is the VGA output's: FabGL keeps its scanline interrupt off the Wi-Fi core, and a
+// download there (TLS, the SD card's SPI traffic, copying out of lwIP) starved it into visible
+// glitches. Core 0 already has Wi-Fi and the TCP/IP stack.
+static void runOnWiFiCore(std::function<void()> work, uint32_t stackBytes)
 {
-  downloadOK = false;
+  struct Job {
+    std::function<void()> * work;
+    SemaphoreHandle_t       done;
+  } job = { &work, xSemaphoreCreateBinary() };
 
-  char const * filename = strrchr(URL, '/') + 1;
+  auto body = [](void * arg) {
+    auto j = (Job *) arg;
+    (*j->work)();
+    printf("download task: %u bytes of stack never used\n", (unsigned) uxTaskGetStackHighWaterMark(nullptr));
+    xSemaphoreGive(j->done);
+    vTaskDelete(nullptr);
+  };
+  if (job.done && xTaskCreatePinnedToCore(body, "download", stackBytes, &job, 2, nullptr, 0) == pdPASS)
+    xSemaphoreTake(job.done, portMAX_DELAY);
+  else
+    work();         // no memory for a task: here, glitches and all
+  if (job.done)
+    vSemaphoreDelete(job.done);
+}
 
-  ui.progress("Download", true, [&](TextUI::Progress & p) {
-    p.update(0, "Preparing to download %s", filename);
-    HTTPClient http;
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    // getStreamPtr() is the raw socket and does not decode chunked transfer encoding, which would
-    // write the chunk headers into the image. HTTP/1.0 keeps servers from sending chunked bodies.
-    http.useHTTP10(true);
-    http.begin(URL);
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK) {
-      if (file) {
-        int tlen = http.getSize();
-        int len = tlen;
-        auto buf = (uint8_t*) SOC_EXTRAM_DATA_LOW; // use PSRAM as buffer
-        WiFiClient * stream = http.getStreamPtr();
-        int dsize = 0;
-        bool failed = (stream == nullptr);
-        while (!failed && http.connected() && (len > 0 || len == -1)) {
-          size_t size = stream->available();
-          if (size) {
-            int c = stream->readBytes(buf, size);
-            auto wr = fwrite(buf, 1, c, file);
-            if (wr != c) {
-              failed = true;  // writing failure!
-              break;
-            }
-            dsize += c;
-            if (len > 0)
-              len -= c;
-            // Esc: without this flag an aborted download of unknown size (len == -1) passed as complete
-            if (!p.update(tlen > 0 ? (int)((int64_t)dsize * 100 / tlen) : 0, "%s  %.2f / %.2f MB", filename, (double)dsize / 1048576.0, tlen / 1048576.0)) {
-              failed = true;
-              break;
-            }
-          }
-        }
-        // with no Content-Length the body ends when the server closes, so a dropped connection
-        // cannot be told apart from the end there
-        downloadOK = !failed && (len == 0 || (len == -1 && dsize > 0));
+
+// Downloads URL to path on the SD card, and resumes rather than starting over. The data goes to
+// path + ".part", which a failed attempt leaves in place: a dropped connection is retried at once
+// from where it stopped with a Range request, and a later boot carries on with what is there.
+// The file only gets its real name once it is complete, so getDisk() never takes a part for an
+// image.
+//
+// The card is written in 4 KB blocks from internal RAM, each ending on a sector boundary. Both
+// matter: the SD driver can only DMA from internal RAM, and given anything else (the PSRAM buffer
+// this used) it writes one sector at a time, each a single block write that waits for the card to
+// program it -- 1.5 s per 64 KB, 40 KB/s, measured. Unaligned writes go sector by sector through
+// FatFs's window for the same reason.
+bool downloadURL(char const * URL, char const * path)
+{
+  // Small on purpose: internal RAM is what the Wi-Fi driver takes its receive buffers from and TLS
+  // its handshake, and with a 16 KB block (and a 12 KB task stack) the download left it 20 KB, lost
+  // packets, stalled every few minutes and failed to reconnect. 4 KB still gets multi-block writes.
+  constexpr int    BLOCK      = 4 * 1024;
+  constexpr int    TRIES      = 6;            // attempts in a row that bring nothing new
+  constexpr int    STALLMS    = 10000;        // no data for this long counts as a dropped connection
+  constexpr int    REDRAWMS   = 250;
+
+  char part[300];
+  snprintf(part, sizeof(part), "%s.part", path);
+  char const * name = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
+  auto buf = (uint8_t*) heap_caps_malloc(BLOCK, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+  if (!buf) {
+    ui.message("Download", "Not enough memory for the download buffer.");
+    downloadOK = false;
+    return false;
+  }
+
+  struct stat st;
+  long long have  = stat(part, &st) == 0 ? st.st_size : 0;
+  long long total = -1;                      // -1 while the server has not said
+  bool complete = false, aborted = false;
+  int failures = 0;
+  char reason[64] = "";
+
+  // modem sleep, the default, costs TCP a lot of its throughput; the host restarts after a
+  // download anyway
+  WiFi.setSleep(false);
+
+  // why Wi-Fi drops, on the serial line: 200 (beacon timeout) means the ESP32 stopped hearing the
+  // access point, which points at its radio or its power; others, ie 8 (leaving) or 15 (handshake
+  // timeout), at the access point
+  static bool reasonLogged = false;
+  if (!reasonLogged) {
+    reasonLogged = true;
+    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+      printf("Wi-Fi disconnected, reason %d\n", (int) info.wifi_sta_disconnected.reason);
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  }
+
+  printf("download %s: starting at %lld bytes, internal RAM %u free, %u largest\n", name, have,
+         (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+         (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+
+  // on core 0, see runOnWiFiCore(); 8 KB of stack, as Arduino's own task does TLS with
+  char title[48];
+  snprintf(title, sizeof(title), "Download %.36s", name);
+  int drops = 0;
+
+  runOnWiFiCore([&]() { ui.progress(title, true, [&](TextUI::Progress & p) {
+
+    // the rate over the last few seconds, for the KB/s and the time left
+    int64_t   rateT   = esp_timer_get_time();
+    long long rateB   = have;
+    int       kbps    = 0;
+    int64_t   redraw  = 0;
+    int64_t   logged  = esp_timer_get_time();
+    int64_t   sdUs    = 0;        // time spent writing to the card, against the whole, for the log
+    int64_t   netUs   = 0;        // time spent waiting for data
+
+    auto show = [&](bool force) {
+      int64_t now = esp_timer_get_time();
+      if (!force && now - redraw < REDRAWMS * 1000)
+        return !aborted;
+      redraw = now;
+      if (now - rateT >= 2000000) {
+        int k = (int) ((have - rateB) * 1000000 / (now - rateT) / 1024);
+        kbps  = kbps ? (kbps + k) / 2 : k;
+        rateT = now;
+        rateB = have;
       }
-    }
-    http.end();
-  });
+      // and on the serial line now and then, where the host can follow it
+      if (now - logged >= 10000000) {
+        logged = now;
+        printf("download %s: %lld of %lld bytes, %d KB/s, RSSI %d dBm, %d lost, last 10 s: SD writes %d ms, waiting for data %d ms; "
+               "internal RAM %u free, %u largest\n", name, have, total, kbps, (int) WiFi.RSSI(), drops, (int) (sdUs / 1000), (int) (netUs / 1000),
+               (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+               (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        sdUs = netUs = 0;
+      }
+      char left[16] = "";
+      if (total > 0 && kbps > 0) {
+        int s = (int) ((total - have) / 1024 / kbps);
+        snprintf(left, sizeof(left), "%d:%02d left", s / 60, s % 60);
+      }
+      // the signal, and how often the connection was lost, to tell bad Wi-Fi from a bad server
+      char net[24];
+      if (WiFi.status() == WL_CONNECTED)
+        snprintf(net, sizeof(net), "%d dBm", (int) WiFi.RSSI());
+      else
+        snprintf(net, sizeof(net), "no Wi-Fi");
+      if (drops)
+        snprintf(net + strlen(net), sizeof(net) - strlen(net), " %d lost", drops);
+      if (!p.update(total > 0 ? (int) (have * 100 / total) : 0, "%.1f/%.1f MB %4d KB/s %9s %s",
+                    have / 1048576.0, total > 0 ? total / 1048576.0 : 0.0, kbps, left, net))
+        aborted = true;
+      return !aborted;
+    };
 
-  return downloadOK;
+    bool wifiSuspect = false;     // a stall or a refused request: renew the Wi-Fi association
+    while (!complete && !aborted && failures < TRIES) {
+
+      if (failures) {
+        p.update(total > 0 ? (int) (have * 100 / total) : 0, "%s, trying again (%d)...", reason, failures);
+        for (int i = 0; i < 2 * failures && !aborted; ++i) {
+          delay(500);
+          aborted = !p.update(total > 0 ? (int) (have * 100 / total) : 0, "%s, trying again (%d)...", reason, failures);
+        }
+        // A connection that stops dead and then refuses every new one is Wi-Fi gone deaf, and the
+        // driver often still says it is connected (logged 2026-10-04: a stall, then "connection
+        // refused" with status 3, and only a reconnect helped, at once). So after a stall or a
+        // failed request the association is renewed, whatever the status claims.
+        if (!aborted && (WiFi.status() != WL_CONNECTED || wifiSuspect)) {
+          printf("download: Wi-Fi %s (status %d), reconnecting\n", WiFi.status() == WL_CONNECTED ? "deaf" : "lost", (int) WiFi.status());
+          wifiSuspect = false;
+          WiFi.disconnect(false, false);
+          delay(100);
+          WiFi.reconnect();
+          for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED && !aborted; ++i) {
+            delay(500);
+            aborted = !p.update(total > 0 ? (int) (have * 100 / total) : 0, "Wi-Fi lost, reconnecting...");
+          }
+          printf("download: Wi-Fi %s\n", WiFi.status() == WL_CONNECTED ? "back" : "still gone");
+        }
+        if (aborted)
+          break;
+      }
+      show(true);
+
+      HTTPClient http;
+      int code = httpOpen(http, URL, "GET", have);
+      long long before = have;
+
+      if (code == HTTP_CODE_PARTIAL_CONTENT) {
+        // the rest, from where the part ends
+        if (http.getSize() > 0)
+          total = have + http.getSize();
+      } else if (code == HTTP_CODE_OK) {
+        // everything: the server cannot resume, or there was nothing yet
+        have  = 0;
+        rateB = 0;
+        total = http.getSize();
+      } else if (code == HTTP_CODE_RANGE_NOT_SATISFIABLE && have > 0) {
+        // asked from the end of the file: the part is the whole of it
+        http.end();
+        complete = true;
+        break;
+      } else {
+        if (code < 0)
+          snprintf(reason, sizeof(reason), "%s", http.errorToString(code).c_str());
+        else
+          snprintf(reason, sizeof(reason), "Server answered %d", code);
+        printf("download %s: request failed (%s), Wi-Fi %s, RSSI %d dBm\n", name, reason,
+               WiFi.status() == WL_CONNECTED ? "up" : "down", (int) WiFi.RSSI());
+        wifiSuspect = code < 0;
+        http.end();
+        ++failures;
+        continue;
+      }
+
+      // plain file descriptors: stdio would cut the blocks up into its own buffer's size
+      int file = open(part, O_WRONLY | O_CREAT | (have ? O_APPEND : O_TRUNC), 0666);
+      WiFiClient * stream = http.getStreamPtr();
+      if (file < 0 || !stream) {
+        snprintf(reason, sizeof(reason), file >= 0 ? "No data stream" : "Cannot write to the SD card");
+        if (file >= 0)
+          close(file);
+        http.end();
+        ++failures;
+        if (file < 0)
+          break;              // retrying will not help
+        continue;
+      }
+
+      bool writeFailed = false;
+      char const * ended = "";
+      int  fill = 0;
+      int  limit = BLOCK - (int) (have % 512);     // so that the block ends on a sector boundary
+      int64_t lastData = esp_timer_get_time();
+      while (!aborted) {
+        if (total > 0 && have + fill >= total)
+          break;
+        int avail = stream->available();
+        if (avail > 0) {
+          int n = stream->read(buf + fill, imin(avail, limit - fill));
+          if (n > 0) {
+            fill    += n;
+            lastData = esp_timer_get_time();
+          }
+          if (fill == limit) {
+            int64_t t = esp_timer_get_time();
+            writeFailed = write(file, buf, fill) != fill;
+            sdUs += esp_timer_get_time() - t;
+            have += fill;
+            fill  = 0;
+            limit = BLOCK;
+            if (writeFailed)
+              break;
+            // FAT only records the file's length when it is closed or synced: without this, a reset
+            // in the middle loses everything since the open, and the next boot starts over
+            if (have % (512 * 1024) < BLOCK)
+              fsync(file);
+          }
+        } else if (!http.connected()) {
+          ended = "closed by the other end";
+          break;
+        } else if (esp_timer_get_time() - lastData > STALLMS * 1000LL) {
+          ended = "no data for 10 s";
+          break;
+        } else {
+          int64_t t = esp_timer_get_time();
+          delay(2);
+          netUs += esp_timer_get_time() - t;
+        }
+        show(false);
+      }
+      if (fill && !writeFailed) {
+        writeFailed = write(file, buf, fill) != fill;
+        have += fill;
+      }
+      close(file);
+      http.end();
+
+      if (writeFailed) {
+        snprintf(reason, sizeof(reason), "Cannot write to the SD card");
+        failures = TRIES;
+        break;
+      }
+      if (aborted)
+        break;
+      if (total > 0 ? have >= total : have > 0) {
+        // without a length the body ends when the server closes, which a dropped connection
+        // looks just like: accepted, as before, for lack of anything better
+        complete = true;
+        break;
+      }
+      snprintf(reason, sizeof(reason), "Connection lost at %.1f MB", have / 1048576.0);
+      ++drops;
+      printf("download %s: connection lost at %lld bytes (%s), Wi-Fi %s, RSSI %d dBm\n", name, have, ended,
+             WiFi.status() == WL_CONNECTED ? "up" : "down", (int) WiFi.RSSI());
+      wifiSuspect = ended[0] == 'n';    // a stall rather than the server closing
+      // an attempt that got further does not count against the limit
+      failures = have > before ? 1 : failures + 1;
+    }
+    show(true);
+  }); }, 8 * 1024);
+
+  heap_caps_free(buf);
+
+  if (complete) {
+    remove(path);
+    complete = rename(part, path) == 0;
+  }
+  printf("download %s: %s, %lld of %lld bytes%s%s\n", URL, complete ? "complete" : "incomplete", have, total,
+         reason[0] ? ", last problem: " : "", reason);
+  downloadOK = complete;
+  return complete;
 }
 
 
@@ -348,20 +639,17 @@ char const * getDisk(char const * url)
 
   char const * filename = nullptr;
   if (url) {
-    if (strncmp("http://", url, 7) == 0 || strncmp("https://", url, 7) == 0) {
+    if (strncmp("http://", url, 7) == 0 || strncmp("https://", url, 8) == 0) {
       // this is actually an URL
       filename = strrchr(url, '/') + 1;
       if (filename && !fb.exists(filename, false)) {
-        // disk doesn't exist, try to download
+        // disk doesn't exist, try to download (what an earlier attempt fetched is kept and resumed)
         if (!checkWiFi())
           return nullptr;
-        auto file = fb.openFile(filename, "wb");
-        bool success = downloadURL(url, file);
-        fclose(file);
-        if (!success) {
-          fb.remove(filename);
+        char path[300];
+        snprintf(path, sizeof(path), "%s/%s", SD_MOUNT_PATH, filename);
+        if (!downloadURL(url, path))
           return nullptr;
-        }
       }
     } else if (url[0] == '/') {
       // absolute path, ie an image inside the SPIFFS partition: used exactly as given
@@ -382,7 +670,7 @@ char const * getDisk(char const * url)
 
 // user pressed SYSREQ (ALT + PRINTSCREEN)
 // What the machine selection screen asks the caller to do next.
-enum class SetupAction { Boot, Edit, New, Remove, Files, Advanced };
+enum class SetupAction { Boot, Edit, New, Remove, Files, Advanced, Repository };
 
 
 // last path component of a disk entry, which is what fits in the details panel
@@ -410,8 +698,8 @@ static void drawSetupFrame()
 
   // key help
   ui.frame(0, 20, 80, 5, TUI_SCREEN, true);
-  ui.text(2, 21, "\x18\x19 PgUp PgDn : Select Machine      Enter : Boot        F4  : Browse Files", TUI_SCREEN);
-  ui.text(2, 22, "F2 : Edit     F3 : New     Del : Remove     F5  : Advanced Settings", TUI_SCREEN);
+  ui.text(2, 21, "\x18\x19 PgUp PgDn : Select   Enter : Boot   F2 : Edit   F3 : New   Del : Remove", TUI_SCREEN);
+  ui.text(2, 22, "F4 : Browse Files   F5 : Advanced Settings   F6 : Add from Repository", TUI_SCREEN);
 }
 
 
@@ -490,6 +778,12 @@ static SetupAction selectMachine(MachineConf & mconf, int & idx, int countdown)
       if (c && i < count)
         ui.text(3, LISTTOP + r, c->desc, sel ? TUI_HILITE : TUI_LABEL, 43);
     }
+    // a fresh mconfs.txt is empty
+    if (!count) {
+      ui.text(3, LISTTOP + 1, "No machines yet.", TUI_LABEL);
+      ui.text(3, LISTTOP + 3, "F6 adds machines from a repository,", TUI_SCREEN);
+      ui.text(3, LISTTOP + 4, "F3 sets one up by hand.", TUI_SCREEN);
+    }
     ui.put(46, LISTTOP, scroll > 0 ? 0x1E : ' ', TUI_SCREEN);
     ui.put(46, LISTTOP + LISTROWS - 1, scroll + LISTROWS < count ? 0x1F : ' ', TUI_SCREEN);
     drawSetupDetails(mconf.getItem(idx));
@@ -531,6 +825,7 @@ static SetupAction selectMachine(MachineConf & mconf, int & idx, int countdown)
         break;
       case VirtualKey::VK_F4:       return SetupAction::Files;
       case VirtualKey::VK_F5:       return SetupAction::Advanced;
+      case VirtualKey::VK_F6:       return SetupAction::Repository;
       default:                      break;
     }
     idx = fabgl::imax(0, idx);
@@ -821,9 +1116,13 @@ void setup()
   }
 
   ui.postItem("SD Card");
-  if (!FileBrowser::mountSDCard(false, SD_MOUNT_PATH, 8)) {  // @TODO: reduce to 4?
-    ui.postResult("Not found", TUI_POST_FAIL);
-    fatal("This app requires an SD card!");
+  // 20 MHz from the start. FabGL used 19 MHz until Wi-Fi was done with and only then raised it, but
+  // below 20 MHz the card writes 30 times slower here (45 against 1400 KB/s, any order, measured
+  // with "pio run -e sdbench"), which made a 40 MB image download take half an hour.
+  FileBrowser::setSDCardMaxFreqKHz(SDMMC_FREQ_DEFAULT);
+  if (!mountSD()) {
+    ui.postResult("Not found or not responding", TUI_POST_FAIL);
+    fatal("This app requires an SD card!\n\nIf there is one, it may be stuck from a reset\nduring a transfer: unplug the board for a\nfew seconds, that resets the card as well.");
   }
   ui.postResult("Mounted", TUI_POST_OK);
 
@@ -856,8 +1155,12 @@ void setup()
   // a moment to give the chance: the POST before it can be over in a second (after the NTP
   // restart), and its progress boxes empty the key buffer when they open, so a DEL pressed early
   // may be gone. One still queued counts as well.
+  // after a failed download the user asked for the list: no countdown, no skipping it
+  bool listWanted = esp_reset_reason() == ESP_RST_SW && showListAfterRestart == SHOW_LIST_MAGIC;
+  showListAfterRestart = 0;
+
   bool skipList = false;
-  if (hostSettings.autoBootSeconds == 0) {
+  if (hostSettings.autoBootSeconds == 0 && !listWanted) {
     skipList = true;
     int64_t until = esp_timer_get_time() + 2000000;
     TextUI::Key k;
@@ -871,7 +1174,7 @@ void setup()
   }
 
   // the countdown only runs on the first visit, not after coming back from a setup page
-  for (int countdown = hostSettings.autoBootSeconds; ; countdown = -1) {
+  for (int countdown = listWanted ? -1 : hostSettings.autoBootSeconds; ; countdown = -1) {
 
     loadMachineConfiguration(&mconf);
 
@@ -919,6 +1222,21 @@ void setup()
       case SetupAction::Files:
         setupFilesBrowser(ui, SD_MOUNT_PATH);
         break;
+      case SetupAction::Repository:
+      {
+        // the last repository used is offered again
+        char url[256] = "";
+        if (preferences.isKey("RepoURL"))
+          preferences.getString("RepoURL", url, sizeof(url));
+        char before[256];
+        strcpy(before, url);
+        int added = setupAddFromRepository(ui, mconf, url, sizeof(url));
+        if (strcmp(url, before) && url[0])
+          preferences.putString("RepoURL", url);
+        if (added >= 0)
+          idx = added;
+        break;
+      }
       default:
         break;
     }
@@ -955,8 +1273,11 @@ void setup()
   }
 
   if (!downloadOK || (!diskFilename[0] && !diskFilename[2])) {
-    // unable to get boot disks
-    ui.message("Error", "Unable to get the system disks!\nRestarting...", "OK", 5);
+    // Unable to get the boot disks. Restarting into the same machine, as this used to, made a
+    // download that kept failing loop for ever with Auto Boot on; the machine list is the default.
+    int b = ui.message("Error", "Unable to get the system disks.\nWhat was downloaded is kept, and the\nnext attempt continues from there.",
+                       "Try Again;Machine List", 30);
+    showListAfterRestart = (b == 0) ? 0 : SHOW_LIST_MAGIC;
     esp_restart();
   }
 
@@ -973,9 +1294,7 @@ void setup()
   delay(400);
   ui.end();
 
-  // without WiFi it is possible to increase SD card speed
-  FileBrowser::setSDCardMaxFreqKHz(SDMMC_FREQ_DEFAULT);
-  FileBrowser::remountSDCard();
+  // (the SD card already runs at its full 20 MHz, see the mount above)
 
   machine->setBaseDirectory(SD_MOUNT_PATH);
   for (int i = 0; i < DISKCOUNT; ++i)

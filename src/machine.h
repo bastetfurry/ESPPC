@@ -458,6 +458,7 @@ private:
   void speakerEnableDisable();
 
   void autoDetectDriveGeometry(int drive);
+  bool geometryFromPartitionTable(int drive);
 
 
   #ifdef FABGL_EMULATED

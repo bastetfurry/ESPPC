@@ -290,6 +290,70 @@ void Machine::setDriveImage(int drive, char const * filename, int cylinders, int
 }
 
 
+// Heads and sectors per track from the MBR's partition entries, cylinders from the image size.
+// Only taken when a partition's start, converted with that geometry, lands on the LBA the entry
+// gives, so the bytes of a disk without a partition table cannot pass for one.
+bool Machine::geometryFromPartitionTable(int drive)
+{
+  uint8_t mbr[512];
+  if (fseek(m_disk[drive], 0, SEEK_SET) != 0 || fread(mbr, 1, 512, m_disk[drive]) != 512)
+    return false;
+  if (mbr[510] != 0x55 || mbr[511] != 0xaa)
+    return false;
+
+  // A disk without a partition table (FAT straight from sector 0) ends its boot sector with 55 AA
+  // too, with boot code where the entries would be. Every entry in use has to look like one: boot
+  // flag 00 or 80, a length, and room for it in the image.
+  int heads = 0, sectors = 0;
+  uint64_t imageSectors = m_diskSize[drive] / 512;
+  for (int i = 0; i < 4; ++i) {
+    uint8_t const * e = mbr + 446 + 16 * i;
+    if (e[4] == 0)
+      continue;
+    uint32_t first = e[8] | (e[9] << 8) | (e[10] << 16) | ((uint32_t) e[11] << 24);
+    uint32_t count = e[12] | (e[13] << 8) | (e[14] << 16) | ((uint32_t) e[15] << 24);
+    if ((e[0] != 0x00 && e[0] != 0x80) || count == 0 || (uint64_t) first + count > imageSectors)
+      return false;
+    int h = e[5] + 1, s = e[6] & 63;
+    if (s == 0)
+      return false;
+    if (h > heads)
+      heads = h;
+    if (sectors && s != sectors)
+      return false;
+    sectors = s;
+  }
+  if (!heads || !sectors)
+    return false;
+
+  // the cross-check, on every entry whose start is not past cylinder 1023 (where CHS gives up)
+  bool checked = false;
+  for (int i = 0; i < 4; ++i) {
+    uint8_t const * e = mbr + 446 + 16 * i;
+    if (e[4] == 0)
+      continue;
+    int c = e[3] | ((e[2] & 0xc0) << 2), h = e[1], s = e[2] & 63;
+    if (c == 1023)
+      continue;
+    uint32_t lba = e[8] | (e[9] << 8) | (e[10] << 16) | ((uint32_t) e[11] << 24);
+    if (s == 0 || h >= heads || ((uint32_t) c * heads + h) * sectors + s - 1 != lba)
+      return false;
+    checked = true;
+  }
+  if (!checked)
+    return false;
+
+  int cylinders = (int) (m_diskSize[drive] / 512 / (heads * sectors));
+  if (cylinders < 1)
+    return false;
+  m_diskCylinders[drive] = fabgl::imin(cylinders, 1024);
+  m_diskHeads[drive]     = heads;
+  m_diskSectors[drive]   = sectors;
+  printf("drive %d: geometry %d/%d/%d from the partition table\n", drive, m_diskCylinders[drive], heads, sectors);
+  return true;
+}
+
+
 void Machine::autoDetectDriveGeometry(int drive)
 {
   // well known floppy formats
@@ -318,6 +382,13 @@ void Machine::autoDetectDriveGeometry(int drive)
       return;
     }
   }
+
+  // A hard disk with a partition table says which geometry it was partitioned with: the partitions
+  // end on a cylinder boundary, so the end of one gives heads and sectors per track. DOS only boots
+  // from a disk whose BIOS reports that same geometry, and an image made elsewhere (86Box set up an
+  // MFM disk as 963/5/17) used to get the computed one below, 81/16/63, and did not boot.
+  if (drive >= 2 && geometryFromPartitionTable(drive))
+    return;
 
   // maybe an hard disk, try to calculate geometry (max 528MB, common lower end for BIOS and MSDOS: https://tldp.org/HOWTO/Large-Disk-HOWTO-4.html)
   constexpr int MAXCYLINDERS = 1024;  // Cylinders : 1...1024
