@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESPPC Installer</title>
+  <meta name="description" content="Flash ESPPC, an IBM PC/XT emulator for the ESP32, from the browser.">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --panel: #fffdf8;
+      --text: #22201c;
+      --muted: #6b6559;
+      --line: #d9d2c3;
+      --accent: #1f6f5c;
+      --accent-text: #ffffff;
+      --warn: #8a5a00;
+      --warn-bg: #fdf3dd;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #16181a;
+        --panel: #1f2225;
+        --text: #e6e2d8;
+        --muted: #9a958a;
+        --line: #33373b;
+        --accent: #4fb89c;
+        --accent-text: #0d1512;
+        --warn: #f0c062;
+        --warn-bg: #2b2414;
+        color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { max-width: 42rem; margin: 0 auto; padding: 3rem 16px 4rem; }
+    h1 {
+      font: 700 2.4rem/1.1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.4rem;
+    }
+    .version { color: var(--muted); font: 0.9rem ui-monospace, Consolas, monospace; margin: 0 0 1.5rem; }
+    .lead { font-size: 1.1rem; margin: 0 0 2rem; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1.5rem;
+      margin: 0 0 1.5rem;
+    }
+    .card h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+    ol, ul { margin: 0; padding-left: 1.3rem; }
+    li + li { margin-top: 0.4rem; }
+    .install { text-align: center; padding: 2rem 1.5rem; }
+    esp-web-install-button button[slot="activate"] {
+      background: var(--accent);
+      color: var(--accent-text);
+      border: 0;
+      border-radius: 8px;
+      padding: 0.85rem 2rem;
+      font: 600 1.05rem system-ui, sans-serif;
+      cursor: pointer;
+    }
+    esp-web-install-button button[slot="activate"]:hover { filter: brightness(1.08); }
+    .note {
+      background: var(--warn-bg);
+      color: var(--text);
+      border-left: 3px solid var(--warn);
+      border-radius: 6px;
+      padding: 0.8rem 1rem;
+      margin: 1.25rem 0 0;
+      font-size: 0.95rem;
+      text-align: left;
+    }
+    code { font: 0.92em ui-monospace, Consolas, monospace; }
+    a { color: var(--accent); }
+    footer { color: var(--muted); font-size: 0.9rem; margin-top: 2.5rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>ESPPC</h1>
+  <p class="version">@VERSION@</p>
+  <p class="lead">An IBM PC/XT on the ESP32: CGA, EGA or Tandy 1000 video on a VGA monitor, Tandy
+    sound and an AdLib, disk images on the SD card or downloaded over Wi-Fi.</p>
+
+  <div class="card install">
+    <esp-web-install-button manifest="manifest.json">
+      <button slot="activate">Install ESPPC</button>
+      <span slot="unsupported">Your browser cannot flash from the web. Use Chrome or Edge on a
+        desktop computer.</span>
+      <span slot="not-allowed">Flashing needs a secure connection (https).</span>
+    </esp-web-install-button>
+    <p class="note">The first install offers to <strong>erase</strong> the board. Do that when it
+      ran other firmware before. When updating ESPPC, leave it unticked: your Wi-Fi and settings
+      are kept. The flash file system is always rewritten, so a rescue disk you put there
+      yourself has to be uploaded again.</p>
+  </div>
+
+  <div class="card">
+    <h2>You need</h2>
+    <ul>
+      <li>An ESP32 board with PSRAM, an SD card slot, VGA and PS/2, such as the Olimex
+        ESP32-SBC-FabGL (tested) or a TTGO VGA32 v1.4.</li>
+      <li>Chrome or Edge on a desktop computer. Firefox and Safari cannot talk to serial ports.</li>
+      <li>A USB cable that carries data, not only power.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>How it goes</h2>
+    <ol>
+      <li>Plug the board into the computer.</li>
+      <li>Click <strong>Install ESPPC</strong> and choose the board's serial port
+        (on Linux <code>ttyUSB0</code> or <code>ttyACM0</code>).</li>
+      <li>Wait for the flashing to finish, about a minute.</li>
+      <li>Connect the monitor and keyboard, put in an SD card and reset the board. It asks for
+        your Wi-Fi on the first start. <strong>F6</strong> on the machine list adds ready made
+        machines from a repository, for example <code>http://lionscade.de/pcimages</code>.</li>
+    </ol>
+    <p class="note">On Linux, if the port does not show up or cannot be opened, add yourself to the
+      <code>dialout</code> group (on Arch: <code>uucp</code>) and log in again.</p>
+  </div>
+
+  <footer>
+    Source, documentation and licence (GPL v3) on
+    <a href="https://github.com/bastetfurry/ESPPC">GitHub</a>.
+    Built on <a href="https://github.com/fdivitto/FabGL">FabGL</a> by Fabrizio Di Vittorio.
+    Flashing by <a href="https://esphome.github.io/esp-web-tools/">ESP Web Tools</a>.
+  </footer>
+</main>
+</body>
+</html>
