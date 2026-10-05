@@ -769,10 +769,34 @@ void Machine::tick(int n)
       m_serialDebug.poll();
   }
 
-  if (m_PIC8259A.pendingInterrupt() && i8086::IRQ(m_PIC8259A.pendingInterruptNum()))
-    m_PIC8259A.ackPendingInterrupt();
-  if (m_PIC8259B.pendingInterrupt() && i8086::IRQ(m_PIC8259B.pendingInterruptNum()))
-    m_PIC8259B.ackPendingInterrupt();
+  // The slave PIC reaches the CPU the way it does on an AT: as IR2 of the master, so the master's
+  // mask and priorities apply to it. It used to go to the CPU directly, past the master, so
+  // software written for an XT -- which has no slave, and masks IR2 on the one PIC it knows --
+  // could get interrupts it never asked for (SCO Xenix 86 points 70h..77h at its "unexpected
+  // interrupt" stub). Handlers of slave interrupts therefore EOI both PICs, as on an AT (see
+  // reportEOIB in bios.asm).
+  if (m_PIC8259B.pendingInterrupt())
+    m_PIC8259A.signalInterrupt(2);
+
+  // Only handed to the CPU, and acknowledged at the PIC, when the CPU can take it. A real 8259
+  // gives the vector in the INTA cycle, when the CPU accepts the interrupt, not when the request
+  // comes in. Queued while IF was clear, the vector waited in the CPU for as long as interrupts
+  // stayed off, and went stale if the PIC was reprogrammed meanwhile: SCO Xenix 86 boots with
+  // interrupts off, moves the PIC from base 08h to 10h, and on its first STI got a timer tick
+  // queued under the BIOS's base, vector 08h, which it reports as "trap type 6" and panics.
+  if (m_PIC8259A.pendingInterrupt() && i8086::flagIF()) {
+    if (m_PIC8259A.pendingIR() != 2) {
+      if (i8086::IRQ(m_PIC8259A.pendingInterruptNum()))
+        m_PIC8259A.ackPendingInterrupt();
+    } else if (!m_PIC8259B.pendingInterrupt()) {
+      // the slave was reprogrammed while it asked: nothing to deliver, and nothing put in service
+      // that no handler would ever EOI
+      m_PIC8259A.cancelPendingInterrupt();
+    } else if (i8086::IRQ(m_PIC8259B.pendingInterruptNum())) {
+      m_PIC8259A.ackPendingInterrupt();
+      m_PIC8259B.ackPendingInterrupt();
+    }
+  }
 }
 
 

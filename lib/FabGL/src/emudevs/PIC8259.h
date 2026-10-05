@@ -68,6 +68,13 @@ public:
   // CPU->8259: CPU acks the pending interrupt to 8259
   void ackPendingInterrupt();
 
+  // ESPPC: for cascading a slave into IR2 -- which input is pending (valid while
+  // pendingInterrupt())
+  int pendingIR()                                       { return m_pendingIR; }
+
+  // ESPPC: withdraw the pending request without servicing it (a slave that no longer asks)
+  void cancelPendingInterrupt();
+
 
 private:
 

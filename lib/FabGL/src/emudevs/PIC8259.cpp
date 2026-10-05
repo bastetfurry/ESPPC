@@ -126,6 +126,12 @@ void PIC8259::write(int addr, uint8_t value)
         // getting OCW1
         //printf("OCW1 <= %02X\n", value);
         m_IMR = value;
+        // ESPPC: the INT line follows IRR & ~IMR, so a request that came in while masked is raised
+        // the moment it is unmasked, and a pending one that is masked now is withdrawn. Without
+        // this a request made while masked stayed in IRR unseen until some other line signalled:
+        // SCO Xenix 86 masks and unmasks around every critical section, and lost its keyboard to it.
+        m_pendingInterrupt = false;
+        setPendingInterrupt();
       }
       break;
   }
@@ -205,6 +211,16 @@ void IRAM_ATTR PIC8259::ackPendingInterrupt()
   m_IRR &= ~pendmsk; // reset interrupt bit in IRR
   m_pendingInterrupt = false;
   //printf("   ISR=%02X   IRR=%02X\n", m_ISR, m_IRR);
+}
+
+
+// ESPPC: the pending request goes away unserviced: out of IRR, nothing put in service, and the
+// next highest request, if any, becomes the pending one
+void IRAM_ATTR PIC8259::cancelPendingInterrupt()
+{
+  m_IRR &= ~(1 << m_pendingIR);
+  m_pendingInterrupt = false;
+  setPendingInterrupt();
 }
 
 

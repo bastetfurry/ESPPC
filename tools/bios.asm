@@ -578,9 +578,11 @@ reportEOIA:
 
 
 reportEOIB:
-; signal EOI (End Of Interrupt) to 8259B
+; signal EOI (End Of Interrupt) to 8259B, and to 8259A: the slave is cascaded into the master's
+; IR2, so the master has that in service too, as on an AT
   mov   al, PIC8259_EOI
   out   PIC8259B_A00, al
+  out   PIC8259A_A00, al
   ret
 
 
