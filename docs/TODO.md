@@ -95,11 +95,8 @@ needs only three pins) mapped to keyboard keys, for games with no joystick suppo
 
 ## Cleanup before publishing
 
-- **README rewrite.** It still describes the FabGL example: "CGA/Hercules", the TTGO VGA32, "press
-  Run". Missing: the Olimex ESP32-SBC-FabGL, EGA / Tandy / Plantronics / composite / AdLib / Tandy
-  DAC, the setup screens and SysReq menu as they are now, the `mconfs.txt` tags, the debug console
-  and postbox, and speed figures. It must say where `ega.bin` comes from: it is not in the repo
-  (`*.bin` is ignored) and not redistributable, so without a note EGA fails for everyone else.
+- **README:** rewritten for ESPPC (2026-10-05). Still missing: speed figures beyond Topbench,
+  screenshots, and the browser flasher once it exists.
 - **Tests in the build.** One script that builds the firmware and runs the SingleStepTests harness
   (`tools/cputest/run.py`), usable as a pre-commit hook and later as CI once there is a remote.
 - **Rescue disk** on FreeDOS instead of retail DOS, so it can be committed (see `.gitignore`).
