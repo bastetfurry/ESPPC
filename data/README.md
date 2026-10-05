@@ -14,6 +14,17 @@ This file is deliberately one level above `data/fs/` so it is not packed into th
 PlatformIO packs `data_dir` wholesale and offers no exclude filter, so `data_dir` points at the
 subdirectory instead (see `platformio.ini`).
 
+## The EGA BIOS
+
+`ega.bin` is IBM's EGA BIOS, the option ROM of the IBM Enhanced Graphics Adapter
+(`ibm_6277356_ega_card_u44_27128.bin` in the 86Box ROM set, 16 KB, SHA-1
+`3af56105530366669a8905c14439619bf6b76b25`). Machines set to `video ega` load it from
+`/spiffs/ega.bin` unless their `egarom` tag names another file. See
+[docs/ega-bios.md](../docs/ega-bios.md) for how it is used.
+
+The copyright is IBM's. It is included here, as emulators such as 86Box have done for years,
+because the EGA machines cannot run without it.
+
 ## The rescue disk
 
 Drop a **1.44 MB HD floppy image** into `data/fs/`, for example `rescue.img` (exactly 1,474,560 bytes), then

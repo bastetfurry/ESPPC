@@ -1,6 +1,8 @@
 .pio/
 .vscode/
 *.bin
+# except the EGA BIOS the EGA machines boot with, see data/README.md
+!data/fs/ega.bin
 tools/bios
 compile_commands.json
 .cache/
