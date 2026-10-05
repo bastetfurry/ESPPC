@@ -57,7 +57,7 @@ static const RGB222 CGAPalette[16] = {
 
 
 
-// PCEmulator: CGA composite artifact colours, the canonical ones from the Wikipedia article's
+// ESPPC: CGA composite artifact colours, the canonical ones from the Wikipedia article's
 // "CGA composite artifact color generation" pictures (read off the images pixel by pixel). Indexed by
 // a nibble of video memory, the leftmost dot or pixel in the high bits:
 //   [0] 640x200 dots, white foreground
@@ -166,7 +166,7 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     { false,    nullptr,  0,  0, 1, drawScanline_PC_Graphics_640x200_2Colors, VGA_640x240_60Hz,  640, 200 },
 
 
-    // --- PCEmulator local addition: EGA planar modes ---
+    // --- ESPPC local addition: EGA planar modes ---
     // The 350 line modes are driven on the 640x480 60Hz timing with the image centred, the same
     // trade the CGA 80x25 text mode above already makes. 640x350 is a real timing and was used
     // here at first, but it shares its 31.5kHz/70Hz sync rates with the 720x400 text mode, so
@@ -205,7 +205,7 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     // and colours be fetched once and reused across all eight scanlines.
     { false,    nullptr,  0,  0, 8,             drawScanline_EGA_Text_80x25, VGA_640x480_60Hz, 640, 400 },
 
-    // --- PCEmulator local addition: Tandy 1000 16 colour modes, on the QVGA timing like CGA
+    // --- ESPPC local addition: Tandy 1000 16 colour modes, on the QVGA timing like CGA
     // 320x200. One scanline per callback, like the CGA modes: the renderers are a table lookup
     // per source byte and cheap enough for it.
 
@@ -215,7 +215,7 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     // Emulation::PC_Graphics_Tandy_160x200_16Colors (Tandy, BIOS 08h)
     { false,    nullptr,  0,  0, 1,     drawScanline_Tandy_160x200_16Colors, QVGA_320x240_60Hz, 320, 200 },
 
-    // --- PCEmulator local addition: Plantronics ColorPlus, on the timings of the CGA modes they
+    // --- ESPPC local addition: Plantronics ColorPlus, on the timings of the CGA modes they
     // extend
 
     // Emulation::PC_Graphics_Plantronics_320x200_16Colors
@@ -341,7 +341,7 @@ void GraphicsAdapter::setEmulation(Emulation emulation)
       setupLUT();
       enableVideo(videoWasEnabled);
     } else {
-      // PCEmulator: back to the unconfigured state for real. The host's setup screens run the
+      // ESPPC: back to the unconfigured state for real. The host's setup screens run the
       // text mode before the machine starts, and without this its internal RAM copy of the font
       // stayed allocated for good, even on an EGA machine that never draws with it again.
       cleanupFont();
@@ -408,7 +408,7 @@ void GraphicsAdapter::setupLUT()
       setupEGALUT();
       break;
 
-    // PCEmulator: Tandy. The line buffer is byte swizzled in 32 bit words (pixel x goes to byte
+    // ESPPC: Tandy. The line buffer is byte swizzled in 32 bit words (pixel x goes to byte
     // x ^ 2, see the CGA 320x200 case above), and the tables are laid out so the renderers can
     // store whole words in order.
     case Emulation::PC_Graphics_Tandy_320x200_16Colors:
@@ -423,7 +423,7 @@ void GraphicsAdapter::setupLUT()
       }
       break;
 
-    // PCEmulator: Plantronics. Both renderers look up a nibble of plane 0 and the same nibble of
+    // ESPPC: Plantronics. Both renderers look up a nibble of plane 0 and the same nibble of
     // plane 1 together, (p0 << 4) | p1, with the palette baked in.
     case Emulation::PC_Graphics_Plantronics_320x200_16Colors:
       // a nibble pair is two pixels of 2 + 2 bits; the 4 bit value v = p0 bits | p1 bits << 2 is
@@ -455,7 +455,7 @@ void GraphicsAdapter::setupLUT()
       }
       break;
 
-    // PCEmulator: composite. Each nibble is one colour two output pixels wide; the high nibble is
+    // ESPPC: composite. Each nibble is one colour two output pixels wide; the high nibble is
     // the left one and goes to bytes 2 and 3 of the word (see the CGA 320x200 case).
     case Emulation::PC_Graphics_CGA_Composite:
     {
@@ -487,7 +487,7 @@ void GraphicsAdapter::setupLUT()
 }
 
 
-// PCEmulator: build the tables the planar renderers use.
+// ESPPC: build the tables the planar renderers use.
 //
 // A 16 colour planar pixel takes one bit from each of four planes, so it cannot be expanded with
 // a single table the way the CGA modes are. Two stages instead:
@@ -680,7 +680,7 @@ void GraphicsAdapter::setFont(FontInfo const * font)
       memcpy(copy, font->data, size);
       m_font.data = copy;
     } else {
-      // PCEmulator: out of internal RAM. Render from the font where it is (flash): slower, but the
+      // ESPPC: out of internal RAM. Render from the font where it is (flash): slower, but the
       // alternative was a memcpy to address 0 and a reboot. cleanupFont() must not free it then.
       printf("GraphicsAdapter: no internal RAM for the font copy, using it from flash\n");
       m_font.data = font->data;
@@ -819,7 +819,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_40x25_16Colors(void * arg, 
 }
 
 
-// PCEmulator: text mode pixel expansion, four pixels per 32 bit word. TEXT_NIBMASK[n] has 0xff in
+// ESPPC: text mode pixel expansion, four pixels per 32 bit word. TEXT_NIBMASK[n] has 0xff in
 // the byte of every pixel whose bit is set in glyph nibble n (bit 3 = leftmost), with FabGL's
 // pairwise byte swizzle (pixel i lives in byte i ^ 2) already applied. A glyph row is then two
 // word stores, (fg & mask) | (bg & ~mask), instead of eight table lookups and eight byte stores.
@@ -957,7 +957,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Graphics_640x200_2Colors(void * 
 
 
 
-// PCEmulator: EGA planar renderers.
+// ESPPC: EGA planar renderers.
 //
 // One 32 bit load brings in all four planes of eight pixels, because the emulator stores the
 // planes interleaved (src/ega.h). Four table lookups and three ORs turn that into eight packed
@@ -1065,7 +1065,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_
 }
 
 
-// PCEmulator: EGA text.
+// ESPPC: EGA text.
 //
 // Characters come from plane 0, attributes from plane 1, and the glyph bitmap from plane 2 --
 // which is the whole point: a program that rewrites plane 2 changes the font, and this renderer
@@ -1175,7 +1175,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
 }
 
 
-// PCEmulator: Tandy 320x200x16 (BIOS 09h). A character row is four scanlines, and line n of the
+// ESPPC: Tandy 320x200x16 (BIOS 09h). A character row is four scanlines, and line n of the
 // row lives in bank n (n * 8 KB), 160 bytes a line. Two source bytes make one 32 bit store.
 void IRAM_ATTR GraphicsAdapter::drawScanline_Tandy_320x200_16Colors(void * arg, uint8_t * dest, int scanLine)
 {
@@ -1192,7 +1192,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_Tandy_320x200_16Colors(void * arg, 
 }
 
 
-// PCEmulator: Tandy 160x200x16 (BIOS 08h). Two scanlines to a character row, so two banks, 80 bytes
+// ESPPC: Tandy 160x200x16 (BIOS 08h). Two scanlines to a character row, so two banks, 80 bytes
 // a line; each source byte becomes four output pixels, one 32 bit store.
 void IRAM_ATTR GraphicsAdapter::drawScanline_Tandy_160x200_16Colors(void * arg, uint8_t * dest, int scanLine)
 {
@@ -1210,7 +1210,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_Tandy_160x200_16Colors(void * arg, 
 
 
 
-// PCEmulator: Plantronics 320x200x16. The CGA line layout in each plane, plane 1 16 KB after plane 0.
+// ESPPC: Plantronics 320x200x16. The CGA line layout in each plane, plane 1 16 KB after plane 0.
 // A byte of each plane is four pixels: its high nibbles give the first two, its low nibbles the
 // other two, one 32 bit store.
 void IRAM_ATTR GraphicsAdapter::drawScanline_Plantronics_320x200_16Colors(void * arg, uint8_t * dest, int scanLine)
@@ -1231,7 +1231,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_Plantronics_320x200_16Colors(void *
 }
 
 
-// PCEmulator: Plantronics 640x200x4. Same layout; a byte of each plane is eight pixels, two stores.
+// ESPPC: Plantronics 640x200x4. Same layout; a byte of each plane is eight pixels, two stores.
 void IRAM_ATTR GraphicsAdapter::drawScanline_Plantronics_640x200_4Colors(void * arg, uint8_t * dest, int scanLine)
 {
   constexpr int WIDTHINBYTES = 80;
@@ -1252,7 +1252,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_Plantronics_640x200_4Colors(void * 
 
 
 
-// PCEmulator: the drive LED on top of whatever the mode drew. Only the three LED lines do any
+// ESPPC: the drive LED on top of whatever the mode drew. Only the three LED lines do any
 // work: 3x3 pixels, two lines above the bottom of the viewport and two pixels from its right edge,
 // one LED or four (A B C D, left to right) with two pixels between them. FabGL's line buffers are
 // contiguous and byte swizzled (pixel x at byte x ^ 2).

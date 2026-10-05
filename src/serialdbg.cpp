@@ -80,7 +80,7 @@ void SerialDebug::begin(Machine * machine)
 
   write("\r\n");
   write("=====================================================\r\n");
-  write(" PCEmulator: machine booted, serial debug console on\r\n");
+  write(" ESPPC: machine booted, serial debug console on\r\n");
   write("=====================================================\r\n");
   write("  ESC ESC ESC   attach to the text screen\r\n");
   write("  Ctrl+C Ctrl+D once attached, drop into the monitor\r\n");

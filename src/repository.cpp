@@ -1,5 +1,5 @@
 /*
-  PCEmulator - "Add from Repository" on the machine selection screen (F6)
+  ESPPC - "Add from Repository" on the machine selection screen (F6)
 
   Fetches a repository's files.list (see repolist.h), shows its machines and adds the chosen ones
   to mconfs.txt. The images themselves are not downloaded here: a new machine stores the image
@@ -176,7 +176,7 @@ static int addMachine(TextUI & ui, MachineConf & mconf, RepoEntry const & e)
 static void drawFrame(TextUI & ui, char const * listURL)
 {
   ui.clear(TUI_SCREEN);
-  ui.centre(0, "ESP32 PC Emulator Setup Utility", TUI_SCREEN);
+  ui.centre(0, "ESPPC Setup Utility", TUI_SCREEN);
   ui.centre(1, "Add from Repository", TUI_LABEL);
 
   ui.frame(0, 2, 80, 18, TUI_SCREEN, true);

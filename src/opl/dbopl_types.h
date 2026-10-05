@@ -1,5 +1,5 @@
 /*
-  PCEmulator: the DOSBox type names and macros DBOPL uses, for building it outside DOSBox.
+  ESPPC: the DOSBox type names and macros DBOPL uses, for building it outside DOSBox.
  */
 
 #pragma once

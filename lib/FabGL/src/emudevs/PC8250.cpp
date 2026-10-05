@@ -578,7 +578,7 @@ void PC8250::checkDCDChanged()
 }
 
 
-// PCEmulator: in IRAM, ticked every fourth emulated instruction
+// ESPPC: in IRAM, ticked every fourth emulated instruction
 void IRAM_ATTR PC8250::tick()
 {
   // check for interrupts?

@@ -64,13 +64,13 @@ public:
     m_interruptCallback = interruptCallback;
   }
   
-  // PCEmulator: uartIndex picks the ESP32 UART, so two emulated ports can have physical ones at once
+  // ESPPC: uartIndex picks the ESP32 UART, so two emulated ports can have physical ones at once
   void setSerialPort(SerialPort * value, int uartIndex = 2);
 
-  // PCEmulator: whether a physical port is behind the chip, as opposed to a bridge or nothing
+  // ESPPC: whether a physical port is behind the chip, as opposed to a bridge or nothing
   bool hasSerialPort()       { return m_serialPort != nullptr; }
 
-  // PCEmulator: bridged mode, for when the UART pins are not available because something else owns
+  // ESPPC: bridged mode, for when the UART pins are not available because something else owns
   // them -- on this hardware that is the serial debug console, which shares pins 3/1 with COM1.
   // Instead of a physical port the chip is given a transmit callback and is fed received bytes
   // with injectRx(), so the console can carry the port's traffic in software and stay usable at

@@ -1,4 +1,4 @@
-# PCEmulator Code Review
+# ESPPC Code Review
 
 **Target Hardware:** Espressif ESP32-D0WDQ6 (Revision 1 / WROVER with PSRAM)  
 **Foundation:** FabGL 1.0.9 (PCEmulator example)  

@@ -91,7 +91,7 @@ Ordered so that each is small, testable on the board, and makes the next one eas
    boots the BIOS with a disk image and dumps the text screen. Everything it needs becomes the first
    draft of the interfaces (time, memory, storage). *About a day.*
 2. **Move the modified FabGL devices out of lib/FabGL.** i8086, PIC, PIT, i8042, 8250, RTC and
-   GraphicsAdapter are heavily PCEmulator specific by now; they move to a `core/` (and, for
+   GraphicsAdapter are heavily ESPPC specific by now; they move to a `core/` (and, for
    GraphicsAdapter, `display/`) directory unchanged, so later steps edit project code, not a vendored
    library. *An hour or two, mechanical.*
 3. **Time and hot placement.** One time header, `PLATFORM_HOT` instead of `IRAM_ATTR`; PIT, RTC,

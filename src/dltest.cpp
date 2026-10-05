@@ -4,7 +4,7 @@
       pio run -e dltest -t upload
       <read the serial console at 115200>
 
-  Joins the Wi-Fi stored by the emulator (Preferences "PCEmulator", SSID / WiFiPsw) and reads a few
+  Joins the Wi-Fi stored by the emulator (Preferences "ESPPC", SSID / WiFiPsw) and reads a few
   MB from each URL below, throwing the data away, so the network and TLS can be measured apart
   from the SD card and the VGA output. Edit the URLs for your network.
 */
@@ -80,7 +80,7 @@ void setup()
   Serial.begin(115200);
   delay(500);
   Preferences prefs;
-  prefs.begin("PCEmulator", true);
+  prefs.begin("ESPPC", true);
   char ssid[32] = "", psw[32] = "";
   prefs.getString("SSID", ssid, sizeof(ssid));
   prefs.getString("WiFiPsw", psw, sizeof(psw));

@@ -46,7 +46,7 @@ public:
 
   static void setMemory(uint8_t * memory) { s_memory = memory; }
 
-  // PCEmulator: start of the address range routed to the video memory callbacks.
+  // ESPPC: start of the address range routed to the video memory callbacks.
   // 0xA0000 is the IBM default; a machine with more than 640KB of conventional memory sets
   // 0xB0000 so that 0xA0000-0xAFFFF becomes ordinary RAM (see Machine::setRamSize).
   static void setVideoMemStart(int value) { s_videoMemStart = value; }
@@ -54,7 +54,7 @@ public:
 
   static void reset();
 
-  // PCEmulator: the register accessors are inline. They used to be out of line in i8086.cpp,
+  // ESPPC: the register accessors are inline. They used to be out of line in i8086.cpp,
   // which made every AL(), CS() or setAX() from the BIOS helpers and the machine's interrupt hook a
   // real call into flash. The register file layout is the one i8086.cpp works on: 16 bit registers
   // AX CX DX BX SP BP SI DI ES CS SS DS, the 8 bit ones overlaid on the first four.

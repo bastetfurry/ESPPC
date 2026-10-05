@@ -1,5 +1,5 @@
 /*
-  PCEmulator - getting an SD card out of a state it was left in by a reset
+  ESPPC - getting an SD card out of a state it was left in by a reset
 */
 
 

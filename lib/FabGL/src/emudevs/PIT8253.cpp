@@ -214,7 +214,7 @@ void PIT8253::changeOut(int timer, bool value)
 }
 
 
-// PCEmulator: in IRAM, ticked every 128th emulated instruction
+// ESPPC: in IRAM, ticked every 128th emulated instruction
 void IRAM_ATTR PIT8253::tick()
 {
   uint32_t now = FRC1Timer();

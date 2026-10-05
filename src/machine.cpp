@@ -224,7 +224,7 @@ void Machine::init()
   m_PIT8253.setCallbacks(this, PITChangeOut);
   m_PIT8253.reset();
 
-  m_MC146818.init("PCEmulator");
+  m_MC146818.init("ESPPC");
   m_MC146818.setCallbacks(this, MC146818Interrupt);
 
   m_MCP23S17.begin();

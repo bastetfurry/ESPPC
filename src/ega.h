@@ -1,5 +1,5 @@
 /*
-  EGA planar memory engine for the PCEmulator machine.
+  EGA planar memory engine for the ESPPC machine.
 
   This is local to this project -- it is not part of FabGL.
 

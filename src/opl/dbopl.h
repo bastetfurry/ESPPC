@@ -1,5 +1,5 @@
 /*
- *  PCEmulator: taken from DOSBox-X (src/hardware/dbopl.cpp), GPL version 2 or later, and used here
+ *  ESPPC: taken from DOSBox-X (src/hardware/dbopl.cpp), GPL version 2 or later, and used here
  *  under version 3 like the rest of the project. Changes: the DOSBox glue (Adlib::Handler, the
  *  mixer, save states, PCM boost) removed; DOSBox's type names come from dbopl_types.h.
  */
@@ -91,7 +91,7 @@ public:
 #if (DBOPL_WAVE == WAVE_HANDLER)
 	WaveHandler waveHandler = NULL;	//Routine that generate a wave 
 #else
-	const int16_t* waveBase = NULL;     // PCEmulator: const, the table is in flash
+	const int16_t* waveBase = NULL;     // ESPPC: const, the table is in flash
 	uint32_t waveMask = 0;
 	uint32_t waveStart = 0;
 #endif
@@ -252,7 +252,7 @@ struct Chip {
 	Chip( bool opl3Mode );
 };
 
-// PCEmulator: InitTables() fills the static tables; call once before Chip::Setup().
+// ESPPC: InitTables() fills the static tables; call once before Chip::Setup().
 void InitTables( void );
 
 

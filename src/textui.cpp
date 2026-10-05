@@ -1,5 +1,5 @@
 /*
-  PCEmulator - text mode user interface, see textui.h
+  ESPPC - text mode user interface, see textui.h
 */
 
 
@@ -652,7 +652,7 @@ void TextUI::postBegin()
   clear(TUI_POST);
   hideCursor();
   // the banner block, where a BIOS puts its name and the vendor's
-  text(0, 0, "ESP32 PC Emulator BIOS", TUI_POST_BRIGHT);
+  text(0, 0, "ESPPC BIOS", TUI_POST_BRIGHT);
   text(0, 1, "www.fabgl.com - by Fabrizio Di Vittorio", TUI_POST);
   text(0, 2, "Modified by Alexandra Bastet Stehr - lionscade.de", TUI_POST);
   m_postRow = 4;

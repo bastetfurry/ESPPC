@@ -1,5 +1,5 @@
 /*
-  PCEmulator - text mode user interface
+  ESPPC - text mode user interface
 
   The host side screens (power-on, machine selection, Wi-Fi, downloads) drawn as an 80x25 text
   screen on the emulator's own CGA text renderer, in the style of a classic Award BIOS setup.

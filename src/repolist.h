@@ -1,5 +1,5 @@
 /*
-  PCEmulator - machine repository lists
+  ESPPC - machine repository lists
 
   A repository is a URL with a "files.list" under it: CSV, one machine per line, at most
   REPO_MAXENTRIES of them. This is only the parser, with no Arduino dependencies, so it can be

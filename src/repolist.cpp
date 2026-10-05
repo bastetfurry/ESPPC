@@ -1,5 +1,5 @@
 /*
-  PCEmulator - machine repository lists, the parser. See repolist.h.
+  ESPPC - machine repository lists, the parser. See repolist.h.
 */
 
 

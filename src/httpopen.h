@@ -1,5 +1,5 @@
 /*
-  PCEmulator - an HTTP request that follows redirects across http and https
+  ESPPC - an HTTP request that follows redirects across http and https
 */
 
 

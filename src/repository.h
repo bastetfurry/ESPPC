@@ -1,5 +1,5 @@
 /*
-  PCEmulator - "Add from Repository" on the machine selection screen (F6)
+  ESPPC - "Add from Repository" on the machine selection screen (F6)
 */
 
 

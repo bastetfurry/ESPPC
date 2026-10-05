@@ -71,7 +71,7 @@ public:
     PC_Graphics_640x200_2Colors,
     
 
-    // --- PCEmulator local addition: EGA planar graphics modes ---
+    // --- ESPPC local addition: EGA planar graphics modes ---
     //
     // These do not read a linear frame buffer. EGA pixels live in four bit planes, which the
     // emulator keeps interleaved as one uint32_t per byte-column (see src/ega.h), so the video
@@ -97,7 +97,7 @@ public:
     // simply draws whatever glyphs are in plane 2 at the time.
     PC_Text_EGA_80x25_16Colors,
 
-    // --- PCEmulator local addition: Tandy 1000 16 colour modes ---
+    // --- ESPPC local addition: Tandy 1000 16 colour modes ---
     //
     // Linear frame buffers like CGA, two pixels per byte (high nibble first), with the lines of a
     // character row spread over 8 KB banks. Every pixel goes through the 16 palette registers.
@@ -109,7 +109,7 @@ public:
     // shown two pixels wide.
     PC_Graphics_Tandy_160x200_16Colors,
 
-    // --- PCEmulator local addition: Plantronics ColorPlus ---
+    // --- ESPPC local addition: Plantronics ColorPlus ---
     //
     // A CGA with a second 16 KB plane: plane 0 at B8000, plane 1 at BC000, both in the CGA layout
     // (even and odd lines 8 KB apart, 80 bytes a line). The video buffer is plane 0; plane 1 is
@@ -121,7 +121,7 @@ public:
     // Plantronics 640x200, 4 Colors: 1 bit of each pixel in each plane, through the CGA palette.
     PC_Graphics_Plantronics_640x200_4Colors,
 
-    // --- PCEmulator local addition: CGA on a composite colour monitor ---
+    // --- ESPPC local addition: CGA on a composite colour monitor ---
     //
     // The CGA graphics modes as an NTSC monitor shows them with the colour burst on: every nibble
     // of video memory (four dots of 640x200, or two pixels of 320x200) becomes one artifact colour,
@@ -141,7 +141,7 @@ public:
 
   void setVideoBuffer(void const * videoBuffer);
 
-  // PCEmulator: EGA planar modes. banks is the bank pointer array from the EGA engine, stride is
+  // ESPPC: EGA planar modes. banks is the bank pointer array from the EGA engine, stride is
   // the number of byte-columns per scanline, and palette is 16 entries of 6 bit EGA RGB (rgbRGB),
   // which map one to one onto FabGL's RGB222.
   void setEGAVideoBuffer(uint32_t * const * banks, int stride, uint32_t bankMask, uint32_t offsetMask);
@@ -173,18 +173,18 @@ public:
   void setPCGraphicsForegroundColorIndex(int colorIndex);
   void setPCGraphicsPaletteInUse(int paletteIndex);
 
-  // PCEmulator: the Tandy palette registers (4 bit IRGB, an index into the 16 CGA colours) and the
+  // ESPPC: the Tandy palette registers (4 bit IRGB, an index into the 16 CGA colours) and the
   // palette mask the pixel value is ANDed with first. Takes effect at once in a Tandy mode.
   void setTandyPalette(uint8_t const * palette16, uint8_t mask);
 
-  // PCEmulator: an on-screen drive activity LED, for boards without a free real one. 3x3 pixels in
+  // ESPPC: an on-screen drive activity LED, for boards without a free real one. 3x3 pixels in
   // the lower right corner of every mode, dim green when idle and bright for a moment after each
   // driveActivity(). mode: 0 = off, 1 = one LED for all drives, 2 = one each for A, B, C and D.
   // It is drawn into the line buffers only, never into guest memory.
   void setDriveLEDMode(int mode);
   void driveActivity(int drive);
 
-  // PCEmulator: which artifact colours the composite mode shows: 0 = from 640x200, 1 = from
+  // ESPPC: which artifact colours the composite mode shows: 0 = from 640x200, 1 = from
   // 320x200 palette 0, 2 = from 320x200 palette 1
   void setCompositeTable(int table);
   int getGraphWidth()                                      { return m_VGADCtrl.getViewPortWidth(); }
@@ -200,7 +200,7 @@ public:
   int  egaTextColumns() const                              { return m_egaTextColumns; }
   uint8_t egaPaletteEntry(int i) const                     { return m_egaPalette[i & 15]; }
 
-  // PCEmulator: the state an overlay (the SysReq menu) has to put back exactly as it found it
+  // ESPPC: the state an overlay (the SysReq menu) has to put back exactly as it found it
   uint8_t const * videoBuffer() const                      { return m_videoBuffer; }
   int  cursorRow() const                                   { return m_cursorRow; }
   int  cursorCol() const                                   { return m_cursorCol; }
@@ -272,7 +272,7 @@ private:
 
   bool                m_videoEnabled;
 
-  // --- PCEmulator: EGA planar mode state ---
+  // --- ESPPC: EGA planar mode state ---
   uint32_t * const *  m_egaBanks;      // four banks of EGA_BANK_ENTRIES uint32, planes interleaved
   int32_t             m_egaStride;     // byte-columns per scanline
   uint32_t            m_egaBankMask;   // banks - 1; video memory is sized to the mode
@@ -285,14 +285,14 @@ private:
   uint32_t *          m_egaSpread[4];  // plane byte -> eight packed 4 bit pixel indices
   uint16_t *          m_egaPal2;       // two packed indices -> two raw VGA pixel bytes
 
-  // --- PCEmulator: Tandy mode state ---
+  // --- ESPPC: Tandy mode state ---
   uint8_t             m_tandyPalette[16];
   uint8_t             m_tandyMask;
 
-  // --- PCEmulator: composite ---
+  // --- ESPPC: composite ---
   int8_t              m_compositeTable;
 
-  // --- PCEmulator: drive LED ---
+  // --- ESPPC: drive LED ---
   DrawScanlineCallback m_modeCallback;     // the mode's own renderer, called by drawScanlineWithLED
   int8_t              m_modeLines;         // its scanlines per call
   int8_t              m_driveLEDMode;

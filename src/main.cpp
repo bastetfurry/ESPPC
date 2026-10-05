@@ -686,7 +686,7 @@ static char const * diskName(char const * path)
 static void drawSetupFrame()
 {
   ui.clear(TUI_SCREEN);
-  ui.centre(0, "ESP32 PC Emulator Setup Utility", TUI_SCREEN);
+  ui.centre(0, "ESPPC Setup Utility", TUI_SCREEN);
   ui.centre(1, "Machine Configurations", TUI_LABEL);
 
   // main area: list on the left, details on the right, joined by a single line divider
@@ -967,7 +967,7 @@ void sysReqCallback()
   while (!done) {
 
     ui.box(X, Y, W, H, TUI_DIALOG);
-    ui.text(X + (W - 24) / 2, Y, " PCEmulator System Menu ", TUI_DIALOG_HEAD);
+    ui.text(X + (W - 19) / 2, Y, " ESPPC System Menu ", TUI_DIALOG_HEAD);
 
     for (int i = 0; i < M_COUNT; ++i) {
       uint8_t a = (i == sel) ? TUI_DIALOG_SEL : TUI_DIALOG;
@@ -1053,6 +1053,31 @@ void sysReqCallback()
 }
 
 
+// Until the project was named ESPPC, its settings and the RTC's CMOS were stored under
+// "PCEmulator", the name of the FabGL example it started from. Copy every key ESPPC does not have
+// yet, so a board that ran an older build keeps its Wi-Fi, host settings and CMOS. The old
+// namespace is left as it is: ESPMac falls back on the Wi-Fi and time zone kept there.
+static void migrateOldPreferences()
+{
+  Preferences old;
+  if (!old.begin("PCEmulator", true))    // read only, so a fresh board does not get the namespace
+    return;
+  for (char const * key : { "SSID", "WiFiPsw", "NtpServer", "TimeZone", "RepoURL" })
+    if (old.isKey(key) && !preferences.isKey(key))
+      preferences.putString(key, old.getString(key));
+  for (char const * key : { "AutoBoot", "DriveLed", "dconf" })
+    if (old.isKey(key) && !preferences.isKey(key))
+      preferences.putInt(key, old.getInt(key));
+  if (old.isKey("MC146818") && !preferences.isKey("MC146818")) {    // MC146818::init()'s CMOS, NSVKEY_REGS
+    size_t len = old.getBytesLength("MC146818");
+    std::unique_ptr<uint8_t[]> buf(new uint8_t[len]);
+    old.getBytes("MC146818", buf.get(), len);
+    preferences.putBytes("MC146818", buf.get(), len);
+  }
+  old.end();
+}
+
+
 void setup()
 {
   Serial.begin(115200); delay(500);
@@ -1062,7 +1087,8 @@ void setup()
   delay(100); // experienced crashes without this delay!
   disableCore1WDT();
 
-  preferences.begin("PCEmulator", false);
+  preferences.begin("ESPPC", false);
+  migrateOldPreferences();
 
   // Every FabGL display controller gets a queue for drawing primitives, sized here. The emulator's
   // VGADirectController renders scanlines itself and never queues one, and FabGL's GUI, which

@@ -425,7 +425,7 @@ bool BitmappedDisplayController::suspendDoubleBuffering(bool value)
 }
 
 
-// PCEmulator: the primitive machinery below was IRAM_ATTR so FabGL's paletted VGA controllers could
+// ESPPC: the primitive machinery below was IRAM_ATTR so FabGL's paletted VGA controllers could
 // run primitives from their interrupt. This build has none of those: the emulator drives the
 // output with VGADirectController, whose interrupt only calls the scanline renderer, and nothing
 // queues primitives since the text UI replaced FabGL's GUI. So it lives in flash, which frees

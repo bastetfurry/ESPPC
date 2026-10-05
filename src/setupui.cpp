@@ -1,5 +1,5 @@
 /*
-  PCEmulator - host setup screens on the text UI, see setupui.h
+  ESPPC - host setup screens on the text UI, see setupui.h
 */
 
 
@@ -318,7 +318,7 @@ void setupFilesBrowser(TextUI & ui, char const * startDir)
     ui.save(saved);
 
   ui.clear(TUI_SCREEN);
-  ui.centre(0, "ESP32 PC Emulator Setup Utility", TUI_SCREEN);
+  ui.centre(0, "ESPPC Setup Utility", TUI_SCREEN);
   ui.centre(1, "Browse Files", TUI_LABEL);
   ui.frame(0, 2, 80, 20, TUI_SCREEN, true);
   ui.frame(0, 21, 80, 4, TUI_SCREEN, true);
@@ -657,7 +657,7 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
 
   // --- screen ---
   ui.clear(TUI_SCREEN);
-  ui.centre(0, "ESP32 PC Emulator Setup Utility", TUI_SCREEN);
+  ui.centre(0, "ESPPC Setup Utility", TUI_SCREEN);
   ui.centre(1, "Machine Configuration", TUI_LABEL);
   ui.frame(0, 2, 80, 18, TUI_SCREEN, true);
   for (int y = 3; y < 19; ++y)
@@ -991,7 +991,7 @@ bool setupAdvancedSettings(TextUI & ui, HostSettings & settings)
   constexpr int COUNT = sizeof(ITEMS) / sizeof(ITEMS[0]);
 
   ui.clear(TUI_SCREEN);
-  ui.centre(0, "ESP32 PC Emulator Setup Utility", TUI_SCREEN);
+  ui.centre(0, "ESPPC Setup Utility", TUI_SCREEN);
   ui.centre(1, "Advanced Settings", TUI_LABEL);
   ui.frame(0, 2, 80, 18, TUI_SCREEN, true);
   for (int y = 3; y < 19; ++y)

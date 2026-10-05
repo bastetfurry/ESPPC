@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Grab a screenshot from a running PCEmulator machine over the serial debug console.
+Grab a screenshot from a running ESPPC machine over the serial debug console.
 
 The monitor's "p" command writes a header line and then the raw framebuffer. This attaches,
 drops into the monitor (which freezes the guest, so the frame is stable), asks for the dump,

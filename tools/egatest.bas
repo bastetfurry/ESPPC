@@ -1,7 +1,7 @@
 ' ==============================================================
 '  EGATEST.BAS
 '
-'  Video adapter test for the ESP32 PC/XT emulator (PCEmulator).
+'  Video adapter test for ESPPC, the ESP32 PC/XT emulator.
 '  Runs automatically from AUTOEXEC.BAT on this disk.
 '
 '  Walks every CGA and EGA screen mode QBasic can reach. For each
@@ -28,7 +28,7 @@ WIDTH 80
 CLS
 
 PRINT "=================================================="
-PRINT "  ESP32 PCEmulator  --  video adapter test"
+PRINT "  ESPPC  --  video adapter test"
 PRINT "=================================================="
 PRINT
 
@@ -107,7 +107,7 @@ OPEN "A:\RESULTS.TXT" FOR OUTPUT AS #1
 IF ErrFlag <> 0 THEN
   PRINT "Could not write A:\RESULTS.TXT (disk is read only?)."
 ELSE
-  PRINT #1, "ESP32 PCEmulator video adapter test"
+  PRINT #1, "ESPPC video adapter test"
   PRINT #1, "date "; DATE$; "  time "; TIME$
   PRINT #1, ""
   PRINT #1, "BIOS video mode 40:49 = &H"; HEX$(vmode)

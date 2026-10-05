@@ -703,7 +703,7 @@ int9_sysreq:
 ; ************************* INT 10h handler - video services
 
 int10:
-  ; PCEmulator: the text output calls -- set cursor, write character (and attribute), teletype --
+  ; ESPPC: the text output calls -- set cursor, write character (and attribute), teletype --
   ; go to the emulator first, which does them natively in the text modes (BIOS::fastTextVideo).
   ; It answers CF = 1 when done; otherwise (graphics modes) the code below handles the call as
   ; before. They are also the most frequent calls, so they are tested before anything else.
@@ -857,7 +857,7 @@ int10_set_vm:
   ; Store the video mode. This if fixed later for invalid modes.
   mov   byte [vid_mode-bios_data], al
 
-  ; PCEmulator: offer the mode to the emulator before doing anything CGA specific. The EGA modes
+  ; ESPPC: offer the mode to the emulator before doing anything CGA specific. The EGA modes
   ; 0Dh..10h are implemented on the C++ side (a planar memory engine, not a few CRTC registers),
   ; and that helper fills in the BIOS data area itself. AL = 1 back means it took the mode, so
   ; everything below -- the sequencer writes, the CGA mode tables and the text mode clear -- has
@@ -2643,7 +2643,7 @@ int10_video_subsystem_cfg:
   ;
   ;   BL = other = unsupported
   ;
-  ; PCEmulator: this used to be a bare iret, which left BL holding the 0x10 it came in with --
+  ; ESPPC: this used to be a bare iret, which left BL holding the 0x10 it came in with --
   ; the canonical "no EGA installed" answer, and the reason software never tried EGA modes here.
   ; The emulator now has an EGA, so report one.
   cmp   bl, 0x10
@@ -2689,7 +2689,7 @@ int10_vid_combination:
   ;   0A  MCGA with digital color display
   ;   0B  MCGA with analog monochrome display
   ;   0C  MCGA with analog color display
-  ; PCEmulator: AH=1Ah is a VGA/PS2 era call. A real EGA BIOS does not implement it, and
+  ; ESPPC: AH=1Ah is a VGA/PS2 era call. A real EGA BIOS does not implement it, and
   ; answering it actively prevents EGA from being detected by at least one well known caller.
   ;
   ; QBasic's adapter probe (disassembled from the running guest, since QBASIC.EXE is PKLITE

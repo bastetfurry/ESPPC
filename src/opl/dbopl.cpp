@@ -1,5 +1,5 @@
 /*
- *  PCEmulator: taken from DOSBox-X (src/hardware/dbopl.cpp), GPL version 2 or later, and used here
+ *  ESPPC: taken from DOSBox-X (src/hardware/dbopl.cpp), GPL version 2 or later, and used here
  *  under version 3 like the rest of the project. Changes: the DOSBox glue (Adlib::Handler, the
  *  mixer, save states, PCM boost) removed; DOSBox's type names come from dbopl_types.h.
  */
@@ -156,7 +156,7 @@ static uint16_t SinTable[ 512 ];
 
 //6 is just 0 shifted and masked
 
-// PCEmulator: WaveTable, MulTable, KslTable and TremoloTable are precomputed into flash
+// ESPPC: WaveTable, MulTable, KslTable and TremoloTable are precomputed into flash
 // (dbopl_tables.h, made by tools/gen_opl_tables.cpp with DBOPL_GENERATE_TABLES defined), which saves
 // 9 KB of internal RAM and the floating point work of building them at start.
 #ifdef DBOPL_GENERATE_TABLES

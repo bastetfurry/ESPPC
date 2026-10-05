@@ -40,7 +40,7 @@ namespace fabgl {
 #endif
 
 
-// PCEmulator: the start of the video window is runtime-selectable, see i8086::setVideoMemStart().
+// ESPPC: the start of the video window is runtime-selectable, see i8086::setVideoMemStart().
 // The machine's video memory only covers 0xB0000-0xBFFFF (Machine::writeVideoMemory8 discards
 // anything below that), so trapping from 0xA0000 leaves a 64KB hole that reads 0xFF and swallows
 // writes. A machine configured with more than 640KB moves the window to 0xB0000, turning that
@@ -322,7 +322,7 @@ static uint8_t * instr_table_lookup[] = {    rm_mode12_reg1,    // 0
 
 
 // ret false if not acked
-// PCEmulator: in IRAM, the machine's loop calls it whenever an interrupt is pending
+// ESPPC: in IRAM, the machine's loop calls it whenever an interrupt is pending
 bool IRAM_ATTR i8086::IRQ(uint8_t interrupt_num)
 {
   if (!s_pendingIRQ) {
@@ -440,7 +440,7 @@ void set_opcode(uint8_t opcode)
 
 
 // Execute INT #interrupt_num on the emulated machine
-// PCEmulator: in IRAM, taken on every software INT and hardware IRQ
+// ESPPC: in IRAM, taken on every software INT and hardware IRQ
 void IRAM_ATTR i8086::pc_interrupt(uint8_t interrupt_num)
 {
   // fab: interrupt can exit from halt state
@@ -562,7 +562,7 @@ static uint8_t optcodes[] = {
 };
 
 
-// PCEmulator: helpers for the fast paths in step().
+// ESPPC: helpers for the fast paths in step().
 //
 // A decoded ModRM operand: a register (idx into regs8 or regs16) or a memory address, and the
 // instruction bytes it took from the ModRM byte on (1 to 3). Same effective addresses as stepEx:
@@ -708,7 +708,7 @@ static inline __attribute__((always_inline)) uint32_t fastShift1(int op, uint32_
 }
 
 
-// PCEmulator: in IRAM. It runs once per emulated instruction, and from flash it competes for the
+// ESPPC: in IRAM. It runs once per emulated instruction, and from flash it competes for the
 // cache with guest RAM in PSRAM, which both go through.
 void IRAM_ATTR i8086::step()
 {
@@ -944,7 +944,7 @@ void IRAM_ATTR i8086::step()
         stepEx(opcode_stream);
         break;  // reloop, this is required to inhibit interrupt until next instruction
 
-      // PCEmulator: the fast paths below were measured as frequent in games (the monitor's 'y'
+      // ESPPC: the fast paths below were measured as frequent in games (the monitor's 'y'
       // profile) and cost 450-550 host cycles through stepEx's generic decoding. They set exactly
       // what stepEx sets, verified against the SingleStepTests 8088 suite (tools/cputest).
 
@@ -1199,7 +1199,7 @@ void IRAM_ATTR i8086::step()
 }
 
 
-// PCEmulator: in IRAM too, for the same reason as step(). This is the instruction interpreter
+// ESPPC: in IRAM too, for the same reason as step(). This is the instruction interpreter
 // proper, about 21 KB, and the largest single piece of code in IRAM.
 void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
 {
@@ -1900,7 +1900,7 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
         op_result = regs8[REG_AL] & (uint8_t)i_data0;
       }
       break;
-    // PCEmulator: everything rare lives in stepExCold(), in flash (see there)
+    // ESPPC: everything rare lives in stepExCold(), in flash (see there)
     default:
       if (stepExCold(opcode_stream, i_data0, i_data2, op_result))
         return; // no calc ip, no flags
@@ -1927,7 +1927,7 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
 }
 
 
-// PCEmulator: the instructions no game runs in a loop -- BCD adjustments, INT 3, INTO, SALC, CMC,
+// ESPPC: the instructions no game runs in a loop -- BCD adjustments, INT 3, INTO, SALC, CMC,
 // LOCK, HLT, the 80186 additions, the 8087 message and the unsupported opcode fallback -- in
 // flash rather than IRAM, which stepEx() had filled with 21 KB and which the fast paths in step()
 // need. noinline, or the compiler would put it straight back into stepEx. Returns true where

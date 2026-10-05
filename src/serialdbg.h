@@ -1,5 +1,5 @@
 /*
-  Serial debug console for the PCEmulator machine.
+  Serial debug console for the ESPPC machine.
 
   Local to this project -- not part of FabGL.
 

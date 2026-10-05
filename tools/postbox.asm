@@ -201,7 +201,7 @@ no_postbox:
         mov  ax, 0x4c01
         int  0x21
 
-msg_nopb db 'No postbox: this needs the PCEmulator host channel.', 13, 10, '$'
+msg_nopb db 'No postbox: this needs the ESPPC host channel.', 13, 10, '$'
 
 fhandle  dw 0
 flen     dd 0

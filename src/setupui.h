@@ -1,5 +1,5 @@
 /*
-  PCEmulator - host setup screens on the text UI: the machine editor, the file picker, the
+  ESPPC - host setup screens on the text UI: the machine editor, the file picker, the
   Files browser and disk image creation. These replace FabGL's uiApp dialogs.
 */
 

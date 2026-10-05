@@ -110,7 +110,7 @@ void i8042::reset()
   m_DBBOUT      = 0;
   m_DBBIN       = 0;
 
-  // PCEmulator: a reset must leave the physical PS/2 ports consistent with the command byte,
+  // ESPPC: a reset must leave the physical PS/2 ports consistent with the command byte,
   // not merely overwrite the byte. enableMouse() and updateCommandByte() only act on a *change*
   // of the disable bits, so the byte and the hardware have to agree at all times.
   //
@@ -189,7 +189,7 @@ void i8042::write(int address, uint8_t value)
 }
 
 
-// PCEmulator: in IRAM, ticked every 128th emulated instruction
+// ESPPC: in IRAM, ticked every 128th emulated instruction
 void IRAM_ATTR i8042::tick()
 {
   // something to receive from keyboard?

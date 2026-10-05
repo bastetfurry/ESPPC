@@ -153,7 +153,7 @@ uint8_t PIC8259::read(int addr)
 
 // ret: 0..7
 // 256 = no bit set
-// PCEmulator: the interrupt path, from the devices' ticks and the machine's loop, is in IRAM
+// ESPPC: the interrupt path, from the devices' ticks and the machine's loop, is in IRAM
 int IRAM_ATTR PIC8259::getHighestPriorityBitNum(uint8_t value)
 {
   if (value) {

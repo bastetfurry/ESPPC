@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host side of the PCEmulator postbox.
+"""Host side of the ESPPC postbox.
 
 The postbox is a private channel between a program running on the emulated machine and this
 script. The guest end is INT 0xFF with AX=0x55EE; this end speaks a small framed protocol over
