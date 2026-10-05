@@ -55,7 +55,7 @@ The board needs at least 4 MB **PSRAM** (the guest's RAM lives there) and **4 MB
 ## Build & flash
 
 **Without building anything:** open [the installer](https://bastetfurry.github.io/ESPPC/) in
-Chrome or Edge, plug in the board and click Install. It flashes the latest release, firmware and
+Firefox, Chrome or Edge, plug in the board and click Install. It flashes the latest release, firmware and
 flash file system.
 
 To build it yourself, with [PlatformIO](https://platformio.org/):
