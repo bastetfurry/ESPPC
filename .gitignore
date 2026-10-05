@@ -10,12 +10,9 @@ compile_commands.json
 # the exclusion for that one file, eg:  !data/rescue-freedos.img
 data/fs/*.img
 
-# Hard disk / floppy images used for testing are not committed either: they are large (the
-# MS-DOS install is 80MB) and, when built from retail DOS, not redistributable.
-images/*.img
+# images/ is the local test shelf: disk images and software to try in the emulator. None of it is
+# committed: it is large (the MS-DOS install is 80MB) and mostly not ours to redistribute.
+images/
 
 # python bytecode from the host side tools
 __pycache__/
-
-# A DOS game used for testing, not ours to redistribute
-images/PX3/
