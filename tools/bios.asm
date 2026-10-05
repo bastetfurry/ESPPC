@@ -525,10 +525,24 @@ init_crtc_loop:
 ; A sector without the 0xAA55 signature is not bootable. Without this check we would jump
 ; into whatever happens to be at 0:7C00 and hang with no indication of what went wrong.
   cmp  word [es:0x7dfe], 0xaa55
-  jne  no_boot_device
+  je   boot_jump
+
+; ...on a hard disk. A floppy is booted without it, as the PC and XT BIOS did: they never looked
+; at the signature, and boot floppies from before it became usual do not have one -- SCO Xenix
+; 86 ends its boot sector in 5A C3. What is still refused is a sector that was never written,
+; 512 copies of one byte (F6 from a format, or zeros), which is what an empty disk gives.
+  test byte [cs:boot_device], 0x80
+  jnz  no_boot_device
+  mov  di, 0x7c00
+  mov  al, [es:di]
+  mov  cx, 512
+  cld
+  repe scasb
+  je   no_boot_device
 
 ; Jump to boot sector
 
+boot_jump:
   jmp  0:0x7c00
 
 ; Nothing bootable in the configured boot drive. Say so instead of jumping into nothing:
