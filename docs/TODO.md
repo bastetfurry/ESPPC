@@ -96,7 +96,7 @@ needs only three pins) mapped to keyboard keys, for games with no joystick suppo
 ## Cleanup before publishing
 
 - **README:** rewritten for ESPPC (2026-10-05). Still missing: speed figures beyond Topbench,
-  screenshots, and the browser flasher once it exists.
+  screenshots.
 - **Tests in the build.** One script that builds the firmware and runs the SingleStepTests harness
   (`tools/cputest/run.py`), usable as a pre-commit hook and later as CI once there is a remote.
 - **Rescue disk** on FreeDOS instead of retail DOS, so it can be committed (see `.gitignore`).
