@@ -248,7 +248,7 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
       // A text mode that does not use FontInfo: the glyphs come from plane 2. The geometry still
       // has to be published, because the cursor position is computed against getTextColumns().
       m_columns = m_egaTextColumns;
-      m_rows    = m_VGADCtrl.getViewPortHeight() / m_egaCharHeight;
+      m_rows    = m_egaTextRows;
     }
   }
 }
@@ -279,6 +279,7 @@ GraphicsAdapter::GraphicsAdapter()
     m_egaLineCompare(0x3ff),
     m_egaCharHeight(16),
     m_egaTextColumns(80),
+    m_egaTextRows(25),
     m_egaPal2(nullptr),
     m_tandyMask(0x0f),
     m_compositeTable(0),
@@ -1092,6 +1093,14 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
 
   if (scanLine == 0)
     ++ga->m_frameCounter;
+
+  // Past the last row: 43 rows of 8 scanlines end at 344, and the rest of the 400 line frame is
+  // background, as the bottom of a real EGA's 350 lines is. Rendering on would show whatever
+  // follows the screen in plane 0. charHeight is a multiple of LINES, so a call is all or nothing.
+  if (textRow >= ga->m_egaTextRows) {
+    memset(dest, (uint8_t) ga->m_egaPal2[0], SCREENWIDTH * LINES);
+    return;
+  }
 
   bool showCursor = ga->m_cursorVisible && ga->m_cursorRow == textRow &&
                     ((ga->m_frameCounter & 0x1f) < 0xf);

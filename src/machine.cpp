@@ -1383,7 +1383,9 @@ void Machine::setCGAMode()
 // INT 10h AH=11h, or a program poking it directly -- changes what the renderer draws.
 void Machine::loadEGAFont(int charHeight)
 {
-  auto const & f = (charHeight >= 16) ? fabgl::FONT_8x16 : fabgl::FONT_8x14;
+  auto const & f = (charHeight >= 16) ? fabgl::FONT_8x16
+                 : (charHeight >= 14) ? fabgl::FONT_8x14
+                                      : fabgl::FONT_8x8;
 
   for (int ch = 0; ch < 256; ++ch) {
     for (int row = 0; row < 32; ++row) {
@@ -1391,6 +1393,36 @@ void Machine::loadEGAFont(int charHeight)
       m_EGA.writePlaneByte(2, (uint32_t)ch * 32 + row, bits);
     }
   }
+}
+
+
+// INT 10h AH=11h AL=01h/02h/11h/12h: load the ROM 8x14 or 8x8 font in an EGA text mode. The 1xh
+// forms also recalculate the screen, which is how 43 line mode is entered: the 8x8 font in 8
+// scanline cells gives 43 rows on an EGA's 350 lines (QBasic /H, EDIT /H, MODE CO80,43 ...). The
+// 0xh forms only replace the glyphs and leave the geometry alone.
+//
+// The 25 row geometry here is the one setEGAMode() builds, 16 scanline cells with the 8x16 font
+// (see the renderer's mode table for why it is not 8x14), so "8x14" restores exactly that.
+// Returns the number of rows, or 0 when no EGA text mode is up.
+int Machine::setEGATextFont(int charHeight, bool recalc)
+{
+  if (!m_EGAActive)
+    return 0;
+
+  auto bda = s_memory + 0x400;
+  if (bda[0x49] > 0x03)
+    return 0;
+
+  int cell = (charHeight == 8) ? 8 : 16;
+  int rows = recalc ? ((cell == 8) ? 43 : 25) : m_graphicsAdapter.egaTextRows();
+
+  if (recalc) {
+    m_graphicsAdapter.setEGACharHeight(cell);
+    m_graphicsAdapter.setEGATextRows(rows);
+  }
+  loadEGAFont(cell);
+
+  return rows;
 }
 
 
@@ -1578,6 +1610,7 @@ bool Machine::setEGAMode(int biosMode, bool clear)
     m_graphicsAdapter.setEGAStartAddress(0);
     resetEGALineCompare();
     m_graphicsAdapter.setEGACharHeight(16);
+    m_graphicsAdapter.setEGATextRows(25);
     m_graphicsAdapter.setEGATextColumns(textColumns);
     m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
     m_graphicsAdapter.setBit7Blink(true);

@@ -306,6 +306,10 @@ public:
   // The BIOS asks for this because there is no linear frame buffer to poke in these modes.
   void egaDrawChar(uint8_t ch, uint8_t colour);
 
+  // INT 10h AH=11h ROM font load in an EGA text mode: charHeight 8 or 14, recalc for the 1xh
+  // forms, which change the number of rows. Returns the rows now on screen, 0 if not in EGA text.
+  int setEGATextFont(int charHeight, bool recalc);
+
   // BIOS pixel services for the EGA graphics modes; false / -1 when the mode is not one.
   bool egaWritePixel(int x, int y, uint8_t colour, bool xored);
   int  egaReadPixel(int x, int y);

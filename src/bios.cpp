@@ -296,6 +296,30 @@ void BIOS::helpersEntry()
       break;
     }
 
+    // AH = 0x14, INT 10h AH=11h ROM font load on the EGA. AL = the caller's AL: 01h/11h 8x14,
+    // 02h/12h 8x8; the 1xh forms recalculate the rows (8x8 is 43 line mode).
+    //   returns AL = 1 when done, AL = 0 when no EGA text mode is up and the call is ignored
+    case 0x14:
+    {
+      int  al     = i8086::AL();
+      bool recalc = al & 0x10;
+      int  rows   = m_machine->setEGATextFont((al & 0x0f) == 0x02 ? 8 : 14, recalc);
+      if (rows && recalc) {
+        auto bda  = m_memory + BIOS_DATAAREA_ADDR;
+        int  cols = *(uint16_t*)(bda + 0x4a);
+        int  page = rows * cols * 2;
+        bda[0x84] = rows - 1;                                    // text rows - 1
+        bda[0x85] = (rows == 43) ? 8 : 16;                       // scan lines per character
+        *(uint16_t*)(bda + 0x4c) = (page + 0xff) & ~0xff;        // page size, as IBM rounds it
+        // the cursor may now sit below the last row
+        for (int p = 0; p < 8; ++p)
+          if (bda[0x51 + p * 2] >= rows)
+            bda[0x51 + p * 2] = rows - 1;
+      }
+      i8086::setAL(rows ? 1 : 0);
+      break;
+    }
+
     // AH = 0x12, at POST: DX = offset of that IRQ 7 handler in the BIOS segment
     case 0x12:
       m_machine->setTandyDACStub(i8086::DX());

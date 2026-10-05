@@ -770,6 +770,14 @@ int10_not_ega_call:
   je   int10_palette
   cmp  ax, 0x1123 ; Set int43 to 8x8 double dot font
   je   int10_set_int43_8x8dd
+  cmp  ax, 0x1101 ; Load ROM 8x14 font
+  je   int10_load_rom_font
+  cmp  ax, 0x1102 ; Load ROM 8x8 font
+  je   int10_load_rom_font
+  cmp  ax, 0x1111 ; Load ROM 8x14 font and recalculate: 25 rows
+  je   int10_load_rom_font
+  cmp  ax, 0x1112 ; Load ROM 8x8 font and recalculate: 43 rows
+  je   int10_load_rom_font
   cmp  ax, 0x1130 ; get font information
   je   int10_get_font_info
   cmp  ah, 0x12 ; Video sub-system configure
@@ -2520,6 +2528,17 @@ int10_palette_getblock_done:
 int10_palette_done:
   iret
 
+int10_load_rom_font:
+  ; INT 10h AX=1101h/1102h/1111h/1112h. The font goes into plane 2 and, for the 1xh forms, the
+  ; number of rows changes with it -- AX=1112h is how 43 line mode is entered (QBasic /H, MODE
+  ; CO80,43). All of it is done on the C++ side, BIOS data area included. Without this, programs
+  ; that asked for 43 lines went on to write 43 rows into a screen that still showed 25.
+  push  ax
+  mov   ah, 0x14
+  emu_helper
+  pop   ax
+  iret
+
 int10_set_int43_8x8dd:
 
   push  ax
@@ -2564,6 +2583,11 @@ int10_get_font_info:
   ;
   ; There is no 8x14 or 9 dot font in this ROM, so those requests are answered with the 8x16 table
   ; and a matching stride. A little too tall, but self consistent and legible, which beats noise.
+  ;
+  ; For BH=0 and 1, the pointers to the current font, CX is the height of the font on screen
+  ; (40:85), as on a real BIOS -- it is how callers learn what the screen is using. It used to be
+  ; a fixed 8, and QBasic, which saves this at startup and puts an 8 line font back with AX=1112h
+  ; when it exits, then returned to DOS in 43 line mode after /H.
 
   push  ax
   push  ds
@@ -2588,7 +2612,8 @@ int10_get_font_info_int1f:
   mov   ax, [0x007e]
   mov   es, ax
   mov   bp, [0x007c]
-  mov   cx, 0x0008
+  mov   cx, [0x0485]                    ; the font on screen, see below
+  xor   ch, ch
   jmp   int10_get_font_info_done
 
 int10_get_font_info_int44:
@@ -2597,7 +2622,8 @@ int10_get_font_info_int44:
   mov   ax, [0x0112]
   mov   es, ax
   mov   bp, [0x0110]
-  mov   cx, 0x0008
+  mov   cx, [0x0485]
+  xor   ch, ch
   jmp   int10_get_font_info_done
 
 int10_get_font_info_8x8:
