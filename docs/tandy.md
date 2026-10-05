@@ -131,7 +131,7 @@ roughly 150 bytes of IRAM, against about 2.9 KB free.
 - The mode hook (helper AH=0Bh) takes modes 8 and 9 on a Tandy machine. It programs the registers
   above and fills the data area: mode, columns 20 or 40, page size, and the page register copy.
 - INT 10h AH=0Ch/0Dh (write and read pixel) and character drawing in modes 8 and 9.
-- INT 10h AH=10h AL=00h-02h: the PCjr/Tandy palette calls. The pure CGA gate added in aff7499 asks
+- INT 10h AH=10h AL=00h-02h: the PCjr/Tandy palette calls. The pure CGA gate added in 0f2a1d9 asks
   helper AH=0Eh "is an EGA fitted". It has to become "which adapter", so that a Tandy answers
   these calls and still refuses AH=12h.
 - The BIOS data area keeps the CGA equipment bits (10b, 80x25 colour).

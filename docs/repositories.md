@@ -5,7 +5,7 @@ Repository** on the machine list asks for its URL, shows the machines it offers,
 chosen ones to `mconfs.txt`. Their disk images are downloaded on each machine's first boot.
 
 The first part of this page is for whoever offers a repository; the rest describes how the board
-handles it. Merged 2026-10-04 (0e8f698). Open points are in [TODO.md](TODO.md).
+handles it. Merged 2026-10-04 (9db4ea9). Open points are in [TODO.md](TODO.md).
 
 
 ## Offering a repository

@@ -16,3 +16,6 @@ images/*.img
 
 # python bytecode from the host side tools
 __pycache__/
+
+# A DOS game used for testing, not ours to redistribute
+images/PX3/

@@ -31,7 +31,7 @@ Repositories are done and merged, see [repositories.md](repositories.md). Still 
 
 ## The 16550 UART, waiting for another modem
 
-On branch `serial-16550` (53c63a0, not merged): the emulated UART as a 16550A with a 2 KB receive
+On branch `serial-16550` (76023a9, not merged): the emulated UART as a 16550A with a 2 KB receive
 ring, THRE pacing from the host UART, traffic counters (monitor `n` and the SysReq menu), and the
 IRAM margin check in the build. The ESP8266 softmodem on U1 showed framing errors and lost pings
 even at 2400 baud, so the user is getting a different modem before this is tested further. Note:
