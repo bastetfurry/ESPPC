@@ -45,6 +45,7 @@
 #include "ega.h"
 #include "fdc.h"
 #include "hdc.h"
+#include "mm58174.h"
 
 
 // Disk images may live on the SD card (paths relative to the base directory) or in the
@@ -186,6 +187,12 @@ public:
   void setHwDisk(bool value)                   { m_hwDisk = value; }
   bool hwDisk() const                          { return m_hwDisk; }
 
+  // The clock at 70h: the AT's MC146818, which DOS and the BIOS use (the default), the MM58174 that
+  // SCO Xenix 86 reads, at 70h-7Fh, or none at all, as on an XT without a clock card. Must be called
+  // before run().
+  enum class Clock : uint8_t { AT, MM58174, None };
+  void setClock(Clock value)                   { m_clock = value; }
+  Clock clock() const                          { return m_clock; }
 
   // For the devices on the 8237: move up to n bytes through DMA channel ch, to or from guest memory,
   // as the channel is programmed. Returns the bytes moved, fewer when the channel is masked or
@@ -565,6 +572,8 @@ private:
   bool                     m_adlibEnabled;
   AdLib *                  m_adlib;             // only allocated when enabled
   bool                     m_hwDisk;
+  Clock                    m_clock;
+  MM58174                  m_MM58174;
   FDC765                   m_fdc;
   XTHDC                    m_hdc;
   uint8_t                  m_plantronics;

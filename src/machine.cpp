@@ -107,6 +107,7 @@ Machine::Machine() :
     m_adlibEnabled(false),
     m_adlib(nullptr),
     m_hwDisk(false),
+    m_clock(Clock::AT),
     m_plantronics(0),
     m_plantronicsSwap(false),
     m_tandy(false),
@@ -227,6 +228,7 @@ void Machine::init()
 
   m_MC146818.init("ESPPC");
   m_MC146818.setCallbacks(this, MC146818Interrupt);
+  m_MM58174.init();
 
   m_MCP23S17.begin();
   m_MCP23S17Sel = 0;
@@ -2115,10 +2117,12 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
       m->m_i8042.write(1, value);
       break;
 
-    // MC146818 RTC & RAM
-    case 0x0070:
-    case 0x0071:
-      m->m_MC146818.write(address & 1, value);
+    // the clock: MC146818 RTC & RAM at 70h/71h, or the MM58174 at 70h-7Fh
+    case 0x0070 ... 0x007f:
+      if (m->m_clock == Clock::AT && address <= 0x71)
+        m->m_MC146818.write(address & 1, value);
+      else if (m->m_clock == Clock::MM58174)
+        m->m_MM58174.write(address & 15, value);
       break;
       
     // COM2
@@ -2389,10 +2393,13 @@ uint8_t Machine::readPortHW(void * context, int address)
     case 0x0064:
       return m->m_i8042.read(1);
 
-    // MC146818 RTC & RAM
-    case 0x0070:
-    case 0x0071:
-      return m->m_MC146818.read(address & 1);
+    // the clock: MC146818 RTC & RAM at 70h/71h, or the MM58174 at 70h-7Fh
+    case 0x0070 ... 0x007f:
+      if (m->m_clock == Clock::AT && address <= 0x71)
+        return m->m_MC146818.read(address & 1);
+      if (m->m_clock == Clock::MM58174)
+        return m->m_MM58174.read(address & 15);
+      return 0xff;
 
     // COM2
     case 0x2f8 ... 0x2ff:

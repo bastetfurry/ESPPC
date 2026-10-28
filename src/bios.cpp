@@ -235,8 +235,10 @@ void BIOS::helpersEntry()
       break;
 
     // AH = 0x07, synchronize system ticks with RTC
+    //   returns AL = 1 when the AT clock (MC146818) is fitted, 0 otherwise
     case 0x07:
       syncTicksWithRTC();
+      i8086::setAL(m_machine->clock() == Machine::Clock::AT ? 1 : 0);
       break;
 
     // AH = 0x08, set media drive parameters tables address
@@ -1138,6 +1140,11 @@ static uint8_t BCDtoByte(uint8_t v)
 // synchronize system ticks with RTC
 void BIOS::syncTicksWithRTC()
 {
+  // without a clock the day starts at midnight, as on an XT
+  if (m_machine->clock() == Machine::Clock::None) {
+    *(uint32_t*)(m_memory + BIOS_DATAAREA_ADDR + BIOS_SYSTICKS) = 0;
+    return;
+  }
   m_MC146818->updateTime();
   int ss = BCDtoByte(m_MC146818->reg(0x00));
   int mm = BCDtoByte(m_MC146818->reg(0x02));

@@ -539,10 +539,11 @@ char const * const VIDEO_OPTS[] = { "CGA", "EGA (BIOS ROM)", "Tandy 1000" };
 char const * const ONOFF_OPTS[] = { "Disabled", "Enabled" };
 char const * const USB_OPTS[]   = { "Not Connected", "COM1", "COM2" };
 char const * const HWDISK_OPTS[] = { "BIOS Only", "Direct Access" };
+char const * const CLOCK_OPTS[]  = { "AT (MC146818)", "MM58174", "None" };
 
 enum {
   F_DESC, F_FD0, F_FD1, F_HD0, F_HD0CHS, F_HD1, F_HD1CHS,
-  F_BOOT, F_RAM, F_HWDISK, F_VIDEO, F_COMPOSITE, F_EGAROM, F_TSOUND, F_TDAC, F_ADLIB, F_DEBUG, F_USB, F_HWSER,
+  F_BOOT, F_RAM, F_HWDISK, F_CLOCK, F_VIDEO, F_COMPOSITE, F_EGAROM, F_TSOUND, F_TDAC, F_ADLIB, F_DEBUG, F_USB, F_HWSER,
   F_COUNT
 };
 
@@ -557,6 +558,7 @@ Field const FIELDS[F_COUNT] = {
   { "Boot From",        Kind::Choice, "The drive the BIOS boots from.", BOOT_OPTS, 4 },
   { "Base Memory",      Kind::Choice, "Conventional memory. Above 640 KB the A000 segment becomes ordinary RAM, which only non-EGA machines can use.", RAM_OPTS, 11 },
   { "Disk Hardware",    Kind::Choice, "Direct Access adds the floppy and XT hard disk controllers and their DMA for systems with their own disk drivers, such as SCO Xenix. DOS and games use the BIOS, which stays fast either way.", HWDISK_OPTS, 2 },
+  { "Clock",            Kind::Choice, "The real time clock. AT is the MC146818 that DOS and the BIOS read the date and time from. MM58174 is the clock chip SCO Xenix 86 reads, at 70h-7Fh; DOS sees no clock then. None is an XT without a clock card.", CLOCK_OPTS, 3 },
   { "Video Adapter",    Kind::Choice, "CGA is the original adapter. EGA runs a real EGA BIOS option ROM. Tandy 1000 adds its 16 colour modes 8 and 9 and the three voice sound chip.", VIDEO_OPTS, 3 },
   { "  Composite Mon.", Kind::Choice, "A composite colour monitor instead of RGB: CGA graphics with the colour burst on show NTSC artifact colours, 160x200 in 16 colours, for games that offer a composite mode.", ONOFF_OPTS, 2 },
   { "EGA BIOS ROM",     Kind::Path,   "Option ROM image for the EGA adapter. None uses /spiffs/ega.bin.", nullptr, 0 },
@@ -654,6 +656,7 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
   v->choice[F_COMPOSITE] = item->composite ? 1 : 0;
   v->choice[F_ADLIB]  = item->adlib ? 1 : 0;
   v->choice[F_HWDISK] = item->hwDisk ? 1 : 0;
+  v->choice[F_CLOCK]  = item->clock % 3;
   v->choice[F_DEBUG] = item->debugConsole ? 1 : 0;
   v->choice[F_USB]   = item->effectiveUsbSerial() % 3;
   v->choice[F_HWSER] = item->hwSerial % 3;
@@ -888,6 +891,7 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
       item->composite    = v->choice[F_COMPOSITE] != 0;
       item->adlib        = v->choice[F_ADLIB] != 0;
       item->hwDisk       = v->choice[F_HWDISK] != 0;
+      item->clock        = v->choice[F_CLOCK];
       item->debugConsole = v->choice[F_DEBUG] != 0;
       // written explicitly once the page has been used, so the file records the choice
       item->setUsbSerial(v->choice[F_USB] == 2 ? "com2" : (v->choice[F_USB] == 1 ? "com1" : "off"));

@@ -44,6 +44,9 @@ Allowed tags:
 "hwdisk": 1 adds the disk controller hardware for operating systems with their own disk drivers,
          such as SCO Xenix: the floppy controller (3F0h-3F7h, IRQ 6, DMA channel 2) and the XT hard
          disk controller (320h-323h, IRQ 5, DMA channel 3). INT 13h is unaffected.
+"clock" : The real time clock. Values: at (default), mm58174, none. "at" is the AT's MC146818 at
+         70h/71h, which DOS and the BIOS use. "mm58174" puts the National MM58174 at 70h-7Fh instead,
+         the clock SCO Xenix 86 reads; DOS then sees no clock. "none" is an XT without a clock card.
 "ram"  : Conventional memory in KB, 64 to 704 in steps of 64. Default is 640.
          704 is the classic non-IBM XT configuration: video starts at 0xB0000, so 0xA0000-0xAFFFF
          is ordinary RAM. Leave at 640 unless a program needs the extra memory, since some software
@@ -123,6 +126,7 @@ struct MachineConfItem {
   bool              composite;                // "composite": a composite colour monitor on the CGA
   bool              adlib;                    // "adlib": an AdLib (OPL2) at 388h
   bool              hwDisk;                   // "hwdisk": the disk controllers and DMA hardware
+  uint8_t           clock;                    // "clock": 0 = AT (MC146818), 1 = MM58174, 2 = none
 
   MachineConfItem()
     : next(nullptr),
@@ -143,7 +147,8 @@ struct MachineConfItem {
       tandyDAC(false),
       composite(false),
       adlib(false),
-      hwDisk(false)
+      hwDisk(false),
+      clock(0)
   {
   }
 
@@ -207,6 +212,12 @@ struct MachineConfItem {
   void setHwDisk(char const * value)            {
     hwDisk = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
                        value[0] == 't' || value[0] == 'T');
+  }
+
+  // "clock at", "clock mm58174" or "clock none"; anything else, or no tag, is the AT clock
+  void setClock(char const * value)             {
+    char c = value ? (value[0] | 0x20) : 0;
+    clock = c == 'm' ? 1 : (c == 'n' ? 2 : 0);
   }
 
   // "enabledebug 1" turns the serial debug console on. It is off unless asked for, because it

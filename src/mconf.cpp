@@ -209,6 +209,8 @@ void MachineConf::loadFromFile(FILE * file)
       item->setAdLib(value);
     else if (strcmp("hwdisk", tag) == 0)
       item->setHwDisk(value);
+    else if (strcmp("clock", tag) == 0)
+      item->setClock(value);
     else if (tag[0])
       // Say so rather than ignoring it. A mistyped or over-long tag otherwise looks exactly
       // like a feature that does not work.
@@ -269,6 +271,11 @@ void MachineConf::saveToFile(FILE * file)
       fputs("adlib 1 ", file);
     if (item->hwDisk)
       fputs("hwdisk 1 ", file);
+    // only written when not the AT clock, the default
+    if (item->clock == 1)
+      fputs("clock mm58174 ", file);
+    else if (item->clock == 2)
+      fputs("clock none ", file);
     fputs("\r\n", file);
   }
 }

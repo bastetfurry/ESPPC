@@ -1328,6 +1328,13 @@ void setup()
     printf("Disk: floppy controller at 3F0h, XT hard disk controller at 320h, DMA\n");
     machine->setHwDisk(true);
   }
+  if (conf->clock == 1) {
+    printf("Clock: MM58174 at 70h-7Fh\n");
+    machine->setClock(Machine::Clock::MM58174);
+  } else if (conf->clock == 2) {
+    printf("Clock: none\n");
+    machine->setClock(Machine::Clock::None);
+  }
   for (int i = 0; i < DISKCOUNT; ++i)
     machine->setDriveImage(i, diskFilename[i], conf->cylinders[i], conf->heads[i], conf->sectors[i]);
 

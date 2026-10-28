@@ -512,13 +512,18 @@ kbd_flushed:
 
 ; Initialize RTC
 
+  ; synchronize system tick with RTC; AL = 1 when the machine has the AT clock at all (it may have
+  ; the MM58174 there instead, or no clock)
+  mov  ah, 0x07
+  emu_helper
+  mov  [cs:rtc_at], al
+  test al, al
+  jz   rtc_done
   mov  al, 0x0b
   out  RTC_SEL, al
   mov  al, 0b00000010 ; just set h24 mode
   out  RTC_REG, al
-  ; synchronize system tick with RTC
-  mov  ah, 0x07
-  emu_helper
+rtc_done:
 
 ; Enable interrupts
   sti
@@ -3203,12 +3208,17 @@ int15:
   je   int15_81   ; Device Close
   cmp  ah, 0x82
   je   int15_82   ; Program Termination
-  cmp  ah, 0x83
-  je   int15_83   ; Set Event Wait Interval
   cmp  ah, 0x85
   je   int15_85   ; System Request Key
+
+  ; the event wait and the wait run on the AT clock's periodic interrupt
+  cmp  byte [cs:rtc_at], 0
+  je   int15_no_rtc
+  cmp  ah, 0x83
+  je   int15_83   ; Set Event Wait Interval
   cmp  ah, 0x86
   je   int15_86   ; Wait
+int15_no_rtc:
   cmp  ah, 0xc0
   je   int15_c0
   cmp  ah, 0xc1
@@ -3581,6 +3591,13 @@ int1a:
   je    int1a_00  ; Read System Time Counter
   cmp   ah, 0x01
   je    int1a_01  ; Set System Time Counter
+
+  ; the real time clock calls need the AT clock; without one they fail, as on an XT
+  cmp   ah, 0x07
+  ja    int1a_rtc
+  cmp   byte [cs:rtc_at], 0
+  je    int1a_unsupported
+int1a_rtc:
   cmp   ah, 0x02
   je    int1a_02  ; Read Real-Time Clock Time
   cmp   ah, 0x03
@@ -6762,6 +6779,7 @@ times (0xff-($-com1addr)) db  0
 
 ; additional BIOS variables (non standard)
 boot_device      db  0
+rtc_at           db  1   ; 0: no MC146818 at 70h, so INT 1Ah AH=02h-07h and INT 15h AH=83h/86h fail
 
 ; Runtime EBDA segment. Defaults to the top 1KB of 640KB and is overwritten by POST with the
 ; value the emulator reports for the configured memory size (helper AH=0x09).
