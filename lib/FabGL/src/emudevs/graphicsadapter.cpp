@@ -154,7 +154,8 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
   } emulationInfo[] = {
 
     // Emulation::PC_Text_40x25_16Colors (CGA, Text Mode, 40x25x16)
-    {  true,  &FONT_8x8,  5,  7, 4,      drawScanline_PC_Text_40x25_16Colors, QVGA_320x240_60Hz, 320, 200 },
+    // ESPPC: drawn in the 6845's geometry, like PC_Text_CGA_80Columns
+    {  true,  &FONT_8x8,  5,  7, 1,       drawScanline_PC_Text_CGA_40Columns, QVGA_320x240_60Hz, 320, 200 },
 
     // Emulation::PC_Text_80x25_16Colors (CGA, Text Mode, 80x25x16)
     {  true, &FONT_8x16, 13, 15, 8,      drawScanline_PC_Text_80x25_16Colors,  VGA_640x480_60Hz, 640, 400 },
@@ -228,6 +229,11 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
     // table entry, exactly what the CGA 320x200 renderer does, so it is reused as it is.
     { false,    nullptr,  0,  0, 1, drawScanline_PC_Graphics_320x200_4Colors, QVGA_320x240_60Hz, 320, 200 },
 
+    // --- ESPPC local addition: CGA text in the 6845's geometry, with the 8x8 font
+
+    // Emulation::PC_Text_CGA_80Columns: two output lines per call, one CGA line drawn twice
+    {  true, &FONT_8x8,   6,  7, 2,  drawScanline_PC_Text_CGA_80Columns,  VGA_640x480_60Hz, 640, 400 },
+
   };
 
   if (emulation != Emulation::None) {
@@ -244,6 +250,11 @@ void GraphicsAdapter::setupEmulation(Emulation emulation)
       setCursorShape(info->cursorStart, info->cursorEnd);
       m_columns = m_VGADCtrl.getViewPortWidth() / m_font.width;
       m_rows    = m_VGADCtrl.getViewPortHeight() / m_font.height;
+      if (emulation == Emulation::PC_Text_CGA_80Columns || emulation == Emulation::PC_Text_40x25_16Colors) {
+        // the cursor position is computed against the columns the 6845 counts
+        m_columns = m_cgaColumns;
+        m_rows    = m_cgaRows;
+      }
     } else if (emulation == Emulation::PC_Text_EGA_80x25_16Colors) {
       // A text mode that does not use FontInfo: the glyphs come from plane 2. The geometry still
       // has to be published, because the cursor position is computed against getTextColumns().
@@ -259,6 +270,12 @@ GraphicsAdapter::GraphicsAdapter()
     m_emulation(Emulation::None),
     m_videoBuffer(nullptr),
     m_cgaStart(0),
+    m_cgaColumns(80),
+    m_cgaRows(25),
+    m_cgaLineHeight(8),
+    m_cgaCursorStart(6),
+    m_cgaCursorEnd(7),
+    m_borderIndex(0),
     m_rawLUT(nullptr),
     m_cursorRow(0),
     m_cursorCol(0),
@@ -370,6 +387,7 @@ void GraphicsAdapter::setupLUT()
 
     case Emulation::PC_Text_80x25_16Colors:
     case Emulation::PC_Text_40x25_16Colors:
+    case Emulation::PC_Text_CGA_80Columns:
       // each LUT item contains half pixel (an index to 16 colors palette)
       if (!m_rawLUT)
         m_rawLUT = (uint8_t*) heap_caps_malloc(16, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
@@ -656,7 +674,20 @@ void GraphicsAdapter::setTandyPalette(uint8_t const * palette16, uint8_t mask)
 
 void GraphicsAdapter::setBorderColorIndex(int index)
 {
-  m_VGADCtrl.setBorderColor(CGAPalette[index & 15]);
+  m_borderIndex = index & 15;
+  m_VGADCtrl.setBorderColor(CGAPalette[m_borderIndex]);
+}
+
+
+void GraphicsAdapter::setCGATextGeometry(int columns, int rows, int lineHeight)
+{
+  m_cgaColumns    = columns < 1 ? 1 : columns;
+  m_cgaRows       = rows < 1 ? 1 : rows;
+  m_cgaLineHeight = lineHeight < 1 ? 1 : (lineHeight > 32 ? 32 : lineHeight);
+  if (m_emulation == Emulation::PC_Text_CGA_80Columns || m_emulation == Emulation::PC_Text_40x25_16Colors) {
+    m_columns = m_cgaColumns;
+    m_rows    = m_cgaRows;
+  }
 }
 
 
@@ -726,108 +757,6 @@ void GraphicsAdapter::setCursorPos(int row, int column)
 {
   m_cursorRow = row;
   m_cursorCol = column;
-}
-
-
-void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_40x25_16Colors(void * arg, uint8_t * dest, int scanLine)
-{
-  auto ga = (GraphicsAdapter*) arg;
-
-  constexpr int CHARWIDTH        = 8;
-  constexpr int CHARHEIGHT       = 8;
-  constexpr int CHARWIDTHINBYTES = (CHARWIDTH + 7) / 8;
-  constexpr int CHARSIZEINBYTES  = CHARWIDTHINBYTES * CHARHEIGHT;
-  constexpr int COLUMNS          = 40;
-  constexpr int SCREENWIDTH      = 320;
-  constexpr int LINES            = 8;
-
-  if (scanLine == 0)
-    ++ga->m_frameCounter;
-
-  int charScanline = scanLine & (CHARHEIGHT - 1);
-  int textRow      = scanLine / CHARHEIGHT;
-
-  uint8_t const * fontData = ga->m_font.data + (charScanline * CHARWIDTHINBYTES);
-
-  uint8_t * rawLUT = ga->m_rawLUT;
-
-  // the row's address, wrapped at 16 KB character by character, as the CRTC counts
-  uint8_t const * vb = ga->m_videoBuffer;
-  uint32_t addr = ga->m_cgaStart + textRow * COLUMNS * 2;
-
-  bool showCursor = ga->m_cursorVisible && ga->m_cursorRow == textRow && ((ga->m_frameCounter & 0x1f) < 0xf);
-  int cursorCol = ga->m_cursorCol;
-
-  bool bit7blink = ga->m_bit7blink;
-  bool blinktime = bit7blink && !((ga->m_frameCounter & 0x3f) < 0x1f);
-
-  for (int textCol = 0; textCol < COLUMNS; ++textCol) {
-
-    int charIdx  = vb[addr & 0x3fff];
-    int charAttr = vb[(addr + 1) & 0x3fff];
-    addr += 2;
-
-    bool blink = false;
-    if (bit7blink) {
-      blink = blinktime && (charAttr & 0x80);
-      charAttr &= 0x7f;
-    }
-
-    uint8_t bg = rawLUT[charAttr >> 4];
-    uint8_t fg = blink ? bg : rawLUT[charAttr & 0xf];
-
-    const uint8_t colors[2] = { bg, fg };
-
-    uint8_t const * charBitmapPtr = fontData + charIdx * CHARSIZEINBYTES;
-
-    auto destptr = dest;
-
-    if (showCursor && textCol == cursorCol) {
-
-      uint8_t const * cursorBitmapPtr = ga->m_cursorGlyph + (charScanline * CHARWIDTHINBYTES);
-
-      for (int charRow = 0; charRow < LINES / 2; ++charRow) {
-
-        uint32_t charBitmap = *charBitmapPtr | *cursorBitmapPtr;
-
-        *(destptr + 0) = colors[(bool)(charBitmap & 0x20)];
-        *(destptr + 1) = colors[(bool)(charBitmap & 0x10)];
-        *(destptr + 2) = colors[(bool)(charBitmap & 0x80)];
-        *(destptr + 3) = colors[(bool)(charBitmap & 0x40)];
-        *(destptr + 4) = colors[(bool)(charBitmap & 0x02)];
-        *(destptr + 5) = colors[(bool)(charBitmap & 0x01)];
-        *(destptr + 6) = colors[(bool)(charBitmap & 0x08)];
-        *(destptr + 7) = colors[(bool)(charBitmap & 0x04)];
-
-        destptr += SCREENWIDTH;
-        charBitmapPtr += CHARWIDTHINBYTES;
-        cursorBitmapPtr += CHARWIDTHINBYTES;
-      }
-
-    } else {
-
-      for (int charRow = 0; charRow < LINES / 2; ++charRow) {
-
-        uint32_t charBitmap = *charBitmapPtr;
-
-        *(destptr + 0) = colors[(bool)(charBitmap & 0x20)];
-        *(destptr + 1) = colors[(bool)(charBitmap & 0x10)];
-        *(destptr + 2) = colors[(bool)(charBitmap & 0x80)];
-        *(destptr + 3) = colors[(bool)(charBitmap & 0x40)];
-        *(destptr + 4) = colors[(bool)(charBitmap & 0x02)];
-        *(destptr + 5) = colors[(bool)(charBitmap & 0x01)];
-        *(destptr + 6) = colors[(bool)(charBitmap & 0x08)];
-        *(destptr + 7) = colors[(bool)(charBitmap & 0x04)];
-
-        destptr += SCREENWIDTH;
-        charBitmapPtr += CHARWIDTHINBYTES;
-      }
-
-    }
-
-    dest += 8;
-
-  }
 }
 
 
@@ -923,6 +852,87 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_80x25_16Colors(void * arg, 
     dest += 8;
 
   }
+}
+
+
+// ESPPC: one of the CGA's 200 lines in the text geometry the 6845 is programmed for (see
+// setCGATextGeometry()): the character row and the line within it, the 8x8 font's line (the CGA's
+// character generator has eight; further lines of a taller row are blank), the cursor on its
+// lines, blink as in 80x25. Columns beyond what the screen holds are cut off, and lines below the
+// rows shown are border, as on the card.
+void IRAM_ATTR GraphicsAdapter::drawCGATextLine(GraphicsAdapter * ga, uint8_t * dest, int line, int maxColumns)
+{
+  uint8_t * rawLUT = ga->m_rawLUT;
+
+  int lineHeight = ga->m_cgaLineHeight;
+  int textRow    = line / lineHeight;
+  int charLine   = line - textRow * lineHeight;
+  int columns    = ga->m_cgaColumns < maxColumns ? ga->m_cgaColumns : maxColumns;
+
+  if (textRow >= ga->m_cgaRows) {
+    memset(dest, rawLUT[ga->m_borderIndex], maxColumns * 8);
+    return;
+  }
+
+  uint8_t const * vb      = ga->m_videoBuffer;
+  uint32_t        addr    = ga->m_cgaStart + textRow * ga->m_cgaColumns * 2;
+  uint8_t const * font    = ga->m_font.data + (charLine & 7);
+  bool            inFont  = charLine < 8;
+
+  bool showCursor = ga->m_cursorVisible && ga->m_cursorRow == textRow && ((ga->m_frameCounter & 0x1f) < 0xf) &&
+                    charLine >= ga->m_cgaCursorStart && charLine <= ga->m_cgaCursorEnd;
+  int cursorCol = ga->m_cursorCol;
+
+  bool bit7blink = ga->m_bit7blink;
+  bool blinktime = bit7blink && !((ga->m_frameCounter & 0x3f) < 0x1f);
+
+  for (int textCol = 0; textCol < columns; ++textCol) {
+
+    int charIdx  = vb[addr & 0x3fff];
+    int charAttr = vb[(addr + 1) & 0x3fff];
+    addr += 2;
+
+    bool blink = false;
+    if (bit7blink) {
+      blink = blinktime && (charAttr & 0x80);
+      charAttr &= 0x7f;
+    }
+
+    uint32_t fgw = (blink ? rawLUT[charAttr >> 4] : rawLUT[charAttr & 0xf]) * 0x01010101u;
+    uint32_t bgw = rawLUT[charAttr >> 4] * 0x01010101u;
+
+    uint8_t charBitmap = inFont ? font[charIdx * 8] : 0;
+    if (showCursor && textCol == cursorCol)
+      charBitmap = 0xff;
+
+    uint32_t m0 = TEXT_NIBMASK[charBitmap >> 4];
+    uint32_t m1 = TEXT_NIBMASK[charBitmap & 0x0f];
+    ((uint32_t *) dest)[0] = (fgw & m0) | (bgw & ~m0);
+    ((uint32_t *) dest)[1] = (fgw & m1) | (bgw & ~m1);
+    dest += 8;
+  }
+
+  if (columns < maxColumns)
+    memset(dest, rawLUT[ga->m_borderIndex], (maxColumns - columns) * 8);
+}
+
+
+void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_CGA_80Columns(void * arg, uint8_t * dest, int scanLine)
+{
+  auto ga = (GraphicsAdapter*) arg;
+  if (scanLine == 0)
+    ++ga->m_frameCounter;
+  drawCGATextLine(ga, dest, scanLine >> 1, 80);
+  memcpy(dest + 640, dest, 640);
+}
+
+
+void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_CGA_40Columns(void * arg, uint8_t * dest, int scanLine)
+{
+  auto ga = (GraphicsAdapter*) arg;
+  if (scanLine == 0)
+    ++ga->m_frameCounter;
+  drawCGATextLine(ga, dest, scanLine, 40);
 }
 
 

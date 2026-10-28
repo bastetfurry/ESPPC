@@ -55,6 +55,8 @@ public:
     
     // CGA Color Text Mode (PC BIOS 00h/01h)
     // Requires 2 * 40 * 25 = 2000 bytes
+    // ESPPC: in the geometry the 6845 is programmed for, like PC_Text_CGA_80Columns (40x25 when
+    // it is standard): see setCGATextGeometry().
     PC_Text_40x25_16Colors,
     
     // CGA Color Text Mode (PC BIOS 02h/03h)
@@ -128,6 +130,16 @@ public:
     // so the picture is 160x200 in 16 colours. Same memory layout as the CGA modes; the colour
     // table is picked with setCompositeTable().
     PC_Graphics_CGA_Composite,
+
+    // --- ESPPC local addition: CGA 80 column text in the geometry the 6845 is programmed for ---
+    //
+    // The columns (R1), rows (R6) and lines per character row (R9 + 1) the program set, drawn with
+    // the CGA's own 8x8 font on its 200 lines, each drawn twice on 640x400: 80x100 (two lines a
+    // row, as ICON, Round 42, Moon Bugs and others use), 80x50 and the like. The standard 80x25
+    // keeps PC_Text_80x25_16Colors and its 8x16 font. Same memory as the standard modes, with the
+    // start address (setCGAStart()); see setCGATextGeometry(). The 40 column modes are all drawn
+    // this way, as PC_Text_40x25_16Colors.
+    PC_Text_CGA_80Columns,
   };
 
 
@@ -149,6 +161,12 @@ public:
   // ESPPC: the overscan border, one of the 16 CGA colours. Black again on every change of
   // emulation, so whoever sets a mode sets its border after it (Machine::setCGAMode()).
   void setBorderColorIndex(int index);
+
+  // ESPPC: the geometry of PC_Text_CGA_80Columns and PC_Text_40x25_16Colors, from the 6845: columns per row
+  // (R1, also the row-to-row distance in memory), character rows shown (R6) and lines per row
+  // (R9 + 1); and the cursor's first and last line within the row (R10, R11).
+  void setCGATextGeometry(int columns, int rows, int lineHeight);
+  void setCGACursorLines(int start, int end)               { m_cgaCursorStart = start; m_cgaCursorEnd = end; }
 
   // ESPPC: EGA planar modes. banks is the bank pointer array from the EGA engine, stride is
   // the number of byte-columns per scanline, and palette is 16 entries of 6 bit EGA RGB (rgbRGB),
@@ -241,9 +259,11 @@ private:
   void setupEmulation(Emulation emulation);
 
   static void drawScanline_PC_Text_80x25_16Colors(void * arg, uint8_t * dest, int scanLine);
-  static void drawScanline_PC_Text_40x25_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_PC_Graphics_320x200_4Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_PC_Graphics_640x200_2Colors(void * arg, uint8_t * dest, int scanLine);
+  static void drawScanline_PC_Text_CGA_80Columns(void * arg, uint8_t * dest, int scanLine);
+  static void drawScanline_PC_Text_CGA_40Columns(void * arg, uint8_t * dest, int scanLine);
+  static void drawCGATextLine(GraphicsAdapter * ga, uint8_t * dest, int line, int maxColumns);
   static void drawScanline_EGA_640_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_320_16Colors(void * arg, uint8_t * dest, int scanLine);
   static void drawScanline_EGA_Text_80x25(void * arg, uint8_t * dest, int scanLine);
@@ -262,6 +282,12 @@ private:
   Emulation           m_emulation;
   uint8_t const *     m_videoBuffer;
   uint16_t            m_cgaStart;
+  int16_t             m_cgaColumns;
+  int16_t             m_cgaRows;
+  uint8_t             m_cgaLineHeight;
+  uint8_t             m_cgaCursorStart;
+  uint8_t             m_cgaCursorEnd;
+  uint8_t             m_borderIndex;
 
   uint8_t *           m_rawLUT;
 

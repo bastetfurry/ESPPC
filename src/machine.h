@@ -451,6 +451,8 @@ private:
   void setEGADefaultPalette(bool line200);
   uint8_t egaInputStatus1();
   uint8_t cgaStatus();
+  bool cgaTextTweaked(int modeColumns);
+  void setCGATextGeometry();
   void setCGA6845Register(uint8_t value);
 
 

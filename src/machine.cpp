@@ -852,6 +852,17 @@ void Machine::setCGA6845Register(uint8_t value)
 
   switch (m_CGA6845SelectRegister) {
 
+    // columns (R1), rows shown (R6) and lines per row (R9): the text geometry, which decides
+    // between the standard text renderers and the register-driven ones (cgaTextTweaked())
+    case 0x01:
+    case 0x06:
+    case 0x09:
+      if (!m_EGAActive) {
+        invalidateCGAMode();
+        setCGAMode();
+      }
+      break;
+
     // cursor start: (bits 5,6 = cursor blink and visibility control), bits 0..4 cursor start scanline
     case 0x0a:
       m_graphicsAdapter.setCursorVisible((m_CGA6845[0xa] >> 5) >= 2);
@@ -859,6 +870,7 @@ void Machine::setCGA6845Register(uint8_t value)
     // cursor end: bits 0..4 cursor end scanline
     case 0x0b:
       m_graphicsAdapter.setCursorShape(2 * (m_CGA6845[0xa] & 0x1f), 2 * (m_CGA6845[0xb] & 0x1f));
+      m_graphicsAdapter.setCGACursorLines(m_CGA6845[0xa] & 0x1f, m_CGA6845[0xb] & 0x1f);
       break;
 
     // EGA line compare (18h, with bit 8 in the overflow register 07h bit 4): the split screen.
@@ -1376,6 +1388,27 @@ bool Machine::setTandyMode(int biosMode, bool clear)
 }
 
 
+// An 80 column text geometry other than the standard 25 rows of 8 lines, which the register-driven
+// renderer draws (GraphicsAdapter::Emulation::PC_Text_CGA_80Columns): 80x100 and its relatives.
+// Unprogrammed registers (zero) count as standard. 40 columns are drawn that way in any geometry.
+bool Machine::cgaTextTweaked(int modeColumns)
+{
+  int columns = m_CGA6845[1];
+  int rows    = m_CGA6845[6] & 0x7f;
+  int lines   = (m_CGA6845[9] & 0x1f) + 1;
+  if (columns == 0 || rows == 0)
+    return false;
+  return columns != modeColumns || rows != 25 || lines != 8;
+}
+
+
+void Machine::setCGATextGeometry()
+{
+  m_graphicsAdapter.setCGATextGeometry(m_CGA6845[1], m_CGA6845[6] & 0x7f, (m_CGA6845[9] & 0x1f) + 1);
+  m_graphicsAdapter.setCGACursorLines(m_CGA6845[0xa] & 0x1f, m_CGA6845[0xb] & 0x1f);
+}
+
+
 void Machine::setCGAMode()
 {
   // While an EGA mode is up the CGA frame buffer has been released to make room for the planar
@@ -1420,7 +1453,8 @@ void Machine::setCGAMode()
     //printf("CGA, 40 columns text mode\n");
     m_frameBuffer = cga;
     m_graphicsAdapter.setVideoBuffer(base);
-    m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_40x25_16Colors);
+    setCGATextGeometry();
+    m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_40x25_16Colors);   // any geometry
     m_graphicsAdapter.setBorderColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     m_graphicsAdapter.setBit7Blink(m_CGAModeReg & CGA_MODECONTROLREG_BIT7BLINK);
     m_graphicsAdapter.enableVideo(true);
@@ -1431,7 +1465,9 @@ void Machine::setCGAMode()
     //printf("CGA, 80 columns text mode\n");
     m_frameBuffer = cga;
     m_graphicsAdapter.setVideoBuffer(base);
-    m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_80x25_16Colors);
+    setCGATextGeometry();
+    m_graphicsAdapter.setEmulation(cgaTextTweaked(80) ? GraphicsAdapter::Emulation::PC_Text_CGA_80Columns
+                                                      : GraphicsAdapter::Emulation::PC_Text_80x25_16Colors);
     m_graphicsAdapter.setBorderColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     m_graphicsAdapter.setBit7Blink(m_CGAModeReg & CGA_MODECONTROLREG_BIT7BLINK);
     m_graphicsAdapter.enableVideo(true);
