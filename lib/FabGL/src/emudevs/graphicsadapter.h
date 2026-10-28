@@ -141,6 +141,11 @@ public:
 
   void setVideoBuffer(void const * videoBuffer);
 
+  // ESPPC: the CRTC start address of the CGA modes, in bytes from the video buffer. The CGA text
+  // and graphics renderers wrap it as the card does: at 16 KB in text, within each 8 KB bank (even
+  // and odd lines) in graphics. Tandy and Plantronics modes do not apply it.
+  void setCGAStart(int bytes)                              { m_cgaStart = bytes & 0x3fff; }
+
   // ESPPC: EGA planar modes. banks is the bank pointer array from the EGA engine, stride is
   // the number of byte-columns per scanline, and palette is 16 entries of 6 bit EGA RGB (rgbRGB),
   // which map one to one onto FabGL's RGB222.
@@ -252,6 +257,7 @@ private:
   VGADirectController m_VGADCtrl;
   Emulation           m_emulation;
   uint8_t const *     m_videoBuffer;
+  uint16_t            m_cgaStart;
 
   uint8_t *           m_rawLUT;
 

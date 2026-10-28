@@ -258,6 +258,7 @@ GraphicsAdapter::GraphicsAdapter()
   : m_VGADCtrl(false),
     m_emulation(Emulation::None),
     m_videoBuffer(nullptr),
+    m_cgaStart(0),
     m_rawLUT(nullptr),
     m_cursorRow(0),
     m_cursorCol(0),
@@ -743,7 +744,9 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_40x25_16Colors(void * arg, 
 
   uint8_t * rawLUT = ga->m_rawLUT;
 
-  uint8_t const * curItem = ga->m_videoBuffer + (textRow * COLUMNS * 2);
+  // the row's address, wrapped at 16 KB character by character, as the CRTC counts
+  uint8_t const * vb = ga->m_videoBuffer;
+  uint32_t addr = ga->m_cgaStart + textRow * COLUMNS * 2;
 
   bool showCursor = ga->m_cursorVisible && ga->m_cursorRow == textRow && ((ga->m_frameCounter & 0x1f) < 0xf);
   int cursorCol = ga->m_cursorCol;
@@ -753,8 +756,9 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_40x25_16Colors(void * arg, 
 
   for (int textCol = 0; textCol < COLUMNS; ++textCol) {
 
-    int charIdx  = *curItem++;
-    int charAttr = *curItem++;
+    int charIdx  = vb[addr & 0x3fff];
+    int charAttr = vb[(addr + 1) & 0x3fff];
+    addr += 2;
 
     bool blink = false;
     if (bit7blink) {
@@ -862,7 +866,9 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_80x25_16Colors(void * arg, 
 
   uint8_t * rawLUT = ga->m_rawLUT;
 
-  uint8_t const * curItem = ga->m_videoBuffer + (textRow * COLUMNS * 2);
+  // the row's address, wrapped at 16 KB character by character, as the CRTC counts
+  uint8_t const * vb = ga->m_videoBuffer;
+  uint32_t addr = ga->m_cgaStart + textRow * COLUMNS * 2;
 
   bool showCursor = ga->m_cursorVisible && ga->m_cursorRow == textRow && ((ga->m_frameCounter & 0x1f) < 0xf);
   int cursorCol = ga->m_cursorCol;
@@ -872,8 +878,9 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Text_80x25_16Colors(void * arg, 
 
   for (int textCol = 0; textCol < COLUMNS; ++textCol) {
 
-    int charIdx  = *curItem++;
-    int charAttr = *curItem++;
+    int charIdx  = vb[addr & 0x3fff];
+    int charAttr = vb[(addr + 1) & 0x3fff];
+    addr += 2;
 
     bool blink = false;
     if (bit7blink) {
@@ -922,14 +929,22 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Graphics_320x200_4Colors(void * 
 
   auto ga = (GraphicsAdapter*) arg;
 
-  auto src = ga->m_videoBuffer + ((scanLine & 1) << 13) + WIDTHINBYTES * (scanLine >> 1);
+  // within the line's 8 KB bank, as the CRTC counts: a line that crosses the end of the bank
+  // carries on from its start
+  auto     bank = ga->m_videoBuffer + ((scanLine & 1) << 13);
+  uint32_t off  = (ga->m_cgaStart + WIDTHINBYTES * (scanLine >> 1)) & 0x1fff;
 
   auto dest32 = (uint32_t*) dest;
 
   auto LUT32 = (uint32_t*) ga->m_rawLUT;
 
-  for (int col = 0; col < WIDTH; col += PIXELSPERBYTE) {
-    *dest32++ = LUT32[*src++];
+  if (off + WIDTHINBYTES <= 0x2000) {
+    auto src = bank + off;
+    for (int col = 0; col < WIDTH; col += PIXELSPERBYTE)
+      *dest32++ = LUT32[*src++];
+  } else {
+    for (int col = 0; col < WIDTH; col += PIXELSPERBYTE)
+      *dest32++ = LUT32[bank[off++ & 0x1fff]];
   }
 }
 
@@ -944,14 +959,21 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Graphics_640x200_2Colors(void * 
 
   auto ga = (GraphicsAdapter*) arg;
 
-  auto src = ga->m_videoBuffer + ((scanLine & 1) << 13) + WIDTHINBYTES * (scanLine >> 1);
+  // within the line's 8 KB bank, as in 320x200
+  auto     bank = ga->m_videoBuffer + ((scanLine & 1) << 13);
+  uint32_t off  = (ga->m_cgaStart + WIDTHINBYTES * (scanLine >> 1)) & 0x1fff;
 
   auto dest64 = (uint64_t*) dest;
 
   auto LUT64 = (uint64_t*) ga->m_rawLUT;
 
-  for (int col = 0; col < WIDTH; col += PIXELSPERBYTE) {
-    *dest64++ = LUT64[*src++];
+  if (off + WIDTHINBYTES <= 0x2000) {
+    auto src = bank + off;
+    for (int col = 0; col < WIDTH; col += PIXELSPERBYTE)
+      *dest64++ = LUT64[*src++];
+  } else {
+    for (int col = 0; col < WIDTH; col += PIXELSPERBYTE)
+      *dest64++ = LUT64[bank[off++ & 0x1fff]];
   }
 }
 

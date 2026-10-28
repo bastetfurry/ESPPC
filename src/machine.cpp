@@ -885,14 +885,22 @@ void Machine::setCGA6845Register(uint8_t value)
       }
       m_CGAMemoryOffset = ((m_CGA6845[0xc] << 8) | m_CGA6845[0xd]) << 1;
       setCGAMode();
-      break;
+      // no break: the cursor is shown relative to the start address
 
     // cursor position (0x0e = H and 0x0f = L)
     case 0x0e:
     case 0x0f:
     {
-      int pos = (m_CGA6845[0xe] << 8) | m_CGA6845[0xf];
-      m_graphicsAdapter.setCursorPos(pos / m_graphicsAdapter.getTextColumns(), pos % m_graphicsAdapter.getTextColumns());
+      // The CRTC shows the cursor where the address it counts equals the cursor register, so on
+      // the CGA the cell is the cursor's distance from the start address. Taken from address 0,
+      // the cursor of any display page but the first was below the screen and never seen. The EGA
+      // text path keeps counting from 0.
+      int pos  = (m_CGA6845[0xe] << 8) | m_CGA6845[0xf];
+      if (!m_EGAActive)
+        pos = (pos - ((m_CGA6845[0xc] << 8) | m_CGA6845[0xd])) & 0x3fff;
+      int cols = m_graphicsAdapter.getTextColumns();
+      if (cols > 0)
+        m_graphicsAdapter.setCursorPos(pos / cols, pos % cols);
       break;
     }
 
@@ -1388,10 +1396,13 @@ void Machine::setCGAMode()
   m_CGAMemoryOffsetCurrent = m_CGAMemoryOffset;
   m_CGAModeCurrentValid    = true;
 
-  // B8000 in whichever buffer is standing in for the CGA's memory. A CGA has 16 KB, so the start
-  // address wraps within that; masking it also keeps the renderers inside the 32 KB buffer.
-  uint8_t * cga = m_CGABorrowed ? m_CGABorrowed + (m_CGAMemoryOffset & (CGA_BORROWED_SIZE - 1))
-                                : s_videoMemory + (m_CGAMemoryOffset & 0x3fff);
+  // B8000 in whichever buffer is standing in for the CGA's memory. The renderers get its start and
+  // the CRTC start address separately, and wrap the address the way the card does (16 KB in text,
+  // each 8 KB bank in graphics; see GraphicsAdapter::setCGAStart()). m_frameBuffer, for the
+  // monitor and the screenshots, is the start of the picture as before.
+  uint8_t * base = m_CGABorrowed ? m_CGABorrowed : s_videoMemory;
+  uint8_t * cga  = base + (m_CGAMemoryOffset & 0x3fff);
+  m_graphicsAdapter.setCGAStart(m_CGAMemoryOffset);
 
   if ((m_CGAModeReg & CGA_MODECONTROLREG_ENABLED) == 0) {
 
@@ -1404,7 +1415,7 @@ void Machine::setCGAMode()
     // 40 column text mode
     //printf("CGA, 40 columns text mode\n");
     m_frameBuffer = cga;
-    m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
+    m_graphicsAdapter.setVideoBuffer(base);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_40x25_16Colors);
     m_graphicsAdapter.setBit7Blink(m_CGAModeReg & CGA_MODECONTROLREG_BIT7BLINK);
     m_graphicsAdapter.enableVideo(true);
@@ -1414,7 +1425,7 @@ void Machine::setCGAMode()
     // 80 column text mode
     //printf("CGA, 80 columns text mode\n");
     m_frameBuffer = cga;
-    m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
+    m_graphicsAdapter.setVideoBuffer(base);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_80x25_16Colors);
     m_graphicsAdapter.setBit7Blink(m_CGAModeReg & CGA_MODECONTROLREG_BIT7BLINK);
     m_graphicsAdapter.enableVideo(true);
@@ -1427,6 +1438,7 @@ void Machine::setCGAMode()
     // address, which would move the four banks independently (see docs/tandy.md).
     m_frameBuffer = s_videoMemory;
     m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
+    m_graphicsAdapter.setCGAStart(0);
     m_graphicsAdapter.setTandyPalette(m_tandyArray + 0x10, m_tandyArray[1]);
     m_graphicsAdapter.setEmulation((m_CGAModeReg & CGA_MODECONTROLREG_TEXT80)
                                    ? GraphicsAdapter::Emulation::PC_Graphics_Tandy_320x200_16Colors
@@ -1438,8 +1450,9 @@ void Machine::setCGAMode()
     // Plantronics ColorPlus: the two planes at B8000 and BC000. 320x200x16 has priority, as on the
     // card; 640x200x4 takes its colours from the CGA registers exactly as mode 4/5 does. The start
     // offset is not applied: plane 1 has to stay 16 KB behind plane 0 inside the 32 KB buffer.
-    m_frameBuffer = m_CGABorrowed ? cga : s_videoMemory;
+    m_frameBuffer = base;
     m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
+    m_graphicsAdapter.setCGAStart(0);
     if (m_plantronics & 0x10) {
       m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_Plantronics_320x200_16Colors);
     } else {
@@ -1459,7 +1472,7 @@ void Machine::setCGAMode()
     // colours. 640x200 has its own table; 320x200 uses palette 0 or 1 by the colour select
     // register. With the burst off (BIOS modes 5 and 6) the RGB picture below is kept.
     m_frameBuffer = cga;
-    m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
+    m_graphicsAdapter.setVideoBuffer(base);
     m_graphicsAdapter.setCompositeTable((m_CGAModeReg & CGA_MODECONTROLREG_GRAPH640) ? 0
                                         : ((m_CGAColorReg & CGA_COLORCONTROLREG_PALETTESEL) ? 2 : 1));
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_CGA_Composite);
@@ -1470,7 +1483,7 @@ void Machine::setCGAMode()
     //printf("CGA, 320x200 graphics mode\n");
     int paletteIndex;
     m_frameBuffer = cga;
-    m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
+    m_graphicsAdapter.setVideoBuffer(base);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_320x200_4Colors);
 
     if(m_CGAModeReg & CGA_MODECONTROLREG_COLOR)
@@ -1491,7 +1504,7 @@ void Machine::setCGAMode()
     // 640x200 graphics
     //printf("CGA, 640x200 graphics mode\n");
     m_frameBuffer = cga;
-    m_graphicsAdapter.setVideoBuffer(m_frameBuffer);
+    m_graphicsAdapter.setVideoBuffer(base);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_640x200_2Colors);
     m_graphicsAdapter.setPCGraphicsForegroundColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     m_graphicsAdapter.enableVideo(true);
