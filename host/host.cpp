@@ -130,6 +130,7 @@ int                  VGADirectController::s_viewH            = 0;
 DrawScanlineCallback VGADirectController::s_callback         = nullptr;
 void *               VGADirectController::s_arg              = nullptr;
 int                  VGADirectController::s_linesPerCallback = 1;
+RGB222               VGADirectController::s_border;
 
 Keyboard PS2Controller::s_keyboard;
 Mouse    PS2Controller::s_mouse;

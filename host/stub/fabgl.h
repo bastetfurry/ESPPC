@@ -101,6 +101,7 @@ public:
   void setDrawScanlineCallback(DrawScanlineCallback cb, void * arg) { s_callback = cb; s_arg = arg; }
   void setScanlinesPerCallBack(int n)                            { s_linesPerCallback = n; }
   uint8_t createRawPixel(RGB222 c)                               { return c.R | (c.G << 2) | (c.B << 4); }
+  void setBorderColor(RGB222 c)                                  { s_border = c; }
   static bool VSync()                                            { return false; }
 
   static bool                 s_running;
@@ -109,6 +110,7 @@ public:
   static DrawScanlineCallback s_callback;
   static void *               s_arg;
   static int                  s_linesPerCallback;
+  static RGB222               s_border;
 };
 
 

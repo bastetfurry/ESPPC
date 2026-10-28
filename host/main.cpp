@@ -126,7 +126,9 @@ static int64_t addKeyStroke(int64_t us, int code)
 
 //// Output
 
-// the emulator's own renderer, into a frame of raw pixels (RGB222, FabGL's byte order)
+// The emulator's own renderer, into a frame of raw pixels (RGB222, FabGL's byte order). The frame
+// is the modeline's visible area with the view port placed as FabGL places it, centred on a 4
+// pixel grid, and the rest in the border colour.
 static void writeShot(std::string const & file)
 {
   using fabgl::VGADirectController;
@@ -135,6 +137,17 @@ static void writeShot(std::string const & file)
     printf("[shot] no video mode, %s not written\n", file.c_str());
     return;
   }
+  int fw = w, fh = h;
+  if (char const * q = VGADirectController::s_modeline ? strchr(VGADirectController::s_modeline + 1, '"') : nullptr) {
+    float clock;
+    int hd, hs, he, ht, vd;
+    if (sscanf(q + 1, "%f %d %d %d %d %d", &clock, &hd, &hs, &he, &ht, &vd) == 6 && hd >= w && vd >= h) {
+      fw = hd;
+      fh = vd;
+    }
+  }
+  int col = ((fw - w) / 2) & ~3, row = ((fh - h) / 2) & ~3;
+
   int lines = std::max(1, VGADirectController::s_linesPerCallback);
   std::vector<uint8_t> raw((size_t) w * (h + lines), 0);
   if (VGADirectController::s_running)
@@ -146,15 +159,18 @@ static void writeShot(std::string const & file)
     printf("[shot] cannot write %s\n", file.c_str());
     return;
   }
-  fprintf(f, "P6\n%d %d\n255\n", w, h);
-  for (int y = 0; y < h; ++y)
-    for (int x = 0; x < w; ++x) {
-      uint8_t p = raw[(size_t) y * w + (x ^ 2)];
+  auto b = VGADirectController::s_border;
+  uint8_t border = b.R | (b.G << 2) | (b.B << 4);
+  fprintf(f, "P6\n%d %d\n255\n", fw, fh);
+  for (int y = 0; y < fh; ++y)
+    for (int x = 0; x < fw; ++x) {
+      bool view = y >= row && y < row + h && x >= col && x < col + w;
+      uint8_t p = view ? raw[(size_t) (y - row) * w + ((x - col) ^ 2)] : border;
       uint8_t rgb[3] = { (uint8_t) ((p & 3) * 85), (uint8_t) (((p >> 2) & 3) * 85), (uint8_t) (((p >> 4) & 3) * 85) };
       fwrite(rgb, 1, 3, f);
     }
   fclose(f);
-  printf("[shot] %s, %dx%d\n", file.c_str(), w, h);
+  printf("[shot] %s, %dx%d\n", file.c_str(), fw, fh);
 }
 
 
