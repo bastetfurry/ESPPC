@@ -88,6 +88,17 @@ void PIC8259::write(int addr, uint8_t value)
         m_state  = STATE_WAITING_ICW2;
         m_state |= value & ICW1_IC4 ? STATE_WAITING_ICW4 : 0;
         m_state |= value & ICW1_SNGL ? 0 : STATE_WAITING_ICW3;
+        // ESPPC: initialisation starts the chip afresh: the mask cleared, the edge detection reset
+        // (no requests), nothing in service, IRR selected for reading. Keeping ISR meant a guest that
+        // reboots by jumping to the reset vector from inside an interrupt handler (SCO Xenix 86 after
+        // "shutdown", on the key press that reboots) left that line in service through POST: no
+        // keyboard, and the hard disk's IRQ 5 blocked behind it, so the next boot hung.
+        m_IMR              = 0x00;
+        m_IRR              = 0x00;
+        m_ISR              = 0x00;
+        m_readISR          = false;
+        m_autoEOI          = false;
+        m_pendingInterrupt = false;
       } else if (value & PORT0_OCW3) {
         // getting OCW3
         //printf("OCW3 <= %02X\n", value);

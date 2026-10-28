@@ -496,6 +496,20 @@ init_crtc_loop:
   mov  al, 0xae          ; enable keyboard
   out  0x64, al
 
+; Empty the controller's output buffer. A scancode that arrived before the reboot and was never read
+; (its interrupt went to a handler that is gone now) holds the buffer full, and while it is full no
+; further key comes through and no new IRQ 1 is raised: the keyboard would stay dead. The PICs
+; above were initialised first, so whatever comes in after this raises a fresh request.
+
+  mov  cx, 16
+kbd_flush:
+  in   al, 0x64
+  test al, 0x01
+  jz   kbd_flushed
+  in   al, 0x60
+  loop kbd_flush
+kbd_flushed:
+
 ; Initialize RTC
 
   mov  al, 0x0b
