@@ -450,6 +450,7 @@ private:
   void setEGAAttributeReg(uint8_t value);
   void setEGADefaultPalette(bool line200);
   uint8_t egaInputStatus1();
+  uint8_t cgaStatus();
   void setCGA6845Register(uint8_t value);
 
 
@@ -564,7 +565,6 @@ private:
   uint8_t                  m_CGAColorRegCurrent;
   uint16_t                 m_CGAMemoryOffsetCurrent;
   bool                     m_CGAModeCurrentValid;
-  uint16_t                 m_CGAVSyncQuery;
 
   // Plantronics ColorPlus, port 3DDh (see writePortHW()): bit 4 320x200x16, bit 5 640x200x4,
   // bit 6 swap the planes for the CPU. m_plantronicsSwap is whether that swap is in effect now,

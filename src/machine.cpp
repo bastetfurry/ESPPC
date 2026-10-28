@@ -474,7 +474,6 @@ void Machine::reset()
   m_CGAMemoryOffset = 0;
   m_CGAModeReg      = 0;
   m_CGAColorReg     = 0;
-  m_CGAVSyncQuery   = 0;
   invalidateCGAMode();
 
   m_plantronics     = 0;
@@ -1890,6 +1889,50 @@ void Machine::leaveEGAMode()
 }
 
 
+// CGA status register (3DAh): bit 0 while the display is not drawing (horizontal or vertical
+// blanking), bit 3 during vertical sync. The raster position is worked out from the time and the
+// 6845's registers, as the CGA's 14.31818 MHz dot clock would have it: a character is 8 dots with
+// the high resolution clock (80 column text) and 16 otherwise, a line R0 + 1 characters of which
+// R1 are shown, a frame (R4 + 1) character rows of R9 + 1 lines plus R5, R6 rows of them shown,
+// and vertical sync from row R7 on for the 6845's fixed 16 lines. The standard modes come out at
+// 912 dots by 262 lines, 59.92 Hz, and a program that reprograms the CRTC gets its own timing.
+//
+// This used to be a counter: every eighth read said "drawing", the others "retrace". A program
+// timing itself on vertical retrace ran far too fast, and the CGA Compatibility Tester measured
+// about 32000 Hz.
+uint8_t Machine::cgaStatus()
+{
+  int charDots = (m_CGAModeReg & CGA_MODECONTROLREG_TEXT80) ? 8 : 16;
+  int hTotal   = (m_CGA6845[0] + 1) * charDots;
+  int hDisp    = m_CGA6845[1] * charDots;
+  int rowLines = (m_CGA6845[9] & 0x1f) + 1;
+  int vTotal   = ((m_CGA6845[4] & 0x7f) + 1) * rowLines + (m_CGA6845[5] & 0x1f);
+  int vDisp    = (m_CGA6845[6] & 0x7f) * rowLines;
+  int vSync    = (m_CGA6845[7] & 0x7f) * rowLines;
+
+  // registers no display could sync to (or not programmed yet): the standard timing
+  if (hTotal < 256 || hDisp >= hTotal || vTotal < 64 || vDisp >= vTotal) {
+    hTotal = 912;
+    hDisp  = 640;
+    vTotal = 262;
+    vDisp  = 200;
+    vSync  = 224;
+  }
+
+  int64_t dots = esp_timer_get_time() * 3579545 / 250000;    // us -> 14.31818 MHz dots
+  int     pos  = (int) (dots % ((int64_t) hTotal * vTotal));
+  int     line = pos / hTotal;
+  int     dot  = pos - line * hTotal;
+
+  uint8_t status = 0;
+  if (line >= vDisp || dot >= hDisp)
+    status |= 0x01;
+  if ((line - vSync + vTotal) % vTotal < 16)
+    status |= 0x08;
+  return status;
+}
+
+
 // Attribute Controller, port 0x3c0. One port carries both the index and the data, alternating,
 // and reading the status register at 0x3da resets it to expecting an index.
 // Input Status Register 1. An EGA answers this at 0x3da when it is configured for a colour
@@ -1899,11 +1942,8 @@ uint8_t Machine::egaInputStatus1()
 {
   m_EGAACFlipFlop = false;
 
-  if (!m_EGAActive) {
-    // plain CGA machine: the old fake, left exactly as it was
-    m_CGAVSyncQuery += 1;
-    return (m_CGAVSyncQuery & 0x7) != 0 ? 0x09 : 0x00;
-  }
+  if (!m_EGAActive)
+    return cgaStatus();
 
   // Raster model. The EGA BIOS POST verifies CRT timing: it waits for vertical retrace to start,
   // then for it to end, then counts display enable pulses until the next retrace and insists the

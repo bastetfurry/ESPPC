@@ -1291,6 +1291,44 @@ int10_set_vm_write:
   out   dx, al
   mov   byte [vid_3x9-bios_data], al
 
+  ; The CRTC's sixteen registers from the table INT 1Dh points at, as the IBM BIOS loads them on
+  ; every mode set: the first set for modes 0 and 1, the second for 2 and 3, the third for the
+  ; graphics modes. Only POST used to load them, with the 80 column values, so the 40 column and
+  ; graphics modes ran on 80 column timing. Software that points INT 1Dh at its own table gets
+  ; its own values, as on the IBM BIOS.
+  push  ax
+  push  cx
+  push  si
+  push  ds
+  mov   cl, [vid_mode-bios_data]
+  xor   si, si
+  mov   ds, si
+  lds   si, [4*0x1d]
+  cmp   cl, 2
+  jb    int10_set_vm_crtc
+  add   si, 16
+  cmp   cl, 4
+  jb    int10_set_vm_crtc
+  add   si, 16
+int10_set_vm_crtc:
+  mov   dx, 0x3d4
+  xor   ah, ah
+int10_set_vm_crtc_loop:
+  mov   al, ah
+  out   dx, al
+  inc   dx
+  mov   al, [si]
+  out   dx, al
+  dec   dx
+  inc   si
+  inc   ah
+  cmp   ah, 16
+  jb    int10_set_vm_crtc_loop
+  pop   ds
+  pop   si
+  pop   cx
+  pop   ax
+
   xchg  ah, al
   mov   dx, 0x3d8
   out   dx, al
@@ -7062,12 +7100,16 @@ itbl_size   dw $-int_table
 
 
 video_init_table:
+  ; The IBM PC BIOS's timings: a line of 114 characters (R0 + 1) of 8 dots, or 57 of 16, is 912
+  ; dots, and a frame 262 lines, 59.92 Hz. The status register's raster model follows these
+  ; registers (Machine::cgaStatus()). The graphics modes are 128 rows of 2 lines (R9 = 1), not 8.
+  ; R10 and R11, the cursor, are this BIOS's own.
   ; 6845 register values for 40x25 modes
-  db  0x39, 0x28, 0x2d, 0x10, 0x1f, 0x06, 0x19, 0x1c, 0x02, 0x07, 0x66, 0x07, 0x00, 0x00, 0x00, 0x00
+  db  0x38, 0x28, 0x2d, 0x0a, 0x1f, 0x06, 0x19, 0x1c, 0x02, 0x07, 0x66, 0x07, 0x00, 0x00, 0x00, 0x00
   ; 6845 register values for 80x25 modes
-  db  0x72, 0x50, 0x5a, 0x10, 0x1f, 0x06, 0x19, 0x1c, 0x02, 0x07, 0x66, 0x07, 0x00, 0x00, 0x00, 0x00
+  db  0x71, 0x50, 0x5a, 0x0a, 0x1f, 0x06, 0x19, 0x1c, 0x02, 0x07, 0x66, 0x07, 0x00, 0x00, 0x00, 0x00
   ; 6845 register values for graphics modes
-  db  0x39, 0x28, 0x2d, 0x10, 0x7f, 0x06, 0x64, 0x70, 0x02, 0x07, 0x06, 0x07, 0x00, 0x00, 0x00, 0x00
+  db  0x38, 0x28, 0x2d, 0x0a, 0x7f, 0x06, 0x64, 0x70, 0x02, 0x01, 0x06, 0x07, 0x00, 0x00, 0x00, 0x00
   ; 6845 register values for 80x25 monochrome modes
   db  0x72, 0x50, 0x5a, 0x10, 0x1f, 0x06, 0x19, 0x1c, 0x02, 0x07, 0x06, 0x07, 0x00, 0x00, 0x00, 0x00
   ; wSize40x25
