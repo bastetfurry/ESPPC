@@ -100,7 +100,7 @@ private:
   ChangeOut         m_changeOut;
   
   uint32_t          m_lastTickTime;
-  uint32_t          m_acc;
+  uint64_t          m_acc;
 
 };
 

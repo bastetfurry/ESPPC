@@ -222,11 +222,14 @@ void IRAM_ATTR PIT8253::tick()
   if (diff < 0)
     diff = FRC1TimerMax - m_lastTickTime + now;
 
-  constexpr uint32_t BITS = 10;
-  constexpr uint32_t INC  = (PIT_TICK_FREQ << BITS) / PIT_FRC1_FREQUENCY;
-  
-  m_acc += INC * diff;
-  int ticks = m_acc >> BITS;
+  // ESPPC: 20 fraction bits in 64. With 10 the step truncated to 244 instead of 244.36 PIT ticks
+  // per 1024 FRC1 ticks, and the PIT, with the DOS clock and every program timing itself on it,
+  // ran 0.15% slow: the CGA's 59.92 Hz measured as 59.83.
+  constexpr uint32_t BITS = 20;
+  constexpr uint64_t INC  = ((uint64_t) PIT_TICK_FREQ << BITS) / PIT_FRC1_FREQUENCY;
+
+  m_acc += INC * (uint32_t) diff;
+  int ticks = (int) (m_acc >> BITS);
   m_acc &= (1 << BITS) - 1;
   
   m_lastTickTime = now;
@@ -236,7 +239,7 @@ void IRAM_ATTR PIT8253::tick()
     
   if (ticks > 65535) {
     //printf("Too much ticks! (%d)\n", ticks);
-    m_acc += (ticks - 65535) << BITS;
+    m_acc += (uint64_t) (ticks - 65535) << BITS;
     ticks = 65535;
   }
 
