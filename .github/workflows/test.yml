@@ -1,0 +1,67 @@
+# Checks every push and pull request, without hardware:
+#
+# - the BIOS ROM in src/biosrom.h is the one tools/bios.asm assembles to (tools/cbios.sh), so an
+#   edit to the BIOS cannot go in without its ROM
+# - the emulator builds on Linux (host/, pctool) and passes the tests in tests/: boot floppies of
+#   their own, booted headless, with checks on the text screen and on frame checksums
+# - the firmware builds
+#
+# Run the same locally with:  tools/cbios.sh && make -C host && tests/run.sh
+
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nasm
+        run: sudo apt-get update && sudo apt-get install -y nasm xxd
+
+      - name: The BIOS ROM matches bios.asm
+        run: |
+          nasm -v
+          bash tools/cbios.sh
+          if ! git diff --quiet -- src/biosrom.h; then
+            echo "src/biosrom.h is not what tools/bios.asm assembles to: run tools/cbios.sh and commit it."
+            echo "(If bios.asm did not change, the nasm versions may assemble it differently.)"
+            exit 1
+          fi
+
+      - name: Build pctool
+        run: make -C host -j$(nproc)
+
+      - name: Run the tests
+        run: tests/run.sh
+
+      - name: Keep the logs and images of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-build
+          path: tests/build/
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: platformio-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build the firmware
+        run: pio run -e esp32dev

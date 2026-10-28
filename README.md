@@ -164,6 +164,10 @@ back to the guest. Without the console, the USB serial line is the guest's COM1.
   private channel on the same line, no COM port needed. See the note above `class Machine` in
   `src/machine.h`.
 - `tools/cputest/` runs the 8086 core on the PC against the SingleStepTests suite.
+- `tests/` holds the emulator's tests: small boot floppies of their own (timer interrupts, CGA
+  retrace timing, display pages, the CGA's picture, the keyboard, a reboot from inside an
+  interrupt), booted headless by `tests/run.sh` with `pctool`. GitHub runs them on every push,
+  with a check that `src/biosrom.h` matches `tools/bios.asm`.
 - `host/` builds the whole emulator on a Linux PC (`make -C host`): `host/pctool` boots a machine
   from disk images headless and runs a script, typing on the keyboard, dumping the text screen
   and memory, and writing screenshots from the emulator's own renderers. Time is virtual, so a run

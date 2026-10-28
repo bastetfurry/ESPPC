@@ -22,3 +22,6 @@ __pycache__/
 # host tool build (host/Makefile)
 host/obj/
 host/pctool
+
+# test images and logs (tests/run.sh)
+tests/build/

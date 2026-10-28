@@ -100,9 +100,11 @@ Published on GitHub 2026-10-05 (v0.4), with the release workflow and the browser
 
 - **README:** still missing speed figures beyond Topbench, and screenshots (`pctool shot=` can
   make them now, from the emulator's own renderers).
-- **Tests in the build.** One script that builds the firmware and runs the SingleStepTests harness
-  (`tools/cputest/run.py`) and a few `pctool` boots (DOS from an image, a text screen to compare),
-  usable as a pre-commit hook and in the GitHub workflow. Today the workflow only builds.
+- **Tests in the build:** `.github/workflows/test.yml` (2026-10-28) checks every push: the BIOS ROM
+  matches `bios.asm`, the firmware and `pctool` build, and the tests in `tests/` pass (boot floppies
+  of their own, booted headless). Still to add: the SingleStepTests harness (`tools/cputest/run.py`,
+  the suite downloaded and cached, pass counts against a baseline), and a SvarDOS boot, downloaded
+  rather than committed, with a text screen to compare.
 - **Rescue disk** on FreeDOS instead of retail DOS, so it can be committed (see `.gitignore`).
   The maintainer is building it in 86Box.
 
