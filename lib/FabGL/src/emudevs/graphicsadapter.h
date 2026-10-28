@@ -146,6 +146,10 @@ public:
   // and odd lines) in graphics. Tandy and Plantronics modes do not apply it.
   void setCGAStart(int bytes)                              { m_cgaStart = bytes & 0x3fff; }
 
+  // ESPPC: the overscan border, one of the 16 CGA colours. Black again on every change of
+  // emulation, so whoever sets a mode sets its border after it (Machine::setCGAMode()).
+  void setBorderColorIndex(int index);
+
   // ESPPC: EGA planar modes. banks is the bank pointer array from the EGA engine, stride is
   // the number of byte-columns per scanline, and palette is 16 entries of 6 bit EGA RGB (rgbRGB),
   // which map one to one onto FabGL's RGB222.

@@ -75,6 +75,8 @@ void VGABaseController::init()
   m_viewPort                      = nullptr;
   m_viewPortVisible               = nullptr;
   m_viewPortMemoryPool            = nullptr;
+  m_HBorderLine                   = nullptr;
+  m_borderColor                   = RGB222(0, 0, 0);
 
   m_GPIOStream.begin();
 }
@@ -148,7 +150,10 @@ void VGABaseController::freeBuffers()
 {
   if (m_DMABuffersCount > 0) {
     heap_caps_free((void*)m_HBlankLine_withVSync);
+    if (m_HBorderLine != m_HBlankLine)
+      heap_caps_free((void*)m_HBorderLine);
     heap_caps_free((void*)m_HBlankLine);
+    m_HBorderLine = nullptr;
 
     freeViewPort();
 
@@ -386,6 +391,9 @@ void VGABaseController::setResolution(VGATimings const& timings, int viewPortWid
 
   m_HBlankLine_withVSync = (uint8_t*) heap_caps_malloc(m_HLineSize, MALLOC_CAP_DMA);
   m_HBlankLine           = (uint8_t*) heap_caps_malloc(m_HLineSize, MALLOC_CAP_DMA);
+  m_HBorderLine          = (uint8_t*) heap_caps_malloc(m_HLineSize, MALLOC_CAP_DMA);
+  if (!m_HBorderLine)
+    m_HBorderLine = m_HBlankLine;             // no border colour then, as before
 
   m_viewPortWidth  = ~3 & (viewPortWidth <= 0 || viewPortWidth >= m_timings.HVisibleArea ? m_timings.HVisibleArea : viewPortWidth); // view port width must be 32 bit aligned
   m_viewPortHeight = viewPortHeight <= 0 || viewPortHeight >= m_timings.VVisibleArea ? m_timings.VVisibleArea : viewPortHeight;
@@ -557,6 +565,36 @@ void VGABaseController::fillHorizBuffers(int offsetX)
 
   fill(m_HBlankLine,           syncPos, m_timings.HSyncPulse, 0, 0, 0, true,  false);
   fill(m_HBlankLine_withVSync, syncPos, m_timings.HSyncPulse, 0, 0, 0, true,   true);
+
+  fillBorderLine();
+}
+
+
+// ESPPC: the blank line with its visible area in the border colour
+void VGABaseController::fillBorderLine()
+{
+  if (!m_HBorderLine || m_HBorderLine == m_HBlankLine)
+    return;
+
+  memcpy((void*)m_HBorderLine, (void*)m_HBlankLine, m_HLineSize);
+
+  int visiblePos = 0;
+  switch (m_timings.HStartingBlock) {
+    case VGAScanStart::FrontPorch:  visiblePos = m_timings.HFrontPorch + m_timings.HSyncPulse + m_timings.HBackPorch; break;
+    case VGAScanStart::Sync:        visiblePos = m_timings.HSyncPulse + m_timings.HBackPorch; break;
+    case VGAScanStart::BackPorch:   visiblePos = m_timings.HBackPorch; break;
+    case VGAScanStart::VisibleArea: visiblePos = 0; break;
+  }
+  fill(m_HBorderLine, visiblePos, m_timings.HVisibleArea, m_borderColor.R, m_borderColor.G, m_borderColor.B, false, false);
+}
+
+
+void VGABaseController::setBorderColor(RGB222 color)
+{
+  if (color == m_borderColor)
+    return;
+  m_borderColor = color;
+  fillBorderLine();
 }
 
 
@@ -612,35 +650,35 @@ void VGABaseController::fillVertBuffers(int offsetY)
           switch (m_timings.HStartingBlock) {
             case VGAScanStart::FrontPorch:
               // FRONTPORCH -> SYNC -> BACKPORCH -> VISIBLEAREA
-              setDMABufferBlank(DMABufIdx++, m_HBlankLine, HInvisibleAreaSize + m_viewPortCol, scan, isStartOfVertFrontPorch);
+              setDMABufferBlank(DMABufIdx++, m_HBorderLine, HInvisibleAreaSize + m_viewPortCol, scan, isStartOfVertFrontPorch);
               setDMABufferView(DMABufIdx++, visibleAreaLine - m_viewPortRow, scan, isStartOfVertFrontPorch);
               if (rightPadSize > 0)
-                setDMABufferBlank(DMABufIdx++, m_HBlankLine + HInvisibleAreaSize, rightPadSize, scan, isStartOfVertFrontPorch);
+                setDMABufferBlank(DMABufIdx++, m_HBorderLine + HInvisibleAreaSize, rightPadSize, scan, isStartOfVertFrontPorch);
               break;
             case VGAScanStart::Sync:
               // SYNC -> BACKPORCH -> VISIBLEAREA -> FRONTPORCH
-              setDMABufferBlank(DMABufIdx++, m_HBlankLine, m_timings.HSyncPulse + m_timings.HBackPorch + m_viewPortCol, scan, isStartOfVertFrontPorch);
+              setDMABufferBlank(DMABufIdx++, m_HBorderLine, m_timings.HSyncPulse + m_timings.HBackPorch + m_viewPortCol, scan, isStartOfVertFrontPorch);
               setDMABufferView(DMABufIdx++, visibleAreaLine - m_viewPortRow, scan, isStartOfVertFrontPorch);
-              setDMABufferBlank(DMABufIdx++, m_HBlankLine + m_HLineSize - m_timings.HFrontPorch - rightPadSize, m_timings.HFrontPorch + rightPadSize, scan, isStartOfVertFrontPorch);
+              setDMABufferBlank(DMABufIdx++, m_HBorderLine + m_HLineSize - m_timings.HFrontPorch - rightPadSize, m_timings.HFrontPorch + rightPadSize, scan, isStartOfVertFrontPorch);
               break;
             case VGAScanStart::BackPorch:
               // BACKPORCH -> VISIBLEAREA -> FRONTPORCH -> SYNC
-              setDMABufferBlank(DMABufIdx++, m_HBlankLine, m_timings.HBackPorch + m_viewPortCol, scan, isStartOfVertFrontPorch);
+              setDMABufferBlank(DMABufIdx++, m_HBorderLine, m_timings.HBackPorch + m_viewPortCol, scan, isStartOfVertFrontPorch);
               setDMABufferView(DMABufIdx++, visibleAreaLine - m_viewPortRow, scan, isStartOfVertFrontPorch);
-              setDMABufferBlank(DMABufIdx++, m_HBlankLine + m_HLineSize - m_timings.HFrontPorch - m_timings.HSyncPulse - rightPadSize, m_timings.HFrontPorch + m_timings.HSyncPulse + rightPadSize, scan, isStartOfVertFrontPorch);
+              setDMABufferBlank(DMABufIdx++, m_HBorderLine + m_HLineSize - m_timings.HFrontPorch - m_timings.HSyncPulse - rightPadSize, m_timings.HFrontPorch + m_timings.HSyncPulse + rightPadSize, scan, isStartOfVertFrontPorch);
               break;
             case VGAScanStart::VisibleArea:
               // VISIBLEAREA -> FRONTPORCH -> SYNC -> BACKPORCH
               if (m_viewPortCol > 0)
-                setDMABufferBlank(DMABufIdx++, m_HBlankLine, m_viewPortCol, scan, isStartOfVertFrontPorch);
+                setDMABufferBlank(DMABufIdx++, m_HBorderLine, m_viewPortCol, scan, isStartOfVertFrontPorch);
               setDMABufferView(DMABufIdx++, visibleAreaLine - m_viewPortRow, scan, isStartOfVertFrontPorch);
-              setDMABufferBlank(DMABufIdx++, m_HBlankLine + m_timings.HVisibleArea - rightPadSize, HInvisibleAreaSize + rightPadSize, scan, isStartOfVertFrontPorch);
+              setDMABufferBlank(DMABufIdx++, m_HBorderLine + m_timings.HVisibleArea - rightPadSize, HInvisibleAreaSize + rightPadSize, scan, isStartOfVertFrontPorch);
               break;
           }
 
         } else {
-          // not visible
-          setDMABufferBlank(DMABufIdx++, m_HBlankLine, m_HLineSize, scan, isStartOfVertFrontPorch);
+          // not visible: the border (ESPPC)
+          setDMABufferBlank(DMABufIdx++, m_HBorderLine, m_HLineSize, scan, isStartOfVertFrontPorch);
         }
 
       }

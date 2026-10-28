@@ -307,6 +307,11 @@ public:
 
   uint8_t createBlankRawPixel()                  { return m_HVSync; }
 
+  // ESPPC: the colour of the visible area outside the view port (the overscan border). Its lines
+  // all show one shared buffer, so a change is one rewrite of that buffer and costs nothing per
+  // frame. Black, as before, until set.
+  void setBorderColor(RGB222 color);
+
   virtual bool suspendDoubleBuffering(bool value);
 
 
@@ -333,6 +338,8 @@ protected:
   void fillVertBuffers(int offsetY);
 
   void fillHorizBuffers(int offsetX);
+
+  void fillBorderLine();
 
   int fill(uint8_t volatile * buffer, int startPos, int length, uint8_t red, uint8_t green, uint8_t blue, bool hsync, bool vsync);
 
@@ -402,6 +409,11 @@ private:
   // order specified by timings.HStartingBlock
   volatile uint8_t *     m_HBlankLine_withVSync;
   volatile uint8_t *     m_HBlankLine;
+
+  // ESPPC: m_HBlankLine with its visible area in m_borderColor, for the lines and the sides around
+  // the view port. m_HBlankLine itself when there was no memory for it.
+  volatile uint8_t *     m_HBorderLine;
+  RGB222                 m_borderColor;
 
   uint8_t * *            m_viewPortMemoryPool;  // array ends with nullptr
 

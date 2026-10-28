@@ -442,7 +442,7 @@ init_crtc_loop:
   out  dx, al
 
   mov  dx, 0x3d9  ; CGA Color Control port
-  mov  al, 0x07
+  mov  al, 0x30   ; as the IBM BIOS leaves it in text: bits 3-0, the border, black
   out  dx, al
 
   mov  dx, 0x3BC  ; LPT1

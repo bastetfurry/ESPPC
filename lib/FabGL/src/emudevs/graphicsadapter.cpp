@@ -336,6 +336,7 @@ void GraphicsAdapter::setEmulation(Emulation emulation)
 
     bool videoWasEnabled = enableVideo(false);
     freeLUT();
+    m_VGADCtrl.setBorderColor(RGB222(0, 0, 0));
 
     m_emulation = emulation;
     if (m_emulation != Emulation::None) {
@@ -650,6 +651,12 @@ void GraphicsAdapter::setTandyPalette(uint8_t const * palette16, uint8_t mask)
   if (m_emulation == Emulation::PC_Graphics_Tandy_320x200_16Colors ||
       m_emulation == Emulation::PC_Graphics_Tandy_160x200_16Colors)
     setupLUT();
+}
+
+
+void GraphicsAdapter::setBorderColorIndex(int index)
+{
+  m_VGADCtrl.setBorderColor(CGAPalette[index & 15]);
 }
 
 

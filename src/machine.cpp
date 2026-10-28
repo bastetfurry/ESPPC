@@ -1296,6 +1296,10 @@ void Machine::writeTandyArray(uint8_t value)
   if (index == 1 || index >= 0x10) {
     // palette mask or a palette entry: rebuild the colour table, which only a Tandy mode uses
     m_graphicsAdapter.setTandyPalette(m_tandyArray + 0x10, m_tandyArray[1]);
+  } else if (index == 2) {
+    // the border colour, which setCGAMode() puts up with a 16 colour mode
+    if ((m_tandyArray[3] & 0x10) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS) && !m_EGAActive)
+      m_graphicsAdapter.setBorderColorIndex(value);
   } else if (index == 3 && ((old ^ value) & 0x10)) {
     // 16 colour graphics on or off: that changes the mode, so set it up again
     invalidateCGAMode();
@@ -1417,6 +1421,7 @@ void Machine::setCGAMode()
     m_frameBuffer = cga;
     m_graphicsAdapter.setVideoBuffer(base);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_40x25_16Colors);
+    m_graphicsAdapter.setBorderColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     m_graphicsAdapter.setBit7Blink(m_CGAModeReg & CGA_MODECONTROLREG_BIT7BLINK);
     m_graphicsAdapter.enableVideo(true);
 
@@ -1427,6 +1432,7 @@ void Machine::setCGAMode()
     m_frameBuffer = cga;
     m_graphicsAdapter.setVideoBuffer(base);
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Text_80x25_16Colors);
+    m_graphicsAdapter.setBorderColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     m_graphicsAdapter.setBit7Blink(m_CGAModeReg & CGA_MODECONTROLREG_BIT7BLINK);
     m_graphicsAdapter.enableVideo(true);
 
@@ -1443,6 +1449,7 @@ void Machine::setCGAMode()
     m_graphicsAdapter.setEmulation((m_CGAModeReg & CGA_MODECONTROLREG_TEXT80)
                                    ? GraphicsAdapter::Emulation::PC_Graphics_Tandy_320x200_16Colors
                                    : GraphicsAdapter::Emulation::PC_Graphics_Tandy_160x200_16Colors);
+    m_graphicsAdapter.setBorderColorIndex(m_tandyArray[2]);    // video array register 2, the border
     m_graphicsAdapter.enableVideo(true);
 
   } else if ((m_plantronics & 0x30) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS)) {
@@ -1463,6 +1470,7 @@ void Machine::setCGAMode()
       m_graphicsAdapter.setPCGraphicsPaletteInUse(paletteIndex);
       m_graphicsAdapter.setPCGraphicsBackgroundColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     }
+    m_graphicsAdapter.setBorderColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     m_graphicsAdapter.enableVideo(true);
 
   } else if (m_composite && !m_tandy && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS) &&
@@ -1476,6 +1484,7 @@ void Machine::setCGAMode()
     m_graphicsAdapter.setCompositeTable((m_CGAModeReg & CGA_MODECONTROLREG_GRAPH640) ? 0
                                         : ((m_CGAColorReg & CGA_COLORCONTROLREG_PALETTESEL) ? 2 : 1));
     m_graphicsAdapter.setEmulation(GraphicsAdapter::Emulation::PC_Graphics_CGA_Composite);
+    m_graphicsAdapter.setBorderColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     m_graphicsAdapter.enableVideo(true);
 
   } else if ((m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPH640) == 0) {
@@ -1497,6 +1506,8 @@ void Machine::setCGAMode()
     
     m_graphicsAdapter.setPCGraphicsPaletteInUse(paletteIndex);
     m_graphicsAdapter.setPCGraphicsBackgroundColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
+    // the colour select register's low bits are background and border alike
+    m_graphicsAdapter.setBorderColorIndex(m_CGAColorReg & CGA_COLORCONTROLREG_BACKCOLR_MASK);
     m_graphicsAdapter.enableVideo(true);
 
   } else if ((m_CGAModeReg & CGA_MODECONTROLREG_GRAPHICS) && (m_CGAModeReg & CGA_MODECONTROLREG_GRAPH640)) {
