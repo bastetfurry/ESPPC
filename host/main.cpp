@@ -199,7 +199,8 @@ static void printText()
   auto em = ga->emulation();
   bool ega = em == GraphicsAdapter::Emulation::PC_Text_EGA_80x25_16Colors && s_machine->EGAActive();
   bool cga = em == GraphicsAdapter::Emulation::PC_Text_80x25_16Colors ||
-             em == GraphicsAdapter::Emulation::PC_Text_40x25_16Colors;
+             em == GraphicsAdapter::Emulation::PC_Text_40x25_16Colors ||
+             em == GraphicsAdapter::Emulation::PC_Text_CGA_80Columns;
   uint8_t const * fb = s_machine->frameBuffer();
   int cols = ga->getTextColumns(), rows = ga->getTextRows();
   if (!(ega || (cga && fb)) || cols <= 0 || rows <= 0) {
