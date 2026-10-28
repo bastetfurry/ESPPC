@@ -1130,13 +1130,6 @@ void BIOS::pointingDeviceInterface()
 }
 
 
-// convert packed BCD to decimal
-static uint8_t BCDtoByte(uint8_t v)
-{
-  return (v & 0x0F) + (v >> 4) * 10;
-}
-
-
 // synchronize system ticks with RTC
 void BIOS::syncTicksWithRTC()
 {
@@ -1145,11 +1138,14 @@ void BIOS::syncTicksWithRTC()
     *(uint32_t*)(m_memory + BIOS_DATAAREA_ADDR + BIOS_SYSTICKS) = 0;
     return;
   }
-  m_MC146818->updateTime();
-  int ss = BCDtoByte(m_MC146818->reg(0x00));
-  int mm = BCDtoByte(m_MC146818->reg(0x02));
-  int hh = BCDtoByte(m_MC146818->reg(0x04));
-  int totSecs = ss + mm * 60 + hh * 3600 + 1000;
+  // The host's time, which the clock chips show too. Not through the MC146818's registers: POST
+  // calls this before it sets the chip's 24 hour mode, and on a cold boot the chip is still in 12
+  // hour mode, where 18:00 reads as hour 86h. That made the tick count more than a day, and DOS
+  // reported a divide overflow converting it.
+  time_t now = time(nullptr);
+  tm t;
+  localtime_r(&now, &t);
+  int totSecs = t.tm_sec + t.tm_min * 60 + t.tm_hour * 3600 + 1000;
   int64_t pitTicks = (int64_t)totSecs * PIT_TICK_FREQ;
   *(uint32_t*)(m_memory + BIOS_DATAAREA_ADDR + BIOS_SYSTICKS) = (uint32_t) (pitTicks / 65536);
 }
