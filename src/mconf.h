@@ -41,6 +41,9 @@ Allowed tags:
 "chs0" : Hard disk 0 geometry (Cylinders,Heads,Sectors)
 "chs1" : Hard disk 1 geometry (Cylinders,Heads,Sectors)
 "boot" : Boot drive. Values: fd0, fd1, hd0, hd1. Default is fd0
+"hwdisk": 1 adds the disk controller hardware for operating systems with their own disk drivers,
+         such as SCO Xenix: the floppy controller (3F0h-3F7h, IRQ 6, DMA channel 2) and the XT hard
+         disk controller (320h-323h, IRQ 5, DMA channel 3). INT 13h is unaffected.
 "ram"  : Conventional memory in KB, 64 to 704 in steps of 64. Default is 640.
          704 is the classic non-IBM XT configuration: video starts at 0xB0000, so 0xA0000-0xAFFFF
          is ordinary RAM. Leave at 640 unless a program needs the extra memory, since some software
@@ -119,6 +122,7 @@ struct MachineConfItem {
   bool              tandyDAC;                 // "tandydac": the SL/TL DAC, needs the sound chip
   bool              composite;                // "composite": a composite colour monitor on the CGA
   bool              adlib;                    // "adlib": an AdLib (OPL2) at 388h
+  bool              hwDisk;                   // "hwdisk": the disk controllers and DMA hardware
 
   MachineConfItem()
     : next(nullptr),
@@ -138,7 +142,8 @@ struct MachineConfItem {
       tandySound(false),
       tandyDAC(false),
       composite(false),
-      adlib(false)
+      adlib(false),
+      hwDisk(false)
   {
   }
 
@@ -195,6 +200,13 @@ struct MachineConfItem {
   void setAdLib(char const * value)             {
     adlib = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
                       value[0] == 't' || value[0] == 'T');
+  }
+
+  // "hwdisk 1": the floppy controller at 3F0h-3F7h, the XT hard disk controller at 320h-323h and
+  // the DMA they use, for software that drives the hardware itself rather than calling INT 13h
+  void setHwDisk(char const * value)            {
+    hwDisk = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
+                       value[0] == 't' || value[0] == 'T');
   }
 
   // "enabledebug 1" turns the serial debug console on. It is off unless asked for, because it

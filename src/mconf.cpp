@@ -207,6 +207,8 @@ void MachineConf::loadFromFile(FILE * file)
       item->setComposite(value);
     else if (strcmp("adlib", tag) == 0)
       item->setAdLib(value);
+    else if (strcmp("hwdisk", tag) == 0)
+      item->setHwDisk(value);
     else if (tag[0])
       // Say so rather than ignoring it. A mistyped or over-long tag otherwise looks exactly
       // like a feature that does not work.
@@ -265,6 +267,8 @@ void MachineConf::saveToFile(FILE * file)
       fputs("composite 1 ", file);
     if (item->adlib)
       fputs("adlib 1 ", file);
+    if (item->hwDisk)
+      fputs("hwdisk 1 ", file);
     fputs("\r\n", file);
   }
 }

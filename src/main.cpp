@@ -1323,6 +1323,11 @@ void setup()
   // (the SD card already runs at its full 20 MHz, see the mount above)
 
   machine->setBaseDirectory(SD_MOUNT_PATH);
+  // before the images: it decides the geometry of a hard disk without a partition table
+  if (conf->hwDisk) {
+    printf("Disk: floppy controller at 3F0h, XT hard disk controller at 320h, DMA\n");
+    machine->setHwDisk(true);
+  }
   for (int i = 0; i < DISKCOUNT; ++i)
     machine->setDriveImage(i, diskFilename[i], conf->cylinders[i], conf->heads[i], conf->sectors[i]);
 

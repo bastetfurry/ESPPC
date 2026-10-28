@@ -3943,14 +3943,40 @@ int6:
 inta:
 intb:
 intc:
-intd:
-inte:
 intf:
 int18:
 int1b:
 int1d:
 
 iret
+
+
+; ************************* INT 0Dh - IRQ 5, the XT hard disk controller
+
+; Only the direct disk hardware raises it (see src/hdc.h), and a driver that uses that controller
+; brings its own handler; this one ends the interrupt, so a stray one does not block IRQ 5 to 7.
+intd:
+  push  ax
+  call  reportEOIA
+  pop   ax
+  iret
+
+
+; ************************* INT 0Eh - IRQ 6, the floppy disk controller
+
+; Sets bit 7 of the seek status at 40:3E, which a floppy routine waiting for the controller polls,
+; and ends the interrupt. Only the direct disk hardware raises IRQ 6 (see src/fdc.h); this was a
+; bare IRET before, without the EOI, which would have blocked IRQ 6 and 7 after the first one.
+inte:
+  push  ax
+  push  ds
+  mov   ax, 0x40
+  mov   ds, ax
+  or    byte [0x3e], 0x80
+  call  reportEOIA
+  pop   ds
+  pop   ax
+  iret
 
 
 

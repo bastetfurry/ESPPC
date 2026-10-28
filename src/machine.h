@@ -43,6 +43,8 @@
 #include "tandydac.h"
 #include "adlib.h"
 #include "ega.h"
+#include "fdc.h"
+#include "hdc.h"
 
 
 // Disk images may live on the SD card (paths relative to the base directory) or in the
@@ -176,6 +178,24 @@ public:
 
   // An AdLib (OPL2) at 388h/389h, see adlib.h. Must be called before run().
   void setAdLib(bool value)                    { m_adlibEnabled = value; }
+
+  // Direct disk hardware: the floppy controller at 3F0h-3F7h with IRQ 6, the XT hard disk
+  // controller at 320h-323h with IRQ 5, and the 8237 DMA they transfer through, for software that
+  // drives them itself instead of calling INT 13h, which stays the fast path either way. Must be
+  // called before run() and before the drive images are set: it decides hard disk geometry.
+  void setHwDisk(bool value)                   { m_hwDisk = value; }
+  bool hwDisk() const                          { return m_hwDisk; }
+
+
+  // For the devices on the 8237: move up to n bytes through DMA channel ch, to or from guest memory,
+  // as the channel is programmed. Returns the bytes moved, fewer when the channel is masked or
+  // reaches terminal count, which *tc then reports. Verify mode counts without touching memory.
+  int dmaToMemory(int ch, uint8_t const * buf, int n, bool * tc);
+  int dmaFromMemory(int ch, uint8_t * buf, int n, bool * tc);
+
+  // the disk controllers' interrupt lines
+  void fdcInterrupt()                          { m_PIC8259A.signalInterrupt(6); }
+  void hdcInterrupt()                          { m_PIC8259A.signalInterrupt(5); }
 
   void setComposite(bool value)                { m_composite = value; }
   bool composite() const                       { return m_composite; }
@@ -544,6 +564,9 @@ private:
   bool                     m_composite;
   bool                     m_adlibEnabled;
   AdLib *                  m_adlib;             // only allocated when enabled
+  bool                     m_hwDisk;
+  FDC765                   m_fdc;
+  XTHDC                    m_hdc;
   uint8_t                  m_plantronics;
   bool                     m_plantronicsSwap;
 
@@ -567,9 +590,10 @@ private:
   uint8_t                  m_dacAmplitude;      // C7h bits 7-5
   bool                     m_dacIrqFlag;        // terminal count reached, C4h bit 3 on read
 
-  // A minimal 8237 DMA controller, on machines with the Tandy DAC only. The registers of all four
-  // channels are kept so software can program and read them, but only channel 1 moves, driven by
-  // the DAC's playback (see TandyDAC).
+  // A minimal 8237 DMA controller, on machines with the Tandy DAC or the direct disk hardware. The
+  // registers of all four channels are kept so software can program and read them. Channel 1 moves
+  // with the DAC's playback (see TandyDAC), channels 2 and 3 for the floppy and hard disk
+  // controllers (dmaToMemory()).
   struct DMAChannel {
     uint16_t baseAddr, baseCount;
     uint16_t curAddr, curCount;
@@ -578,6 +602,7 @@ private:
     bool     masked;
   };
   DMAChannel               m_dma[4];
+  int dmaStep(int index, bool * tc);
   bool                     m_dmaFlipFlop;       // false = the next byte is the low one
   uint8_t                  m_dmaStatus;         // bits 3-0 terminal count reached, cleared on read
 

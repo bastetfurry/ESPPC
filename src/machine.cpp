@@ -106,6 +106,7 @@ Machine::Machine() :
     m_composite(false),
     m_adlibEnabled(false),
     m_adlib(nullptr),
+    m_hwDisk(false),
     m_plantronics(0),
     m_plantronicsSwap(false),
     m_tandy(false),
@@ -265,6 +266,7 @@ void Machine::setDriveImage(int drive, char const * filename, int cylinders, int
   m_diskSectors[drive]   = sectors;
   
   m_diskChanged[drive]   = true;
+  m_fdc.mediaChanged(drive);
 
   if (filename) {
     m_diskFilename[drive] = strdup(filename);
@@ -390,6 +392,21 @@ void Machine::autoDetectDriveGeometry(int drive)
   if (drive >= 2 && geometryFromPartitionTable(drive))
     return;
 
+  // With the XT hard disk controller, a new disk gets the geometry that controller formats: 17
+  // sectors a track, which its drivers assume, since the XT parameter table has no field for it.
+  // The fewest heads (up to 8) that keep the cylinders within 1024; a 40 MB image is 963/5/17.
+  if (drive >= 2 && m_hwDisk) {
+    uint32_t tracks = (uint32_t)(m_diskSize[drive] / (512 * 17));
+    int      h      = 2;
+    while (h < 8 && tracks / h > 1024)
+      ++h;
+    uint32_t cyl = tracks / h;
+    m_diskCylinders[drive] = cyl > 1024 ? 1024 : (cyl ? cyl : 1);
+    m_diskHeads[drive]     = h;
+    m_diskSectors[drive]   = 17;
+    return;
+  }
+
   // maybe an hard disk, try to calculate geometry (max 528MB, common lower end for BIOS and MSDOS: https://tldp.org/HOWTO/Large-Disk-HOWTO-4.html)
   constexpr int MAXCYLINDERS = 1024;  // Cylinders : 1...1024
   constexpr int MAXHEADS     = 16;    // Heads     : 1...16 (actual limit is 256)
@@ -489,6 +506,9 @@ void Machine::reset()
 
   m_PIC8259A.reset();
   m_PIC8259B.reset();
+
+  m_fdc.init(this);
+  m_hdc.init(this);
 
   m_PIT8253.reset();
   m_PIT8253.setGate(0, true);
@@ -760,6 +780,11 @@ void Machine::tick(int n)
     m_i8042.tick();
   }
 
+  if (m_hwDisk) {
+    m_fdc.tick(n);
+    m_hdc.tick(n);
+  }
+
   // Far rarer than the devices above: the console only has to notice bytes arriving on a
   // 115200 baud line, and while the monitor is open this call does not return until the user
   // resumes, which is what freezes the guest.
@@ -1003,6 +1028,67 @@ uint8_t Machine::readDMA(int port)
     case 0x82: return m_dma[3].page;
     default:   return 0xff;
   }
+}
+
+
+// One byte through a channel: where it goes, and the address and count moved on. At terminal count
+// the status bit is set and the channel reloads (auto-init) or masks itself. Returns the linear
+// address, or -1 when the channel does not move.
+int Machine::dmaStep(int index, bool * tc)
+{
+  auto & ch = m_dma[index];
+  if (ch.masked)
+    return -1;
+  int addr = (ch.page << 16) | ch.curAddr;
+  ch.curAddr += (ch.mode & 0x20) ? -1 : 1;     // within the page, as the 8237 does
+  if (ch.curCount-- == 0) {
+    m_dmaStatus |= 1 << index;
+    *tc = true;
+    if (ch.mode & 0x10) {
+      ch.curAddr  = ch.baseAddr;
+      ch.curCount = ch.baseCount;
+    } else
+      ch.masked = true;
+  }
+  return addr;
+}
+
+
+// Device to memory, mode bits 3-2 = 01 ("write"); 00 is verify, which counts but stores nothing.
+// Only RAM below the video window is written, like the BIOS's disk transfers: past it the bytes are
+// dropped rather than written over the adapter or the ROMs.
+int Machine::dmaToMemory(int index, uint8_t const * buf, int n, bool * tc)
+{
+  auto & ch     = m_dma[index & 3];
+  bool   store  = (ch.mode & 0x0c) == 0x04;
+  int    ramEnd = i8086::videoMemStart();
+  int    done   = 0;
+  *tc = false;
+  while (done < n && !*tc) {
+    int addr = dmaStep(index & 3, tc);
+    if (addr < 0)
+      break;
+    if (store && addr < ramEnd)
+      s_memory[addr] = buf[done];
+    ++done;
+  }
+  return done;
+}
+
+
+// Memory to device, mode bits 3-2 = 10 ("read"). Outside RAM it reads as an open bus, FFh.
+int Machine::dmaFromMemory(int index, uint8_t * buf, int n, bool * tc)
+{
+  int    ramEnd = i8086::videoMemStart();
+  int    done   = 0;
+  *tc = false;
+  while (done < n && !*tc) {
+    int addr = dmaStep(index & 3, tc);
+    if (addr < 0)
+      break;
+    buf[done++] = addr < ramEnd ? s_memory[addr] : 0xff;
+  }
+  return done;
 }
 
 
@@ -2128,14 +2214,29 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
         m->m_sn76496.write(value);
       break;
 
-    // 8237 DMA controller and the page registers, only with the Tandy DAC (see Machine::writeDMA)
+    // 8237 DMA controller and the page registers, only with the Tandy DAC or the direct disk
+    // hardware (see Machine::writeDMA)
     case 0x00 ... 0x0f:
     case 0x81:
     case 0x82:
     case 0x83:
     case 0x87:
-      if (m->tandyDAC())
+      if (m->tandyDAC() || m->m_hwDisk)
         m->writeDMA(address, value);
+      break;
+
+    // floppy disk controller, with the direct disk hardware (see fdc.h)
+    case 0x3f2:
+    case 0x3f5:
+    case 0x3f7:
+      if (m->m_hwDisk)
+        m->m_fdc.write(address, value);
+      break;
+
+    // XT hard disk controller, with the direct disk hardware (see hdc.h)
+    case 0x320 ... 0x323:
+      if (m->m_hwDisk)
+        m->m_hdc.write(address, value);
       break;
 
     // CGA - Mode Control Register
@@ -2235,7 +2336,18 @@ uint8_t Machine::readPortHW(void * context, int address)
     case 0x82:
     case 0x83:
     case 0x87:
-      return m->tandyDAC() ? m->readDMA(address) : 0xff;
+      return (m->tandyDAC() || m->m_hwDisk) ? m->readDMA(address) : 0xff;
+
+    // floppy disk controller, with the direct disk hardware (see fdc.h)
+    case 0x3f2:
+    case 0x3f4:
+    case 0x3f5:
+    case 0x3f7:
+      return m->m_hwDisk ? m->m_fdc.read(address) : 0xff;
+
+    // XT hard disk controller, with the direct disk hardware (see hdc.h)
+    case 0x320 ... 0x323:
+      return m->m_hwDisk ? m->m_hdc.read(address) : 0xff;
 
     // PIC8259A
     case 0x0020:
