@@ -15,6 +15,7 @@
 //   text=T                prints the text screen (CGA or EGA text modes)
 //   regs=T                prints the CPU registers and the code at CS:IP
 //   steps=T:N             prints CS:IP and IF at the next N batch boundaries (16 instructions each)
+//   mem=T:ADDR,LEN        dumps guest memory, hex linear address (B8000 is the CGA's memory)
 //   time=T                ends the run (default 30)
 //
 // Options:
@@ -45,7 +46,7 @@ static double    s_nsPerInstruction = 1000.0;   // 1 MIPS
 
 struct Event {
   int64_t     us;
-  enum Kind { Scancode, Shot, Text, Regs, Steps, End } kind;
+  enum Kind { Scancode, Shot, Text, Regs, Steps, Mem, End } kind;
   int         code;          // Scancode
   std::string arg;           // Shot: file
 };
@@ -219,6 +220,28 @@ static void printRegs()
 }
 
 
+// guest memory as hex and text; B8000 and up is the CGA's memory, which is not in the guest RAM
+static void printMem(std::string const & arg)
+{
+  unsigned addr = 0, len = 0;
+  if (sscanf(arg.c_str(), "%x,%x", &addr, &len) != 2)
+    return;
+  printf("[mem] %05X, %u bytes at %.2f s\n", addr, len, esp_timer_get_time() / 1e6);
+  for (unsigned a = addr; a < addr + len; a += 16) {
+    char ascii[17] = { };
+    printf("%05X ", a);
+    for (unsigned i = 0; i < 16 && a + i < addr + len; ++i) {
+      unsigned x = a + i;
+      uint8_t v = (x >= 0xb8000 && x < 0xc0000 && s_machine->frameBuffer())
+                  ? s_machine->videoMemory()[x - 0xb8000] : s_machine->memory()[x & 0xfffff];
+      printf(" %02X", v);
+      ascii[i] = (v >= 0x20 && v < 0x7f) ? v : '.';
+    }
+    printf("  %s\n", ascii);
+  }
+}
+
+
 //// The run
 
 static void step(void *)
@@ -237,6 +260,7 @@ static void step(void *)
       case Event::Text:     printText(); break;
       case Event::Regs:     printRegs(); break;
       case Event::Steps:    s_stepsToPrint = e.code; break;
+      case Event::Mem:      printMem(e.arg); break;
       case Event::End:
         fflush(stdout);
         exit(0);
@@ -312,6 +336,7 @@ static int run(int argc, char * argv[])
     else if (tag == "text")        s_events.push_back({ secondsToUs(at.c_str()), Event::Text, 0, "" });
     else if (tag == "regs")        s_events.push_back({ secondsToUs(at.c_str()), Event::Regs, 0, "" });
     else if (tag == "steps")       s_events.push_back({ secondsToUs(at.c_str()), Event::Steps, atoi(arg.c_str()), "" });
+    else if (tag == "mem")         s_events.push_back({ secondsToUs(at.c_str()), Event::Mem, 0, arg });
     else if (tag == "shot")        s_events.push_back({ secondsToUs(at.c_str()), Event::Shot, 0, arg });
     else if (tag == "type") {
       int64_t t = secondsToUs(at.c_str());
