@@ -5,6 +5,13 @@
 **Review Subject:** Architecture, Performance Optimizations, Subsystems, Code Quality, and Portability Roadmap  
 **Date:** September 2026  
 
+> A snapshot from September 2026, kept as it was written. Its links to line numbers point at the
+> code of that time. Since then (as of 2026-10-28): the headless host harness it anticipates exists
+> (`host/`, `pctool`, see [platform-split.md](platform-split.md)); interrupts are no longer handed
+> to the CPU only at the end of a 16 instruction batch but taken at any instruction with IF set
+> (05947ad); the PIT, the CGA's status register, start address, border and text geometry follow the
+> hardware more closely; and the FabGL devices are still in `lib/FabGL`, not yet in a `core/`.
+
 ---
 
 ## 1. Executive Summary

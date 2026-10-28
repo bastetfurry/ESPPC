@@ -30,18 +30,23 @@ Pull requests are welcome of course.
   configuration: video moves up to B000 and the A000 segment becomes ordinary RAM.
 - **Video:** per machine:
   - **CGA**, with the Plantronics ColorPlus modes, and optionally a **composite** monitor that
-    shows the NTSC artifact colours (160x200 in 16 colours for games that offer it).
+    shows the NTSC artifact colours (160x200 in 16 colours for games that offer it). The 6845 is
+    followed closely enough for the tweaked text modes (80x100, the 160x100x16 of Paku Paku and
+    others), hardware scrolling, display pages, the border colour and 59.92 Hz retrace timing.
   - **EGA**, driven by a real IBM EGA BIOS option ROM (`data/fs/ega.bin`, see `data/README.md`):
     the 200 and 350 line modes, split screen, the 6 bit palette.
   - **Tandy 1000**, with its 16 colour modes 8 and 9 and its three voice sound chip.
 - **Sound:** PC speaker; the Tandy SN76496 at C0h (also as a TNDY style card on CGA or EGA); the
   Tandy SL/TL **DAC** for Sierra speech and effects; an **AdLib** (OPL2, DOSBox-X's DBOPL),
   synthesised on the second core.
-- **Chipset:** 8259 PIC, 8253 PIT, 8042 keyboard controller, MC146818 RTC (set from NTP at power
-  on), two 8250 serial ports, a PS/2 mouse.
+- **Chipset:** 8259 PIC, 8253 PIT, 8042 keyboard controller, an MC146818 RTC (set from NTP at
+  power on), or instead the MM58174 clock SCO Xenix reads, or no clock at all; two 8250 serial
+  ports, a PS/2 mouse.
 - **Disks:** two floppies and two hard disks as image files. Geometry is guessed from the image
   size or given by hand. Images can be on the SD card, built into the flash file system (read only), or a URL
-  that is downloaded to the card on first boot.
+  that is downloaded to the card on first boot. DOS and games go through the BIOS; for systems
+  with their own disk drivers (SCO Xenix 86) a machine can also have the NEC uPD765 floppy
+  controller and the IBM XT hard disk controller, with DMA.
 
 ## Hardware
 
@@ -127,6 +132,8 @@ desc "Rescue" fd0 "/spiffs/rescue.img" boot fd0
 | `tandysound` | `1` for the SN76496 on CGA or EGA (Tandy video always has it) |
 | `tandydac` | `1` for the Tandy SL/TL DAC |
 | `adlib` | `1` for an AdLib at 388h |
+| `hwdisk` | `1` adds the floppy and XT hard disk controllers for systems with their own disk drivers |
+| `clock` | `at` (default, MC146818), `mm58174` (the clock SCO Xenix 86 reads) or `none` |
 | `usbserial` | `com1` or `com2`: that port goes over the USB serial |
 | `hwserial` | `com1` or `com2`: that port is on the U1 header (pin 5 TXD, 6 RXD, 3 GND, 3.3 V only) |
 | `enabledebug` | `1` for the serial debug console |
@@ -157,6 +164,11 @@ back to the guest. Without the console, the USB serial line is the guest's COM1.
   private channel on the same line, no COM port needed. See the note above `class Machine` in
   `src/machine.h`.
 - `tools/cputest/` runs the 8086 core on the PC against the SingleStepTests suite.
+- `host/` builds the whole emulator on a Linux PC (`make -C host`): `host/pctool` boots a machine
+  from disk images headless and runs a script, typing on the keyboard, dumping the text screen
+  and memory, and writing screenshots from the emulator's own renderers. Time is virtual, so a run
+  repeats exactly and takes a fraction of a second. The comment at the top of `host/main.cpp`
+  lists the commands.
 
 You can also use that same line as a normal serial line. I tested it with a DOS terminal program, with my Linux box running a login console on ttyUSB0. The only drawback I found was that TERM90 doesn't like Unicode; getting that to work is beyond this document, though.
 
@@ -177,6 +189,8 @@ src/main.cpp            setup, Wi-Fi and clock, the machine list, the SysReq men
 src/machine.*           the PC: CPU, chipset, video, disks, timing
 src/bios.*              BIOS services done natively; biosrom.h is built from tools/bios.asm
 src/ega.*               the EGA planar memory engine
+src/fdc.* hdc.*         the floppy and XT hard disk controllers ("hwdisk")
+src/mm58174.*           the MM58174 clock ("clock mm58174")
 src/sn76496.* tandydac.* adlib.* opl/   sound: Tandy chip, Tandy DAC, AdLib (DBOPL)
 src/textui.* setupui.*  the host's text mode screens: POST, machine editor, file browser
 src/mconf.*             mconfs.txt
@@ -185,6 +199,7 @@ src/serialdbg.*         the serial debug console and monitor
 lib/FabGL/              FabGL 1.0.9, vendored and changed, see VENDORED.md
 data/fs/                the flash file system: EGA BIOS, rescue disk
 tools/                  BIOS source, CPU tests, host side tools
+host/                   the emulator built on a PC, headless (pctool)
 docs/                   design notes and the to do list
 ```
 

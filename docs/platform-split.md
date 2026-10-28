@@ -1,6 +1,7 @@
 # Splitting the emulator into a portable core and a platform layer
 
-A plan, not yet started (2026-09-27). The goal is a second hardware target -- an RP2350 board, next to
+A plan (2026-09-27). Step 1 exists in a different form since 2026-10-28, see "The host build
+today" below; the rest has not started. The goal is a second hardware target -- an RP2350 board, next to
 the ESP32 WROVER-E one -- without forking the emulator. Every step below leaves the ESP32 build
 working exactly as before, and each one is checked on the board before the next.
 
@@ -15,10 +16,33 @@ working exactly as before, and each one is checked on the board before the next.
   similar) that means IRAM on the ESP32 and a RAM section on the RP2350.
 - **Measured after every step:** tools/cputest (no test worse), a boot of each machine type,
   CheckIt or Topbench against the numbers in the emulator-speed notes, and PX3's fade-in.
-- **A third platform early: the host (Linux).** tools/cputest already builds the CPU core on the
-  host. Growing that into a headless host platform -- BIOS, devices, a disk image, a text screen
-  dump -- gives the interfaces a second implementation long before RP2350 hardware exists, and
-  makes automated boot tests possible (boot DOS from an image, compare the text screen).
+- **A third platform early: the host (Linux).** A headless host build -- BIOS, devices, a disk
+  image, a text screen dump -- gives the interfaces a second implementation long before RP2350
+  hardware exists, and makes automated boot tests possible (boot DOS from an image, compare the
+  text screen). It exists now, as `host/` (below).
+
+## The host build today
+
+`host/` (`make -C host`, 2026-10-28) builds the emulator's own sources on Linux into `pctool`, which
+boots a machine from disk images and runs a script at emulated times: typing through the 8042,
+key presses, text screen and memory dumps, register dumps, and screenshots drawn by the real
+scanline renderers. Time is virtual, advanced by the instructions run, so runs are repeatable and
+fast. See the comment at the top of `host/main.cpp`.
+
+It takes a shortcut past the plan: instead of interfaces, `host/stub/` stands in for the headers
+the code includes (`fabgl.h`, `esp_timer.h`, `esp_heap_caps.h`, `soc/soc.h`, FreeRTOS, NVS,
+MCP23S17), and `host/host.cpp` implements them: the virtual clock and esp_timer, the one task, a
+PS/2 keyboard queue, the PSRAM window, FabGL's fonts. The emulator sources are compiled unchanged,
+so it tests exactly what runs on the board. Not there: sound (the AdLib task is refused), the
+mouse, serial ports, the serial debug console, the setup screens.
+
+So step 1 and the headless half of step 12 are usable already; the interfaces still have to be
+drawn out of the stubs when the split proper starts, and the stubs then become the host's
+implementation of them. Two things the host build found that matter for the split: the 8086 core
+keeps its registers' address as a 32 bit offset from guest memory, so guest RAM has to lie within
+2 GB of the core's static data (host.cpp puts it in the binary's data); and the emulator relied
+on real time jitter, which the virtual clock does not have, to deliver interrupts (fixed in
+05947ad).
 
 ## Where things stand today
 
@@ -89,7 +113,8 @@ Ordered so that each is small, testable on the board, and makes the next one eas
 
 1. **Host platform, headless, CPU and BIOS only.** Grow tools/cputest's build into a host target that
    boots the BIOS with a disk image and dumps the text screen. Everything it needs becomes the first
-   draft of the interfaces (time, memory, storage). *About a day.*
+   draft of the interfaces (time, memory, storage). *About a day.* Done as `host/`, with stub headers
+   instead of interfaces (see above).
 2. **Move the modified FabGL devices out of lib/FabGL.** i8086, PIC, PIT, i8042, 8250, RTC and
    GraphicsAdapter are heavily ESPPC specific by now; they move to a `core/` (and, for
    GraphicsAdapter, `display/`) directory unchanged, so later steps edit project code, not a vendored

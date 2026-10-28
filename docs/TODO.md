@@ -44,7 +44,8 @@ Arduino) directly but through a platform layer of its own, so that other targets
 layer written: an RP2350 board (no Wi-Fi unless added separately), an ESP32-S3 (where FabGL does
 not run at all), and an SDL build on the PC for local tests. The plan, its steps and the ground
 rules (no speed loss on the ESP32, no behaviour change per step) are in
-[platform-split.md](platform-split.md), now with the S3 and SDL as targets.
+[platform-split.md](platform-split.md), now with the S3 and SDL as targets. The headless host build
+exists since 2026-10-28 (`host/`, `pctool`), on stub headers rather than interfaces.
 
 ## Numpad as a joypad, and later a joypad as keys
 
@@ -93,22 +94,40 @@ needs only three pins) mapped to keyboard keys, for games with no joystick suppo
   then chooses between game port and keys.
 - Belongs to the port, see [platform-split.md](platform-split.md).
 
-## Cleanup before publishing
+## After publishing
 
-- **README:** rewritten for ESPPC (2026-10-05). Still missing: speed figures beyond Topbench,
-  screenshots.
+Published on GitHub 2026-10-05 (v0.4), with the release workflow and the browser installer.
+
+- **README:** still missing speed figures beyond Topbench, and screenshots (`pctool shot=` can
+  make them now, from the emulator's own renderers).
 - **Tests in the build.** One script that builds the firmware and runs the SingleStepTests harness
-  (`tools/cputest/run.py`), usable as a pre-commit hook and later as CI once there is a remote.
+  (`tools/cputest/run.py`) and a few `pctool` boots (DOS from an image, a text screen to compare),
+  usable as a pre-commit hook and in the GitHub workflow. Today the workflow only builds.
 - **Rescue disk** on FreeDOS instead of retail DOS, so it can be committed (see `.gitignore`).
   The maintainer is building it in 86Box.
-- Then a remote, and publish.
+
+## CGA: what is left
+
+After the CGA work of 2026-10-28 (retrace timing, start address, border, the 6845's text geometry),
+measured against the CGA Compatibility Tester:
+
+- **Colour changes in mid frame** (raster bars, the tester's horizontal retrace test): left out on
+  purpose. California Games is the one known user, and only at exactly 4.77 MHz. It would need the
+  3D9h writes recorded per line from the raster model, and IRAM for the lookup in the renderers.
+- **Wider than 640 pixels** (the tester's 90x30): cut to 80 columns and 25 rows; it would need a
+  720 wide output timing.
+- **Side borders:** the border shows above and below the picture only, because our modes fill the
+  width of their output timing.
+- **The EGA's overscan register** (attribute controller 11h): the EGA's border stays black.
+- **IRAM** is down to about 350 bytes; the next renderer change has to find its own room.
 
 ## A speed limit for the guest
 
 At Topbench 17 the emulator is a turbo XT, and early games that time themselves by the CPU run too
 fast. A per machine setting (full speed, or about 4.77 MHz) that paces instruction batches against
 the emulated PIT clock, not host time. The planned game port needs that same clock for its
-one-shots.
+one-shots. (Games that time themselves by the CGA's vertical retrace already run at the right
+speed, since the status register follows a 59.92 Hz raster.)
 
 ## Save states
 

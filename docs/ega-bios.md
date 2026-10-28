@@ -1,7 +1,6 @@
 # Running a real EGA BIOS
 
-A second video path, selected per machine. The original CGA/Hercules adapter stays the default
-and is untouched; `video ega` loads a real EGA BIOS option ROM at C000:0000 and lets it drive the
+A second video path, selected per machine. The CGA adapter stays the default and is untouched; `video ega` loads a real EGA BIOS option ROM at C000:0000 and lets it drive the
 hardware, the way a real card does.
 
 Chosen in the machine editor with the **Video** dropdown, or in `mconfs.txt`:
@@ -26,27 +25,31 @@ What a boot now looks like:
 
     EGA BIOS: loaded /spiffs/ega.bin, 32 blocks (16384 bytes), checksum ok
     EGA BIOS: planar memory ready
-    EGA BIOS: INT 10h handler C000:0CD7 redirected to F000:040E
+    EGA BIOS: INT 10h handler C000:0CD7 redirected to F000:0455
     ROM<  VID07  VID03  VID01  >
 
 The init calls INT 10h twice to set its initial mode; both land in this BIOS (VID07, VID03) and
-it returns. The card beeps one long and three short on the way through -- the IBM code for an EGA
-adapter failure -- because its self test does not like the hardware, but it carries on regardless
-and POST completes.
+it returns. The redirect target is wherever the handler sits in this BIOS, so it moves when
+bios.asm changes.
+
+The ROM's self test passes. It used to beep one long and three short, the IBM code for an EGA
+adapter failure: the planes were reallocated on every mode change, the heap fragmented, and the
+ROM's test of mode 0Eh fell back to CGA. Since 2026-09-26 the planes are allocated once, while the
+heap is still whole, and kept.
 
 State it leaves behind, read out of the running machine:
 
 | field | value |
 |-------|-------|
-| IVT[10h] | C000:0CD7 (redirected on entry to F000:040E) |
+| IVT[10h] | C000:0CD7 (redirected on entry into this BIOS, F000:0455 today) |
 | IVT[1Fh] | C000:3560, graphics font |
 | 40:A8 | C000:010C, save pointer table |
 | 40:87 / 88 / 89 / 8A | 04 / 09 / 81 / 04 |
 
-**It does not fix QBasic.** With a real EGA BIOS present, hooked, and having populated all of the
-above, QBasic still refuses SCREEN 7..10 with error 5. That is worth recording as a result in its
-own right: the gate is not "is a real EGA BIOS installed", which was the hypothesis behind
-adopting one.
+**It did not fix QBasic on its own.** With a real EGA BIOS present, hooked, and having populated
+all of the above, QBasic still refused SCREEN 7..10 with error 5, so the gate was not "is a real
+EGA BIOS installed", which was the hypothesis behind adopting one. The gate turned out to be this
+BIOS answering INT 10h AH=1Bh, a VGA call; see [qbasic-ega.md](qbasic-ega.md).
 
 
 ## Where the ROM's own code stops, if it is ever let loose
@@ -57,7 +60,7 @@ Working end to end:
   ROM header and checksum in C++ before the guest ever sees it.
 - The planar video memory is allocated **before** POST, because the ROM programs and tests the
   hardware during its own init. The CGA frame buffer is released at that point and
-  `setCGAMode()`/`setHGCMode()` stand down.
+  `setCGAMode()` stands down.
 - POST scans C000..C780 in 2 KB steps for `55AA` and far-calls the init entry at offset 3.
   Markers `ROM<` and `>` are printed either side, so a ROM that hangs inside its own
   initialisation can be told from one that never ran.
@@ -116,8 +119,8 @@ A real EGA register file, so firmware can drive the hardware instead of being to
    register values instead of handed over by the `AH=0Bh` helper.
 2. **Sequencer** clocking mode and memory mode made live, not just stored.
 3. **Attribute Controller** in full: mode control, overscan, colour plane enable, pixel panning.
-4. **EGA text rendering**, which the real BIOS will select for modes 0..3: characters in plane 0,
-   attributes in plane 1, font glyphs in plane 2, with odd/even addressing. This is the large
-   piece, and it is exactly the compatibility machinery the CGA path was kept to avoid.
+4. ~~**EGA text rendering**~~, done: the text modes are drawn from the planes as the card keeps
+   them, characters in plane 0, attributes in plane 1 and the font in plane 2
+   (`PC_Text_EGA_80x25_16Colors`), with the 43 line mode and the split screen.
 
-The CGA/Hercules path is unaffected throughout and remains the default.
+The CGA path is unaffected throughout and remains the default.

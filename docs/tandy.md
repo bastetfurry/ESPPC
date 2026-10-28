@@ -123,8 +123,8 @@ Both renderers run on the QVGA 320x240 timing, like CGA 320x200, and are table d
 - mode 8: `uint32_t LUT[256]`, four raw pixels per source byte; the same shape as the CGA
   320x200 renderer (1 KB)
 
-The tables are rebuilt whenever the palette, the mask or the border changes. Together that is
-roughly 150 bytes of IRAM, against about 2.9 KB free.
+The tables are rebuilt whenever the palette or the mask changes. Together that is roughly 150
+bytes of IRAM (about 2.9 KB were free then; after the CGA work of 2026-10-28 it is about 350).
 
 ## BIOS
 
@@ -215,8 +215,9 @@ Still to do:
   described above, with the pages above 640 KB as on the SL/TL.
 - **CRTC start address** in the Tandy modes (hardware scrolling). It moves all four banks at
   once, so the renderers need a wrapping offset per bank.
-- **The rest of the video array**: the border colour (reg 2) is stored but not drawn, and reg 5
-  (extended mapping) and reg 8 (monitor mode) are ignored.
+- **The rest of the video array**: reg 5 (extended mapping) and reg 8 (monitor mode) are ignored.
+  The border colour (reg 2) is drawn in modes 8 and 9 (since 2026-10-28, with the CGA border); in
+  the CGA modes the border comes from 3D9h as on a CGA, which may not be what a Tandy does.
 - **Palette registers in the CGA and text modes**: every pixel goes through them on a real
   Tandy. Identity after a mode set, so only programs that reprogram them notice.
 - **Mode 0Ah** (640x200x4), whose memory layout even 86Box calls a guess.

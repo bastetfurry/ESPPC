@@ -1,9 +1,21 @@
-# Why QBasic still will not use the EGA modes
+# Why QBasic would not use the EGA modes
 
-Status: **unresolved**. The EGA itself works -- Planet X3's EGA build runs correctly in mode 0Eh
--- but QBasic 1.1 refuses `SCREEN 7/8/9/10` and never issues `INT 10h AH=00` for modes 0Dh..10h.
+Status: **resolved** (2026-09-25, commit ca8f8c8). QBasic 1.1 refused `SCREEN 7/8/9/10` with
+"illegal function call" and never issued `INT 10h AH=00` for modes 0Dh..10h, while the EGA itself
+worked (Planet X3's EGA build ran in mode 0Eh).
 
-This is the state of the investigation so it can be picked up without re-deriving it.
+**The cause:** this BIOS answered `INT 10h AH=1Bh`, the VGA's functionality and state call, which no
+EGA BIOS implements. QBasic's video runtime gates each mode on two bytes, `test [270Dh]` (16h for
+SCREEN 7 and 8, 14h for 9, 09h for 10) and `test [270Ch],0Ch` for all of them. On the VGA path that
+an answer to 1Bh selects, [270Ch] is 10h unless the static functionality table claims mode 12h,
+which an EGA cannot do, and 10h AND 0Ch is zero: every mode refused. Unanswered, 1Bh sends QBasic
+down its EGA path, which reads the switches through AH=12h BL=10h: 04h in both bytes, which SCREEN
+7, 8 and 9 accept. SCREEN 10 still refuses, correctly, since it is the monochrome 640x350 mode.
+It was AH=1Ah's mistake again, one function along (see below).
+
+The rest of this file is the investigation as it stood the day before, kept for how it got there:
+the methods (reading a PKLITE packed program out of a live machine) are reusable. Its conclusions
+about the real EGA BIOS are superseded by the above.
 
 
 ## Getting at the code
