@@ -373,12 +373,12 @@ optrom_next:
   int  0x10
 optrom_done:
 
-; Clear video memory
+; Clear video memory: all 16 KB, every display page, with the attribute in place (see the mode set)
 
   mov  ax, 0xb800
   mov  es, ax
   mov  di, 0
-  mov  cx, 80*25
+  mov  cx, 8192
   mov  ax, 0x0700
   rep  stosw
 
@@ -1356,6 +1356,31 @@ int10_set_vm_cls:
   cmp   ah, 0x80
   je    int10_set_vm_nocls
 
+  ; The whole 16 KB, as the IBM BIOS clears it on a mode set: blanks in light grey on every text
+  ; page, zeros in graphics. Only the first page used to be cleared, so text a program wrote to
+  ; another display page with the teletype, which keeps the attribute already in memory, came out
+  ; black on black.
+  cmp   byte [vid_mode-bios_data], 6
+  ja    int10_set_vm_cls_page
+  push  es
+  push  di
+  push  cx
+  mov   ax, 0xb800
+  mov   es, ax
+  xor   di, di
+  mov   cx, 8192
+  mov   ax, 0x0720
+  cmp   byte [vid_mode-bios_data], 4
+  jb    int10_set_vm_cls_fill
+  xor   ax, ax
+int10_set_vm_cls_fill:
+  cld
+  rep   stosw
+  pop   cx
+  pop   di
+  pop   es
+
+int10_set_vm_cls_page:
   mov   bh, 7            ; Black background, white foreground
   call  clear_screen
   jmp   int10_set_vm_nocls
@@ -1588,7 +1613,9 @@ int10_set_disp_page_upd:
   ; bx contains page offset, so store it in the BIOS data area
   mov    [vid_page_offset-bios_data], bx
 
-  ; update CRTC page offset
+  ; update CRTC page offset: the 6845 counts words, the BIOS data area bytes. The byte offset went
+  ; to the CRTC as it stood, so page 1 showed page 2.
+  shr    bx, 1
   mov    dx, 0x03d4
   mov    al, 0x0c
   out    dx, al
@@ -4199,12 +4226,15 @@ set_crtc_cursor_pos:
   mov  bh, [cs:crt_curpos_y]
   mov  bl, [cs:crt_curpos_x]
 
-  ; Set CRTC cursor address
+  ; Set CRTC cursor address: the cell, plus the start of the page shown, in words as the 6845
+  ; counts them (the CRTC shows the cursor where its address counter meets this register)
   mov  al, [es:vid_cols-bios_data]
   mul  bh
   add  al, bl
   adc  ah, 0
-  mov  bx, ax
+  mov  bx, [es:vid_page_offset-bios_data]
+  shr  bx, 1
+  add  bx, ax
 
   mov  al, 0x0e
   mov  dx, 0x3d4

@@ -520,9 +520,10 @@ bool BIOS::fastTextVideo(uint16_t callerAX)
 }
 
 
-// The cursor of a page in the BIOS data area, and the CRTC's when it is the active page (row * cols
-// + column, like bios.asm's set_crtc_cursor_pos). The CRTC goes through the port handler so its
-// registers and the adapter's cursor stay in step, as with the guest's own OUTs.
+// The cursor of a page in the BIOS data area, and the CRTC's when it is the active page (the page's
+// start plus row * cols + column, in words as the 6845 counts them, like bios.asm's
+// set_crtc_cursor_pos). The CRTC goes through the port handler so its registers and the adapter's
+// cursor stay in step, as with the guest's own OUTs.
 void BIOS::textSetCursor(int page, int row, int col)
 {
   auto bda = m_memory + BIOS_DATAAREA_ADDR;
@@ -530,7 +531,7 @@ void BIOS::textSetCursor(int page, int row, int col)
   bda[0x51 + page * 2] = row;
   if (page != bda[0x62])
     return;
-  uint16_t pos = row * *(uint16_t*)(bda + 0x4a) + col;
+  uint16_t pos = (*(uint16_t*)(bda + 0x4e) >> 1) + row * *(uint16_t*)(bda + 0x4a) + col;
   m_machine->writePortDebug(0x3d4, 0x0e);
   m_machine->writePortDebug(0x3d5, pos >> 8);
   m_machine->writePortDebug(0x3d4, 0x0f);
