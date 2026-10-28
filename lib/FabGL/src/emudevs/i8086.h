@@ -122,6 +122,14 @@ public:
 
   static bool IRQ(uint8_t interrupt_num);
 
+  // ESPPC: the INTR line from the interrupt controller. While it is up, the core takes an interrupt
+  // at the first instruction boundary where IF is set, and only then asks the acknowledge callback
+  // for the vector, as the 8259 gives it in the INTA cycle. The callback returns -1 when the
+  // request has gone away meanwhile.
+  typedef int (*Acknowledge)(void * context);
+  static void setAcknowledgeCallback(Acknowledge value)   { s_acknowledge = value; }
+  static void setINTR(bool value)                         { s_intr = value; }
+
   static void step();
 
 
@@ -163,6 +171,8 @@ private:
 
   static bool               s_pendingIRQ;
   static uint8_t            s_pendingIRQIndex;
+  static bool               s_intr;
+  static Acknowledge        s_acknowledge;
   static uint8_t *          s_memory;
   static int                s_videoMemStart;
   static bool               s_halted;

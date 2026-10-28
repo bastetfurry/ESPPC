@@ -481,6 +481,7 @@ private:
   static bool COM2Interrupt(PC8250 * source, void * context);
 
   static bool keyboardInterrupt(void * context);
+  static int acknowledgeInterrupt(void * context);
   static bool mouseInterrupt(void * context);
   static bool resetMachine(void * context);
   static bool sysReq(void * context);

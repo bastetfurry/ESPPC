@@ -236,6 +236,7 @@ void Machine::init()
   m_BIOS.init(this);
 
   i8086::setCallbacks(this, readPort, writePort, writeVideoMemory8, writeVideoMemory16, readVideoMemory8, readVideoMemory16, interrupt);
+  i8086::setAcknowledgeCallback(acknowledgeInterrupt);
   i8086::setMemory(s_memory);
 
   // Started from init(), which runs in the emulator task: the monitor reads guest RAM, and that
@@ -805,25 +806,44 @@ void Machine::tick(int n)
   if (m_PIC8259B.pendingInterrupt())
     m_PIC8259A.signalInterrupt(2);
 
-  // Only handed to the CPU, and acknowledged at the PIC, when the CPU can take it. A real 8259
-  // gives the vector in the INTA cycle, when the CPU accepts the interrupt, not when the request
-  // comes in. Queued while IF was clear, the vector waited in the CPU for as long as interrupts
-  // stayed off, and went stale if the PIC was reprogrammed meanwhile: SCO Xenix 86 boots with
-  // interrupts off, moves the PIC from base 08h to 10h, and on its first STI got a timer tick
-  // queued under the BIOS's base, vector 08h, which it reports as "trap type 6" and panics.
-  if (m_PIC8259A.pendingInterrupt() && i8086::flagIF()) {
-    if (m_PIC8259A.pendingIR() != 2) {
-      if (i8086::IRQ(m_PIC8259A.pendingInterruptNum()))
-        m_PIC8259A.ackPendingInterrupt();
-    } else if (!m_PIC8259B.pendingInterrupt()) {
-      // the slave was reprogrammed while it asked: nothing to deliver, and nothing put in service
-      // that no handler would ever EOI
-      m_PIC8259A.cancelPendingInterrupt();
-    } else if (i8086::IRQ(m_PIC8259B.pendingInterruptNum())) {
-      m_PIC8259A.ackPendingInterrupt();
-      m_PIC8259B.ackPendingInterrupt();
-    }
+  // The master's request is the CPU's INTR line. The CPU takes it at the first instruction where
+  // IF is set and only then asks for the vector (acknowledgeInterrupt()), as in the 8259's INTA
+  // cycle. It used to be handed over here, at the end of the batch, and only while IF was set:
+  // a loop whose batch boundaries all fell where IF was clear never got an interrupt. MS-DOS 5
+  // waiting for F5/F8 calls INT 16h in a 32 instruction loop, and the timer tick it waited for
+  // could not arrive whenever both boundaries landed inside the handler.
+  i8086::setINTR(m_PIC8259A.pendingInterrupt());
+}
+
+
+// The INTA cycle: the vector of the master's request, or the slave's when it is IR2, and the
+// request put in service. -1 when nothing is pending any more.
+//
+// The vector is the one of this moment, not of when the request came in. Taken earlier, it waited
+// in the CPU for as long as interrupts stayed off and went stale if the PIC was reprogrammed
+// meanwhile: SCO Xenix 86 boots with interrupts off, moves the PIC from base 08h to 10h, and on
+// its first STI got a timer tick under the BIOS's base, vector 08h, which it reports as "trap
+// type 6" and panics.
+int Machine::acknowledgeInterrupt(void * context)
+{
+  auto m = (Machine*)context;
+  if (!m->m_PIC8259A.pendingInterrupt())
+    return -1;
+  if (m->m_PIC8259A.pendingIR() != 2) {
+    int vector = m->m_PIC8259A.pendingInterruptNum();
+    m->m_PIC8259A.ackPendingInterrupt();
+    return vector;
   }
+  if (!m->m_PIC8259B.pendingInterrupt()) {
+    // the slave was reprogrammed while it asked: nothing to deliver, and nothing put in service
+    // that no handler would ever EOI
+    m->m_PIC8259A.cancelPendingInterrupt();
+    return -1;
+  }
+  int vector = m->m_PIC8259B.pendingInterruptNum();
+  m->m_PIC8259A.ackPendingInterrupt();
+  m->m_PIC8259B.ackPendingInterrupt();
+  return vector;
 }
 
 

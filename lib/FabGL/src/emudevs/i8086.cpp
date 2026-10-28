@@ -135,6 +135,8 @@ uint8_t *                 i8086::s_memory;
 int                       i8086::s_videoMemStart = 0xA0000;   // IBM default, see setVideoMemStart()
 bool                      i8086::s_pendingIRQ;
 uint8_t                   i8086::s_pendingIRQIndex;
+bool                      i8086::s_intr;
+i8086::Acknowledge        i8086::s_acknowledge;
 bool                      i8086::s_halted;
 
 
@@ -534,6 +536,7 @@ void i8086::reset()
   rep_override_en = 0;
 
   s_halted = false;
+  s_intr   = false;   // ESPPC: the INTR line comes back from the PIC with the next batch
 
   regs16[REG_CS] = 0xffff;
   reg_ip = 0;
@@ -725,9 +728,17 @@ void IRAM_ATTR i8086::step()
     pc_interrupt(1);
   }
   // Check for interrupts triggered by system interfaces
-  else if (FLAG_IF && s_pendingIRQ && !seg_override_en && !rep_override_en) {
-    pc_interrupt(s_pendingIRQIndex);
-    s_pendingIRQ = false;
+  else if (FLAG_IF && (s_pendingIRQ || s_intr) && !seg_override_en && !rep_override_en) {
+    if (s_pendingIRQ) {
+      pc_interrupt(s_pendingIRQIndex);
+      s_pendingIRQ = false;
+    } else {
+      // ESPPC: INTR, acknowledged now that the CPU takes it (see setINTR())
+      s_intr = false;
+      int vector = s_acknowledge(s_context);
+      if (vector >= 0)
+        pc_interrupt(vector);
+    }
   }
 
   // Instructions handling
