@@ -18,6 +18,12 @@
 //   mem=T:ADDR,LEN        dumps guest memory, hex linear address (B8000 is the CGA's memory)
 //   time=T                ends the run (default 30)
 //
+// Checks, for tests. Each prints "ok" or "FAIL"; the run ends with a summary, and pctool's exit
+// code is 1 if any failed:
+//   expect=T:TEXT         TEXT must be somewhere on the text screen at T
+//   framesum=T[:HEX]      a checksum of the frame drawn at T (as shot= draws it); with HEX, it
+//                         must be that. Time is virtual, so a frame comes out the same every run.
+//
 // Options:
 //   mips=N                instructions a second, in millions, that make up the virtual time (1.0)
 //   write                 lets the guest write to the images; otherwise it gets copies
@@ -46,12 +52,13 @@ static double    s_nsPerInstruction = 1000.0;   // 1 MIPS
 
 struct Event {
   int64_t     us;
-  enum Kind { Scancode, Shot, Text, Regs, Steps, Mem, End } kind;
+  enum Kind { Scancode, Shot, Text, Regs, Steps, Mem, Expect, FrameSum, End } kind;
   int         code;          // Scancode
   std::string arg;           // Shot: file
 };
 
 static std::vector<Event> s_events;
+static int                s_checks = 0;      // expect= and framesum= with a value
 static size_t             s_nextEvent = 0;
 static int                s_stepsToPrint = 0;
 
@@ -126,18 +133,17 @@ static int64_t addKeyStroke(int64_t us, int code)
 
 //// Output
 
-// The emulator's own renderer, into a frame of raw pixels (RGB222, FabGL's byte order). The frame
-// is the modeline's visible area with the view port placed as FabGL places it, centred on a 4
-// pixel grid, and the rest in the border colour.
-static void writeShot(std::string const & file)
+// The emulator's own renderer, into a frame of RGB pixels (8 bits a channel, from RGB222). The
+// frame is the modeline's visible area with the view port placed as FabGL places it, centred on a
+// 4 pixel grid, and the rest in the border colour. False when no video mode is up.
+static bool renderFrame(std::vector<uint8_t> & rgb, int & fw, int & fh)
 {
   using fabgl::VGADirectController;
   int w = VGADirectController::s_viewW, h = VGADirectController::s_viewH;
-  if (!VGADirectController::s_callback || w <= 0 || h <= 0) {
-    printf("[shot] no video mode, %s not written\n", file.c_str());
-    return;
-  }
-  int fw = w, fh = h;
+  if (!VGADirectController::s_callback || w <= 0 || h <= 0)
+    return false;
+  fw = w;
+  fh = h;
   if (char const * q = VGADirectController::s_modeline ? strchr(VGADirectController::s_modeline + 1, '"') : nullptr) {
     float clock;
     int hd, hs, he, ht, vd;
@@ -154,23 +160,69 @@ static void writeShot(std::string const & file)
     for (int y = 0; y < h; y += lines)
       VGADirectController::s_callback(VGADirectController::s_arg, raw.data() + (size_t) y * w, y);
 
+  auto b = VGADirectController::s_border;
+  uint8_t border = b.R | (b.G << 2) | (b.B << 4);
+  rgb.resize((size_t) fw * fh * 3);
+  uint8_t * out = rgb.data();
+  for (int y = 0; y < fh; ++y)
+    for (int x = 0; x < fw; ++x) {
+      bool view = y >= row && y < row + h && x >= col && x < col + w;
+      uint8_t p = view ? raw[(size_t) (y - row) * w + ((x - col) ^ 2)] : border;
+      *out++ = (p & 3) * 85;
+      *out++ = ((p >> 2) & 3) * 85;
+      *out++ = ((p >> 4) & 3) * 85;
+    }
+  return true;
+}
+
+
+static void writeShot(std::string const & file)
+{
+  std::vector<uint8_t> rgb;
+  int fw, fh;
+  if (!renderFrame(rgb, fw, fh)) {
+    printf("[shot] no video mode, %s not written\n", file.c_str());
+    return;
+  }
   FILE * f = fopen(file.c_str(), "wb");
   if (!f) {
     printf("[shot] cannot write %s\n", file.c_str());
     return;
   }
-  auto b = VGADirectController::s_border;
-  uint8_t border = b.R | (b.G << 2) | (b.B << 4);
   fprintf(f, "P6\n%d %d\n255\n", fw, fh);
-  for (int y = 0; y < fh; ++y)
-    for (int x = 0; x < fw; ++x) {
-      bool view = y >= row && y < row + h && x >= col && x < col + w;
-      uint8_t p = view ? raw[(size_t) (y - row) * w + ((x - col) ^ 2)] : border;
-      uint8_t rgb[3] = { (uint8_t) ((p & 3) * 85), (uint8_t) (((p >> 2) & 3) * 85), (uint8_t) (((p >> 4) & 3) * 85) };
-      fwrite(rgb, 1, 3, f);
-    }
+  fwrite(rgb.data(), 1, rgb.size(), f);
   fclose(f);
   printf("[shot] %s, %dx%d\n", file.c_str(), fw, fh);
+}
+
+
+//// Checks, for tests: each failure is counted, and the run's exit code is 1 if there was any
+
+static int s_failures = 0;
+
+// FNV-1a over the frame's RGB bytes and its size. Prints it; with an expected value, checks it.
+static void frameSum(std::string const & expected)
+{
+  std::vector<uint8_t> rgb;
+  int fw, fh;
+  uint64_t h = 14695981039346656037ull;
+  if (renderFrame(rgb, fw, fh)) {
+    for (uint8_t v : rgb)
+      h = (h ^ v) * 1099511628211ull;
+    h = (h ^ (uint64_t) fw) * 1099511628211ull;
+    h = (h ^ (uint64_t) fh) * 1099511628211ull;
+  } else
+    fw = fh = 0;
+  char sum[17];
+  snprintf(sum, sizeof(sum), "%016llx", (unsigned long long) h);
+  if (expected.empty())
+    printf("[framesum] %s, %dx%d at %.2f s\n", sum, fw, fh, esp_timer_get_time() / 1e6);
+  else if (strcasecmp(expected.c_str(), sum) == 0)
+    printf("[framesum] ok %s at %.2f s\n", sum, esp_timer_get_time() / 1e6);
+  else {
+    printf("[framesum] FAIL: %s, expected %s, %dx%d at %.2f s\n", sum, expected.c_str(), fw, fh, esp_timer_get_time() / 1e6);
+    ++s_failures;
+  }
 }
 
 
@@ -193,7 +245,8 @@ static char const * cp437ToUTF8(uint8_t c)
   return ascii;
 }
 
-static void printText()
+// the text screen as UTF-8 lines, trailing blanks dropped; false when not in a text mode
+static bool textScreen(std::vector<std::string> & lines, int & cols, int & rows)
 {
   auto ga = s_machine->graphicsAdapter();
   auto em = ga->emulation();
@@ -202,22 +255,56 @@ static void printText()
              em == GraphicsAdapter::Emulation::PC_Text_40x25_16Colors ||
              em == GraphicsAdapter::Emulation::PC_Text_CGA_80Columns;
   uint8_t const * fb = s_machine->frameBuffer();
-  int cols = ga->getTextColumns(), rows = ga->getTextRows();
-  if (!(ega || (cga && fb)) || cols <= 0 || rows <= 0) {
-    printf("[text] not a text mode\n");
-    return;
-  }
-  printf("[text] %dx%d at %.2f s\n", cols, rows, esp_timer_get_time() / 1e6);
+  cols = ga->getTextColumns();
+  rows = ga->getTextRows();
+  if (!(ega || (cga && fb)) || cols <= 0 || rows <= 0)
+    return false;
+  lines.clear();
   for (int r = 0; r < rows; ++r) {
     std::string line;
     for (int c = 0; c < cols; ++c)
       line += cp437ToUTF8(ega ? s_machine->ega()->planeByte(0, (uint32_t) r * cols + c) : fb[(r * cols + c) * 2]);
     while (!line.empty() && line.back() == ' ')
       line.pop_back();
-    printf("%s\n", line.c_str());
+    lines.push_back(line);
   }
+  return true;
+}
+
+
+static void printText()
+{
+  std::vector<std::string> lines;
+  int cols, rows;
+  if (!textScreen(lines, cols, rows)) {
+    printf("[text] not a text mode\n");
+    return;
+  }
+  printf("[text] %dx%d at %.2f s\n", cols, rows, esp_timer_get_time() / 1e6);
+  for (auto & line : lines)
+    printf("%s\n", line.c_str());
   printf("[text] end\n");
   fflush(stdout);
+}
+
+
+// a check: TEXT somewhere on the text screen. On failure the screen is printed, to see why.
+static void expectText(std::string const & text)
+{
+  std::vector<std::string> lines;
+  int cols, rows;
+  bool found = false;
+  if (textScreen(lines, cols, rows))
+    for (auto & line : lines)
+      if (line.find(text) != std::string::npos)
+        found = true;
+  if (found) {
+    printf("[expect] ok \"%s\" at %.2f s\n", text.c_str(), esp_timer_get_time() / 1e6);
+    return;
+  }
+  printf("[expect] FAIL: \"%s\" not on the screen at %.2f s\n", text.c_str(), esp_timer_get_time() / 1e6);
+  ++s_failures;
+  printText();
 }
 
 
@@ -278,9 +365,13 @@ static void step(void *)
       case Event::Regs:     printRegs(); break;
       case Event::Steps:    s_stepsToPrint = e.code; break;
       case Event::Mem:      printMem(e.arg); break;
+      case Event::Expect:   expectText(e.arg); break;
+      case Event::FrameSum: frameSum(e.arg); break;
       case Event::End:
+        if (s_checks)
+          printf("[result] %s: %d of %d checks failed\n", s_failures ? "FAIL" : "ok", s_failures, s_checks);
         fflush(stdout);
-        exit(0);
+        exit(s_failures ? 1 : 0);
     }
   }
 }
@@ -354,7 +445,14 @@ static int run(int argc, char * argv[])
     else if (tag == "regs")        s_events.push_back({ secondsToUs(at.c_str()), Event::Regs, 0, "" });
     else if (tag == "steps")       s_events.push_back({ secondsToUs(at.c_str()), Event::Steps, atoi(arg.c_str()), "" });
     else if (tag == "mem")         s_events.push_back({ secondsToUs(at.c_str()), Event::Mem, 0, arg });
-    else if (tag == "shot")        s_events.push_back({ secondsToUs(at.c_str()), Event::Shot, 0, arg });
+    else if (tag == "expect") {
+      s_events.push_back({ secondsToUs(at.c_str()), Event::Expect, 0, arg });
+      ++s_checks;
+    } else if (tag == "framesum") {
+      s_events.push_back({ secondsToUs(at.c_str()), Event::FrameSum, 0, arg });
+      if (!arg.empty())
+        ++s_checks;
+    } else if (tag == "shot")        s_events.push_back({ secondsToUs(at.c_str()), Event::Shot, 0, arg });
     else if (tag == "type") {
       int64_t t = secondsToUs(at.c_str());
       for (size_t k = 0; k < arg.size(); ++k) {
