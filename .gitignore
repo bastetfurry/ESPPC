@@ -18,3 +18,7 @@ images/
 
 # python bytecode from the host side tools
 __pycache__/
+
+# host tool build (host/Makefile)
+host/obj/
+host/pctool
