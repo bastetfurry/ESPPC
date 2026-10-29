@@ -248,10 +248,10 @@ emulated (src/tandydac.*):
     out C6h <= divider low, C7h <= high, C4h <= 17h then 1Fh                      (playback, DMA on)
     in C7h, out C7h <= (low 5 bits kept) | volume << 5                             (amplitude)
 
-and it then polls DMA channel 1's current address (port 02h) to mix behind the play position. So
-the machine has a minimal 8237 when the DAC is fitted: all four channels' registers, the flip-flop,
-masks, modes, status and page registers, with only channel 1 moving. Its current address and count
-follow what the DAC has actually played. The DAC's registers read back (the player relies on C7h
+and it then polls DMA channel 1's current address (port 02h) to mix behind the play position. Every
+machine has a minimal 8237: all four channels' registers, the flip-flop, masks, modes, status and
+page registers. With the DAC, channel 1's current address and count follow what it has actually
+played. The DAC's registers read back (the player relies on C7h
 doing so), playback runs while C4h says playback with DMA and channel 1 is unmasked, and every
 terminal count flags C4h bit 3 (cleared by reading C4h) and raises IRQ 7.
 

@@ -35,6 +35,7 @@ namespace fabgl {
 
 
 PIT8253::PIT8253()
+  : m_ticks(0)
 {
   FRC1Timer_init(PIT_FRC1_PRESCALER);
 }
@@ -100,27 +101,32 @@ void PIT8253::write(int reg, uint8_t value)
     int timerIndex = reg;
     auto & timer = m_timer[timerIndex];
     
-    bool writeLSB = false;
-
+    // ESPPC: with LSB only (RLMode 1) or MSB only (2) that byte is the count, the other one 0, and
+    // it loads at once; with both (3) it loads with the MSB. LSB only used to go to the holding
+    // register and never further: IBM's refresh setup of timer 1 (54h, then 18) left it at 65536.
+    bool load;
     switch (timer.RLMode) {
       case 1:
-        writeLSB = true;
+        timer.resetHolding = value;
+        load = true;
         break;
-      case 3:
-        writeLSB = timer.LSBToggle;
+      case 2:
+        timer.resetHolding = ((int)value) << 8;
+        load = true;
+        break;
+      default:
+        if (timer.LSBToggle)
+          timer.resetHolding = (timer.resetHolding & 0xFF00) | value;
+        else
+          timer.resetHolding = (timer.resetHolding & 0x00FF) | (((int)value) << 8);
+        load = !timer.LSBToggle;
         timer.LSBToggle = !timer.LSBToggle;
         break;
     }
 
-    if (writeLSB) {
-      // LSB
-      //printf("%lld, PIT8253: timer %d write LSB, %02X\n", esp_timer_get_time(), timerIndex, value);
-      timer.resetHolding = (timer.resetHolding & 0xFF00) | value;
-    } else {
-      // MSB
-      //printf("%lld, PIT8253: timer %d write MSB, %02X\n", esp_timer_get_time(), timerIndex, value);
-      timer.resetHolding = (timer.resetHolding & 0x00FF) | (((int)value) << 8);
-      timer.resetCount   = timer.resetHolding;
+    if (load) {
+      //printf("%lld, PIT8253: timer %d load %04X\n", esp_timer_get_time(), timerIndex, timer.resetHolding);
+      timer.resetCount = timer.resetHolding;
       if (timer.ctrlSet) {
         timer.count   = (uint16_t)(timer.resetCount - 1);
         timer.ctrlSet = false;
@@ -242,6 +248,8 @@ void IRAM_ATTR PIT8253::tick()
     m_acc += (uint64_t) (ticks - 65535) << BITS;
     ticks = 65535;
   }
+
+  m_ticks += ticks;
 
   for (int timerIndex = 0; timerIndex < 3; ++timerIndex) {
 

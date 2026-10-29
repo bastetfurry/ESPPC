@@ -87,6 +87,9 @@ public:
 
   TimerInfo const & timerInfo(int timerIndex) { return m_timer[timerIndex]; }
 
+  // ESPPC: PIT ticks counted since power on, wrapping, up to the last tick()
+  uint32_t ticks()             { return m_ticks; }
+
 
 private:
 
@@ -101,6 +104,7 @@ private:
   
   uint32_t          m_lastTickTime;
   uint64_t          m_acc;
+  uint32_t          m_ticks;
 
 };
 

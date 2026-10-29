@@ -169,6 +169,33 @@ bios_entry:
 
   push  ax
 
+  ; DRAM refresh, as the IBM BIOS sets it up: PIT timer 1 in mode 2 requests a cycle of DMA
+  ; channel 0 every 18 ticks (15 us), and the channel goes round all 64 KB with auto-init. Nothing
+  ; needs refreshing here, but diagnostics such as CheckIt watch channel 0's address move.
+
+  mov   al, 0x54    ; timer 1, LSB only, mode 2
+  out   0x43, al
+  mov   al, 18
+  out   0x41, al
+
+  out   0x0d, al    ; 8237 master clear: all channels masked
+  xor   al, al
+  out   0x00, al    ; channel 0 from address 0
+  out   0x00, al
+  dec   al
+  out   0x01, al    ; for 64 KB
+  out   0x01, al
+  mov   al, 0x58    ; channel 0: single mode, auto-init, read
+  out   0x0b, al
+  mov   al, 0x41    ; channels 1 to 3: single mode, verify
+  out   0x0b, al
+  inc   al
+  out   0x0b, al
+  inc   al
+  out   0x0b, al
+  xor   al, al
+  out   0x0a, al    ; unmask channel 0
+
   ; Ask the emulator which drive this machine is configured to boot from.
   ;
   ; DL holds it only on a cold boot. A warm boot reached by jumping to the reset vector - which
@@ -3027,6 +3054,8 @@ int14_init:
   shl  dx, 1
   mov  bx, dx
   mov  dx, [com1addr - bios_data + bx]
+  test dx, dx
+  jz   int14_no_port
 
   ; set baud rate divisor
   mov  bx, 0
@@ -3116,6 +3145,8 @@ int14_write_char:
   shl  dx, 1
   mov  bx, dx
   mov  dx, [com1addr-bios_data+bx]
+  test dx, dx
+  jz   int14_no_port
 
   mov  ch, al
 
@@ -3186,6 +3217,8 @@ int14_read_char:
   shl  dx, 1
   mov  bx, dx
   mov  dx, [com1addr-bios_data+bx]
+  test dx, dx
+  jz   int14_no_port
 
   add  dx, 5  ; dx = line status register
   mov  bh, [clk_dtimer-bios_data]
@@ -3247,6 +3280,8 @@ int14_get_port_status:
   shl  dx, 1
   mov  bx, dx
   mov  dx, [com1addr-bios_data+bx]
+  test dx, dx
+  jz   int14_no_port
 
   ; read line status and modem status registers
   add  dx, 5  ; dx = line status register
@@ -3254,6 +3289,17 @@ int14_get_port_status:
   mov  ah, al
   inc  dx  ; dx = modem status register
   in   al, dx
+
+  pop  ds
+  pop  dx
+  pop  cx
+  pop  bx
+  iret
+
+int14_no_port:
+  ; No serial port at this number (base address 0 in the BIOS data area): a time out, rather than
+  ; the port registers written at 0-7, which is the DMA controller.
+  mov  ah, 0x80
 
   pop  ds
   pop  dx

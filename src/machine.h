@@ -602,10 +602,10 @@ private:
   uint8_t                  m_dacAmplitude;      // C7h bits 7-5
   bool                     m_dacIrqFlag;        // terminal count reached, C4h bit 3 on read
 
-  // A minimal 8237 DMA controller, on machines with the Tandy DAC or the direct disk hardware. The
-  // registers of all four channels are kept so software can program and read them. Channel 1 moves
-  // with the DAC's playback (see TandyDAC), channels 2 and 3 for the floppy and hard disk
-  // controllers (dmaToMemory()).
+  // A minimal 8237 DMA controller. The registers of all four channels are kept so software can
+  // program and read them. Channel 0 counts the DRAM refresh (dmaRefresh()), channel 1 moves with
+  // the DAC's playback (see TandyDAC), channels 2 and 3 for the floppy and hard disk controllers
+  // (dmaToMemory()).
   struct DMAChannel {
     uint16_t baseAddr, baseCount;
     uint16_t curAddr, curCount;
@@ -615,6 +615,8 @@ private:
   };
   DMAChannel               m_dma[4];
   int dmaStep(int index, bool * tc);
+  void dmaRefresh();
+  uint32_t                 m_refreshTicks;      // PIT ticks channel 0 has been counted up to
   bool                     m_dmaFlipFlop;       // false = the next byte is the low one
   uint8_t                  m_dmaStatus;         // bits 3-0 terminal count reached, cleared on read
 

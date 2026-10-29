@@ -39,7 +39,8 @@ Pull requests are welcome of course.
 - **Sound:** PC speaker; the Tandy SN76496 at C0h (also as a TNDY style card on CGA or EGA); the
   Tandy SL/TL **DAC** for Sierra speech and effects; an **AdLib** (OPL2, DOSBox-X's DBOPL),
   synthesised on the second core.
-- **Chipset:** 8259 PIC, 8253 PIT, 8042 keyboard controller, an MC146818 RTC (set from NTP at
+- **Chipset:** 8259 PIC, 8253 PIT, 8237 DMA controller (with the DRAM refresh counting on channel 0),
+  8042 keyboard controller, an MC146818 RTC (set from NTP at
   power on), or instead the MM58174 clock SCO Xenix reads, or no clock at all; two 8250 serial
   ports, a PS/2 mouse.
 - **Disks:** two floppies and two hard disks as image files. Geometry is guessed from the image

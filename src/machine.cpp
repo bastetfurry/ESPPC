@@ -121,6 +121,7 @@ Machine::Machine() :
     m_dacDivider(0),
     m_dacAmplitude(0),
     m_dacIrqFlag(false),
+    m_refreshTicks(0),
     m_dmaFlipFlop(false),
     m_dmaStatus(0),
     m_tandyArrayIndex(0),
@@ -515,6 +516,7 @@ void Machine::reset()
   m_PIT8253.reset();
   m_PIT8253.setGate(0, true);
   //m_PIT8253.setGate(1, true); // @TODO: timer 1 used for DRAM refresh, required to run?
+  m_refreshTicks = m_PIT8253.ticks();   // timer 1's refresh requests reach DMA 0 through dmaRefresh()
 
   m_MC146818.reset();
 
@@ -992,9 +994,9 @@ void Machine::tandyDACBios(uint16_t callerAX)
 //   0Ah      single mask bit, 0Bh mode, 0Ch clear flip-flop, 0Dh master clear, 0Eh clear masks,
 //   0Fh      all mask bits
 //   87h/83h/81h/82h  page registers of channels 0/1/2/3
-// Only channel 1 ever moves: it is what the Tandy DAC plays from.
 void Machine::writeDMA(int port, uint8_t value)
 {
+  dmaRefresh();     // channel 0 up to now, before its registers or its mask change
   switch (port) {
     case 0x00 ... 0x07:
     {
@@ -1043,6 +1045,7 @@ void Machine::writeDMA(int port, uint8_t value)
 
 uint8_t Machine::readDMA(int port)
 {
+  dmaRefresh();
   switch (port) {
     case 0x00 ... 0x07:
     {
@@ -1068,6 +1071,46 @@ uint8_t Machine::readDMA(int port)
     case 0x81: return m_dma[2].page;
     case 0x82: return m_dma[3].page;
     default:   return 0xff;
+  }
+}
+
+
+// The DRAM refresh of the PC and XT: PIT timer 1 (the BIOS sets mode 2, count 18, 15 us) requests
+// a cycle of DMA channel 0 at every period, which moves its address and count like any transfer and
+// wraps them with auto-init. Nothing is read or written, but software watches the registers: CheckIt
+// fails the DMA controller when channel 0 stands still. Counted here, from the PIT's ticks, when
+// software looks or changes something, rather than at every request. Timer 1's own counter is not
+// run (its gate stays low): at 18 ticks it would have to be ticked far more often than the PIT is.
+void Machine::dmaRefresh()
+{
+  m_PIT8253.tick();
+  uint32_t now    = m_PIT8253.ticks();
+  auto const & t1 = m_PIT8253.timerInfo(1);
+  auto & ch       = m_dma[0];
+  if (ch.masked || (t1.mode != 2 && t1.mode != 3)) {
+    m_refreshTicks = now;
+    return;
+  }
+  uint32_t period = t1.resetCount ? t1.resetCount : 65536;
+  uint32_t n      = (now - m_refreshTicks) / period;
+  m_refreshTicks += n * period;
+  int dir = (ch.mode & 0x20) ? -1 : 1;
+  if (n <= ch.curCount) {
+    ch.curAddr  += dir * (int) n;
+    ch.curCount -= n;
+    return;
+  }
+  // terminal count, once or more
+  n -= ch.curCount + 1u;
+  m_dmaStatus |= 1;
+  if (ch.mode & 0x10) {
+    n %= ch.baseCount + 1u;
+    ch.curAddr  = ch.baseAddr + dir * (int) n;
+    ch.curCount = ch.baseCount - n;
+  } else {
+    ch.curAddr  += dir * (int) (ch.curCount + 1u);
+    ch.curCount  = 0xffff;
+    ch.masked    = true;
   }
 }
 
@@ -2338,15 +2381,13 @@ void Machine::writePortHW(void * context, int address, uint8_t value)
         m->m_sn76496.write(value);
       break;
 
-    // 8237 DMA controller and the page registers, only with the Tandy DAC or the direct disk
-    // hardware (see Machine::writeDMA)
+    // 8237 DMA controller and the page registers (see Machine::writeDMA)
     case 0x00 ... 0x0f:
     case 0x81:
     case 0x82:
     case 0x83:
     case 0x87:
-      if (m->tandyDAC() || m->m_hwDisk)
-        m->writeDMA(address, value);
+      m->writeDMA(address, value);
       break;
 
     // floppy disk controller, with the direct disk hardware (see fdc.h)
@@ -2452,7 +2493,7 @@ uint8_t Machine::readPortHW(void * context, int address)
     case 0x388:
       return m->m_adlibEnabled ? m->m_adlib->readStatus() : 0xff;
 
-    // the Tandy DAC and the 8237 it needs (see writePortHW())
+    // the Tandy DAC, and the 8237 (see writePortHW())
     case 0xc4 ... 0xc7:
       return m->tandyDAC() ? m->readTandyDACPort(address) : 0xff;
     case 0x00 ... 0x0f:
@@ -2460,7 +2501,7 @@ uint8_t Machine::readPortHW(void * context, int address)
     case 0x82:
     case 0x83:
     case 0x87:
-      return (m->tandyDAC() || m->m_hwDisk) ? m->readDMA(address) : 0xff;
+      return m->readDMA(address);
 
     // floppy disk controller, with the direct disk hardware (see fdc.h)
     case 0x3f2:

@@ -6,6 +6,7 @@
 //   fd0= fd1= hd0= hd1=   disk images        chs0= chs1=  C,H,S of a hard disk
 //   boot=fd0|fd1|hd0|hd1  ram=KB             video=cga|ega|tandy   egarom=FILE (default data/fs/ega.bin)
 //   tandysound tandydac adlib composite hwdisk   clock=at|mm58174|none
+//   com=1|2               an 8250 at COM1 or COM2 with nothing attached: what it sends is dropped
 //
 // The script, at emulated times in seconds (decimals allowed):
 //   type=T:TEXT           types TEXT on the keyboard from T on (US layout, \n is Enter)
@@ -414,6 +415,7 @@ static int run(int argc, char * argv[])
   std::string video = "cga", egaRom;
   bool tandySound = false, tandyDAC = false, adlib = false, composite = false, hwDisk = false, write = false;
   std::string clock = "at";
+  int  com = 0;
   int64_t endUs = 30000000;
 
   for (int i = 0; i < argc; ++i) {
@@ -438,6 +440,7 @@ static int run(int argc, char * argv[])
     else if (tag == "composite")   composite = val != "0";
     else if (tag == "hwdisk")      hwDisk = val != "0";
     else if (tag == "clock")       clock = val;
+    else if (tag == "com")         com = atoi(val.c_str());
     else if (tag == "mips")        s_nsPerInstruction = 1000.0 / atof(val.c_str());
     else if (tag == "write")       write = val != "0";
     else if (tag == "time")        endUs = secondsToUs(val.c_str());
@@ -502,6 +505,8 @@ static int run(int argc, char * argv[])
     s_machine->setClock(Machine::Clock::MM58174);
   else if (clock == "none")
     s_machine->setClock(Machine::Clock::None);
+  if (com)
+    s_machine->bridgeCOM(com, nullptr, [](void *, uint8_t) { });
 
   for (int i = 0; i < 4; ++i) {
     if (disk[i].empty())
