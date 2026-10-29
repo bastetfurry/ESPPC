@@ -176,6 +176,7 @@ private:
   static uint8_t *          s_memory;
   static int                s_videoMemStart;
   static bool               s_halted;
+  static bool               s_trap;   // ESPPC: TF was set when the last instruction began
 
 };
 

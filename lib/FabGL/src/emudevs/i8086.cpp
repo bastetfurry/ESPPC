@@ -138,6 +138,7 @@ uint8_t                   i8086::s_pendingIRQIndex;
 bool                      i8086::s_intr;
 i8086::Acknowledge        i8086::s_acknowledge;
 bool                      i8086::s_halted;
+bool                      i8086::s_trap;
 
 
 
@@ -536,6 +537,7 @@ void i8086::reset()
   rep_override_en = 0;
 
   s_halted = false;
+  s_trap   = false;
   s_intr   = false;   // ESPPC: the INTR line comes back from the PIC with the next batch
 
   regs16[REG_CS] = 0xffff;
@@ -724,7 +726,11 @@ void IRAM_ATTR i8086::step()
   // They are hard coded inside below loop, repeating it using "break" instead of "return"
 
   // Application has set trap flag, so fire INT 1
-  if (FLAG_TF && !seg_override_en && !rep_override_en) {
+  // ESPPC: after an instruction that began with TF set, as the 8086 does: the one after the IRET or
+  // POPF that sets TF runs before the first trap, and the one that clears TF still traps. Taken
+  // before it, a handler that IRETs back with TF set got the trap again at once and never returned
+  // to the code it steps (CheckIt's "CPU Interrupt Bug" test hung there).
+  if (s_trap && !seg_override_en && !rep_override_en) {
     pc_interrupt(1);
   }
   // Check for interrupts triggered by system interfaces
@@ -740,6 +746,8 @@ void IRAM_ATTR i8086::step()
         pc_interrupt(vector);
     }
   }
+
+  s_trap = FLAG_TF;
 
   // Instructions handling
 
