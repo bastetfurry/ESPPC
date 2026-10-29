@@ -1169,7 +1169,10 @@ void BIOS::diskHandler_floppy()
 
   //printf("INT 13h, FDD (%d), service %02X\n", drive, service);
 
-  if (m_machine->disk(drive) == nullptr) {
+  // Reset and status are the controller's, which is there without a drive: CheckIt's hard disk
+  // test resets drive 0 first and called the controller broken when that timed out on a machine
+  // without floppies.
+  if (m_machine->disk(drive) == nullptr && service > 0x01) {
     // invalid drive
     diskHandler_floppyExit(0x80, true);
     return;
@@ -1183,7 +1186,10 @@ void BIOS::diskHandler_floppy()
 
     // Reset Diskette System
     case 0x00:
-      diskHandler_floppyExit(m_mediaType[drive] == mediaUnknown ? 0x06 : 0x00, true);
+      if (m_machine->disk(drive) == nullptr)
+        diskHandler_floppyExit(0x00, true);
+      else
+        diskHandler_floppyExit(m_mediaType[drive] == mediaUnknown ? 0x06 : 0x00, true);
       return;
 
     // Read Diskette Status
