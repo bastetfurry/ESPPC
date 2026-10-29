@@ -548,22 +548,22 @@ void i8086::reset()
 // tries to make more compact opcode "switch"
 static uint8_t optcodes[] = {
 // 0    1   2   3   4   5   6   7   8   9   a   b   c   d   e   f
-   0,   0,  0,  0,  0,  0, 13, 12,  0,  0,  0,  0,  0,  0, 13,  0, // 00 - 0f
-   0,   0,  0,  0,  0,  0, 13, 12,  0,  0,  0,  0,  0,  0, 13, 12, // 10 - 1f
-   0,   0,  0,  0,  0,  0,  1,  0,  0,  0,  0,  0,  0,  0,  1,  0, // 20 - 2f
-   0,   0,  0,  0,  0,  0,  1,  0,  0,  0,  0,  0,  0,  0,  1,  0, // 30 - 3f
-  19,  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, // 40 - 4f
-   9,   9,  9,  9,  9,  9,  9,  9,  8,  8,  8,  8,  8,  8,  8,  8, // 50 - 5f
-   0,   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, // 60 - 6f
-   2,   2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2, // 70 - 7f
-  22,  22,  0, 22,  0,  0,  0,  0, 21, 21, 21, 21,  0,  0, 18,  0, // 80 - 8f
-   0,   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, // 90 - 9f
-   0,   0,  0,  0, 26, 26,  0,  0,  0,  0, 26, 26, 26, 26,  0,  0, // a0 - af
-   10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, // b0 - bf
-   0,   0,  0,  7,  0,  0, 25, 25,  0,  0,  0, 17,  0, 15,  0, 16, // c0 - cf
-  23,  23,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, // d0 - df
-   0,   0,  0,  5, 20, 20, 20, 20,  6,  0,  0,  3, 20, 20, 20, 20, // e0 - ef
-   0,   0, 14, 14,  0,  0,  0,  0,  4,  4,  4,  4,  4,  4, 24,  0, // f0 - ff
+  27, 27, 27, 27, 28, 28, 13, 12, 27, 27, 27, 27, 28, 28, 13,  0, // 00 - 0f
+  27, 27, 27, 27, 28, 28, 13, 12, 27, 27, 27, 27, 28, 28, 13, 12, // 10 - 1f
+  27, 27, 27, 27, 28, 28,  1,  0, 27, 27, 27, 27, 28, 28,  1,  0, // 20 - 2f
+  27, 27, 27, 27, 28, 28,  1,  0, 27, 27, 27, 27, 28, 28,  1,  0, // 30 - 3f
+  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, // 40 - 4f
+   9,  9,  9,  9,  9,  9,  9,  9,  8,  8,  8,  8,  8,  8,  8,  8, // 50 - 5f
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, // 60 - 6f
+   2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2, // 70 - 7f
+  22, 22, 22, 22, 34, 34,  0,  0, 21, 21, 21, 21,  0,  0, 18, 35, // 80 - 8f
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 32,  0,  0,  0,  0,  0, // 90 - 9f
+  31, 31, 31, 31, 26, 26,  0,  0, 28, 28, 26, 26, 26, 26,  0,  0, // a0 - af
+  10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, // b0 - bf
+   0,  0, 36,  7,  0,  0, 25, 25,  0,  0, 36, 17,  0, 15,  0, 16, // c0 - cf
+  23, 23, 23, 23,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, // d0 - df
+   0,  0,  0,  5, 20, 20, 20, 20,  6, 33,  0,  3, 20, 20, 20, 20, // e0 - ef
+   0,  0, 14, 14,  0,  0, 29, 29,  4,  4,  4,  4,  4,  4, 24, 30, // f0 - ff
 };
 
 
@@ -1048,6 +1048,10 @@ void IRAM_ATTR i8086::step()
 
       // ROL|ROR|RCL|RCR|SHL|SHR|SAR r/m8, 1   (0xd0)
       // ROL|ROR|RCL|RCR|SHL|SHR|SAR r/m16, 1  (0xd1)
+      // ROL|ROR|RCL|RCR|SHL|SHR|SAR r/m8, CL  (0xd2)
+      // ROL|ROR|RCL|RCR|SHL|SHR|SAR r/m16, CL (0xd3)
+      // By CL the 8088 repeats the single step CL times, all of CL (the 80186 takes it modulo 32,
+      // as stepEx does), and the flags are those of the last step; with CL = 0 nothing changes.
       case 23:
       {
         int sh = (opcode_stream[1] >> 3) & 7;
@@ -1057,9 +1061,17 @@ void IRAM_ATTR i8086::step()
         }
         bool     w   = *opcode_stream & 1;
         FastRM   rm  = decodeRM(opcode_stream + 1, w);
+        int      n   = (*opcode_stream & 2) ? regs8[REG_CL] : 1;
+        if (n == 0) {
+          reg_ip += 1 + rm.len;
+          return;
+        }
         uint32_t v   = w ? (rm.reg ? regs16[rm.idx] : RMEM16(rm.addr))
                          : (rm.reg ? regs8[rm.idx]  : RMEM8(rm.addr));
-        uint32_t res = fastShift1(sh, v, w);
+        uint32_t res = v;
+        do
+          res = fastShift1(sh, res, w);
+        while (--n);
         if (w) {
           if (rm.reg) regs16[rm.idx] = res; else WMEM16(rm.addr, res);
         } else {
@@ -1204,6 +1216,203 @@ void IRAM_ATTR i8086::step()
             regs8[REG_AH] = s_readPort(s_context, port + 1);
         }
         reg_ip += (op & 8) ? 1 : 2;
+        return;
+      }
+
+      // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP r/m, reg and reg, r/m, 8 and 16 bits
+      // opcodes 0x00 ... 0x3b, the first four of each eight
+      case 27:
+      {
+        uint8_t op  = *opcode_stream;
+        bool    w   = op & 1;
+        int     alu = op >> 3;
+        FastRM  rm  = decodeRM(opcode_stream + 1, w);
+        uint8_t r   = (opcode_stream[1] >> 3) & 7;
+        uint8_t ri  = w ? r : ((2 * r + r / 4) & 7);
+        uint32_t m  = w ? (rm.reg ? regs16[rm.idx] : RMEM16(rm.addr))
+                        : (rm.reg ? regs8[rm.idx]  : RMEM8(rm.addr));
+        uint32_t g  = w ? regs16[ri] : regs8[ri];
+        bool    toR = op & 2;               // to the register, else to r/m
+        uint32_t res = fastALU(alu, toR ? g : m, toR ? m : g, w);
+        if (alu != 7) {
+          if (toR) {
+            if (w) regs16[ri] = res; else regs8[ri] = res;
+          } else if (w) {
+            if (rm.reg) regs16[rm.idx] = res; else WMEM16(rm.addr, res);
+          } else {
+            if (rm.reg) regs8[rm.idx] = res;  else WMEM8(rm.addr, res);
+          }
+        }
+        reg_ip += 1 + rm.len;
+        return;
+      }
+
+      // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP AL, imm8 and AX, imm16 (0x04 ... 0x3d, the fifth and sixth
+      // of each eight); TEST AL, imm8 (0xa8) and AX, imm16 (0xa9), an AND that writes nothing
+      case 28:
+      {
+        uint8_t  op   = *opcode_stream;
+        bool     w    = op & 1;
+        bool     test = op >= 0xa8;
+        int      alu  = test ? 4 : op >> 3;
+        uint32_t b    = w ? (uint32_t)(opcode_stream[1] | (opcode_stream[2] << 8)) : opcode_stream[1];
+        uint32_t res  = fastALU(alu, w ? regs16[REG_AX] : regs8[REG_AL], b, w);
+        if (alu != 7 && !test) {
+          if (w) regs16[REG_AX] = res; else regs8[REG_AL] = res;
+        }
+        reg_ip += w ? 3 : 2;
+        return;
+      }
+
+      // TEST r/m8, reg8 (0x84), TEST r/m16, reg16 (0x85)
+      case 34:
+      {
+        bool    w  = *opcode_stream & 1;
+        FastRM  rm = decodeRM(opcode_stream + 1, w);
+        uint8_t r  = (opcode_stream[1] >> 3) & 7;
+        uint32_t a = w ? (rm.reg ? regs16[rm.idx] : RMEM16(rm.addr))
+                       : (rm.reg ? regs8[rm.idx]  : RMEM8(rm.addr));
+        fastALU(4, a, w ? regs16[r] : regs8[(2 * r + r / 4) & 7], w);
+        reg_ip += 1 + rm.len;
+        return;
+      }
+
+      // TEST r/m, imm (0xf6 /0, 0xf7 /0), NOT (/2), NEG (/3); MUL, IMUL, DIV, IDIV and the
+      // undocumented /1 go to stepEx
+      case 29:
+      {
+        int sub = (opcode_stream[1] >> 3) & 7;
+        if (sub == 1 || sub > 3) {
+          stepEx(opcode_stream);
+          return;
+        }
+        bool     w  = *opcode_stream & 1;
+        FastRM   rm = decodeRM(opcode_stream + 1, w);
+        uint32_t v  = w ? (rm.reg ? regs16[rm.idx] : RMEM16(rm.addr))
+                        : (rm.reg ? regs8[rm.idx]  : RMEM8(rm.addr));
+        if (sub == 2) {                     // NOT, no flags
+          v = ~v & (w ? 0xffff : 0xff);
+        } else {                            // TEST v, imm, or NEG with the flags of 0 - v
+          uint8_t const * imm = opcode_stream + 1 + rm.len;
+          uint32_t b = w ? (uint32_t)(imm[0] | (imm[1] << 8)) : imm[0];
+          uint32_t r = fastALU(sub ? 5 : 4, sub ? 0 : v, sub ? v : b, w);
+          if (sub == 0) {
+            reg_ip += 1 + rm.len + (w ? 2 : 1);
+            return;
+          }
+          v = r;
+        }
+        uint32_t res = v;
+        if (w) {
+          if (rm.reg) regs16[rm.idx] = res; else WMEM16(rm.addr, res);
+        } else {
+          if (rm.reg) regs8[rm.idx] = res;  else WMEM8(rm.addr, res);
+        }
+        reg_ip += 1 + rm.len;
+        return;
+      }
+
+      // INC r/m16 (0xff /0), DEC r/m16 (/1), CALL near r/m16 (/2), JMP near r/m16 (/4), PUSH r/m16
+      // (/6); the far forms and the undocumented /7 go to stepEx
+      case 30:
+      {
+        int sub = (opcode_stream[1] >> 3) & 7;
+        if (sub == 3 || sub == 5 || sub == 7) {
+          stepEx(opcode_stream);
+          return;
+        }
+        FastRM rm = decodeRM(opcode_stream + 1, true);
+        if (sub < 2) {
+          uint16_t v = rm.reg ? regs16[rm.idx] : RMEM16(rm.addr);
+          uint16_t res;
+          if (sub) {
+            res     = v - 1;
+            FLAG_OF = (v == 0x8000);
+            FLAG_AF = ((v & 0xf) == 0);
+          } else {
+            res     = v + 1;
+            FLAG_OF = (v == 0x7fff);
+            FLAG_AF = ((v & 0xf) == 0xf);
+          }
+          if (rm.reg) regs16[rm.idx] = res; else WMEM16(rm.addr, res);
+          FLAG_SF = res >> 15;
+          FLAG_ZF = !res;
+          FLAG_PF = parity[(uint8_t) res];
+          reg_ip += 1 + rm.len;
+          return;
+        }
+        if (sub == 6) {                     // PUSH: of SP itself the value after the decrement
+          regs16[REG_SP] -= 2;
+          MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = rm.reg ? regs16[rm.idx] : RMEM16(rm.addr);
+          reg_ip += 1 + rm.len;
+          return;
+        }
+        uint16_t to = rm.reg ? regs16[rm.idx] : RMEM16(rm.addr);
+        if (sub == 2) {                     // CALL
+          regs16[REG_SP] -= 2;
+          MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = reg_ip + 1 + rm.len;
+        }
+        reg_ip = to;
+        return;
+      }
+
+      // POP r/m16 (0x8f /0): the address from SP before it moves
+      case 35:
+      {
+        if ((opcode_stream[1] >> 3) & 7) {
+          stepEx(opcode_stream);
+          return;
+        }
+        FastRM rm = decodeRM(opcode_stream + 1, true);
+        regs16[REG_SP] += 2;
+        uint16_t v = MEM16(16 * regs16[REG_SS] + (uint16_t)(regs16[REG_SP] - 2));
+        if (rm.reg) regs16[rm.idx] = v; else WMEM16(rm.addr, v);
+        reg_ip += 1 + rm.len;
+        return;
+      }
+
+      // MOV AL, [moffs] (0xa0), MOV AX, [moffs] (0xa1), MOV [moffs], AL (0xa2), MOV [moffs], AX (0xa3)
+      case 31:
+      {
+        uint8_t op   = *opcode_stream;
+        int32_t addr = 16 * regs16[seg_override_en ? seg_override : REG_DS] + (uint16_t)(opcode_stream[1] | (opcode_stream[2] << 8));
+        if (op & 2) {
+          if (op & 1) WMEM16(addr, regs16[REG_AX]); else WMEM8(addr, regs8[REG_AL]);
+        } else {
+          if (op & 1) regs16[REG_AX] = RMEM16(addr); else regs8[REG_AL] = RMEM8(addr);
+        }
+        reg_ip += 3;
+        return;
+      }
+
+      // CALL far ptr16:16 (0x9a)
+      case 32:
+      {
+        regs16[REG_SP] -= 2;
+        MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = regs16[REG_CS];
+        regs16[REG_SP] -= 2;
+        MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = reg_ip + 5;
+        reg_ip         = opcode_stream[1] | (opcode_stream[2] << 8);
+        regs16[REG_CS] = opcode_stream[3] | (opcode_stream[4] << 8);
+        return;
+      }
+
+      // JMP near rel16 (0xe9)
+      case 33:
+        reg_ip += 3 + (opcode_stream[1] | (opcode_stream[2] << 8));
+        return;
+
+      // RET imm16 (0xc2), RETF imm16 (0xca)
+      case 36:
+      {
+        uint16_t   n     = opcode_stream[1] | (opcode_stream[2] << 8);
+        uint16_t * stack = &MEM16(16 * regs16[REG_SS] + regs16[REG_SP]);
+        reg_ip = stack[0];
+        if (*opcode_stream & 8) {
+          regs16[REG_CS]  = stack[1];
+          regs16[REG_SP] += 4 + n;
+        } else
+          regs16[REG_SP] += 2 + n;
         return;
       }
 
@@ -1433,133 +1642,9 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
         }
       };
       break;
-    case 7: // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP AL/AX, immed
-      rm_addr = regs_offset;
-      i_data2 = i_data0;
-      i_mod = 3;
-      i_reg = extra;
-      reg_ip--;
-      // not break!
-    case 8: // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP reg, immed
-      op_to_addr = rm_addr;
-      regs16[REG_SCRATCH] = (i_d |= !i_w) ? (int8_t) i_data2 : i_data2;
-      op_from_addr = regs_offset + 2 * REG_SCRATCH;
-      reg_ip += !i_d + 1;
-      set_opcode(0x08 * (extra = i_reg));
-      // not break!
-    case 9: // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP|MOV reg, r/m
-      switch (extra) {
-        case 0: // ADD
-          if (i_w) {
-            op_dest   = RMEM16(op_to_addr);
-            op_source = RMEM16(op_from_addr);
-            op_result = (uint16_t)(op_dest + op_source);
-            WMEM16(op_to_addr, op_result);
-          } else {
-            op_dest   = RMEM8(op_to_addr);
-            op_source = RMEM8(op_from_addr);
-            op_result = (uint8_t)(op_dest + op_source);
-            WMEM8(op_to_addr, op_result);
-          }
-          FLAG_CF = op_result < op_dest;
-          break;
-        case 1: // OR
-          if (i_w) {
-            op_dest   = RMEM16(op_to_addr);
-            op_source = RMEM16(op_from_addr);
-            op_result = op_dest | op_source;
-            WMEM16(op_to_addr, op_result);
-          } else {
-            op_dest   = RMEM8(op_to_addr);
-            op_source = RMEM8(op_from_addr);
-            op_result = op_dest | op_source;
-            WMEM8(op_to_addr, op_result);
-          }
-          break;
-        case 2: // ADC
-          if (i_w) {
-            op_dest   = RMEM16(op_to_addr);
-            op_source = RMEM16(op_from_addr);
-            op_result = WMEM16(op_to_addr, op_dest + FLAG_CF + op_source);
-          } else {
-            op_dest   = RMEM8(op_to_addr);
-            op_source = RMEM8(op_from_addr);
-            op_result = WMEM8(op_to_addr, op_dest + FLAG_CF + op_source);
-          }
-          FLAG_CF = (FLAG_CF && (op_result == op_dest)) || (op_result < (int) op_dest);
-          set_AF_OF_arith(op_result);
-          break;
-        case 3: // SBB
-          if (i_w) {
-            op_dest   = RMEM16(op_to_addr);
-            op_source = RMEM16(op_from_addr);
-            op_result = WMEM16(op_to_addr, op_dest - (FLAG_CF + op_source));
-          } else {
-            op_dest   = RMEM8(op_to_addr);
-            op_source = RMEM8(op_from_addr);
-            op_result = WMEM8(op_to_addr, op_dest - (FLAG_CF + op_source));
-          }
-          FLAG_CF = (FLAG_CF && (op_result == op_dest)) || (-op_result < -(int) op_dest);
-          set_AF_OF_arith(op_result);
-          break;
-        case 4: // AND
-          if (i_w) {
-            op_dest   = RMEM16(op_to_addr);
-            op_source = RMEM16(op_from_addr);
-            op_result = op_dest & op_source;
-            WMEM16(op_to_addr, op_result);
-          } else {
-            op_dest   = RMEM8(op_to_addr);
-            op_source = RMEM8(op_from_addr);
-            op_result = op_dest & op_source;
-            WMEM8(op_to_addr, op_result);
-          }
-          break;
-        case 5: // SUB
-          if (i_w) {
-            op_dest   = RMEM16(op_to_addr);
-            op_source = RMEM16(op_from_addr);
-            op_result = WMEM16(op_to_addr, op_dest - op_source);
-          } else {
-            op_dest   = RMEM8(op_to_addr);
-            op_source = RMEM8(op_from_addr);
-            op_result = WMEM8(op_to_addr, op_dest - op_source);
-          }
-          FLAG_CF = op_result > op_dest;
-          break;
-        case 6: // XOR
-          if (i_w) {
-            op_dest   = RMEM16(op_to_addr);
-            op_source = RMEM16(op_from_addr);
-            op_result = op_dest ^ op_source;
-            WMEM16(op_to_addr, op_result);
-          } else {
-            op_dest   = RMEM8(op_to_addr);
-            op_source = RMEM8(op_from_addr);
-            op_result = op_dest ^ op_source;
-            WMEM8(op_to_addr, op_result);
-          }
-          break;
-        case 7: // CMP
-          if (i_w) {
-            op_dest   = RMEM16(op_to_addr);
-            op_source = RMEM16(op_from_addr);
-          } else {
-            op_dest   = RMEM8(op_to_addr);
-            op_source = RMEM8(op_from_addr);
-          }
-          op_result = op_dest - op_source;
-          FLAG_CF = op_result > op_dest;
-          break;
-        case 8: // MOV
-          if (i_w) {
-            WMEM16(op_to_addr, RMEM16(op_from_addr));
-          } else {
-            WMEM8(op_to_addr, RMEM8(op_from_addr));
-          }
-          break;
-      };
-      break;
+    // ESPPC: ADD|OR|ADC|SBB|AND|SUB|XOR|CMP in all their forms (cases 7 to 9) and MOV AL/AX with
+    // [loc] (case 11) were here. step() runs all of them on its fast paths now, so they never get
+    // here, and the IRAM they took went to those paths.
     case 10: // MOV sreg, r/m | POP r/m | LEA reg, r/m
       if (!i_w) { // i_w == 0
         // MOV
@@ -1586,23 +1671,6 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
         WMEM16(rm_addr, MEM16(16 * regs16[REG_SS] + (uint16_t)(-2 + regs16[REG_SP])));
       }
       break;
-    case 11: // MOV AL/AX, [loc]
-      rm_addr = 16 * regs16[seg_override_en ? seg_override : REG_DS] + i_data0;
-      if (i_d) {
-        if (i_w) {
-          WMEM16(rm_addr, regs16[REG_AX]);
-        } else {
-          WMEM8(rm_addr, regs8[REG_AL]);
-        }
-      } else {
-        if (i_w) {
-          regs16[REG_AX] = RMEM16(rm_addr);
-        } else {
-          regs8[REG_AL] = RMEM8(rm_addr);
-        }
-      }
-      reg_ip += 3;
-      return; // no calc IP, no flags
     case 12: // ROL|ROR|RCL|RCR|SHL|SHR|???|SAR reg/MEM, 1/CL/imm (80186)
     {
       uint16_t scratch2_uint = (1 & (i_w ? (int16_t)RMEM16(rm_addr) : RMEM8(rm_addr)) >> (8 * (i_w + 1) - 1));
