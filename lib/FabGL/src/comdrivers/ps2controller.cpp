@@ -35,6 +35,9 @@
   #include "soc/rtc_io_periph.h"
 #endif
 #include "esp_log.h"
+#if ESP_IDF_VERSION_MAJOR >= 5
+  #include "esp_private/rtc_ctrl.h"
+#endif
 
 #include "ps2controller.h"
 #include "fabutils.h"
@@ -1172,7 +1175,17 @@ void PS2Controller::begin(gpio_num_t port0_clkGPIO, gpio_num_t port0_datGPIO, gp
     // install RTC interrupt handler (on ULP Wake() instruction)
     // note about ESP_INTR_FLAG_LEVEL2: this is necessary in order to work reliably with interrupt intensive VGATextController, when running on the same core
     // On some boards only core "1" can -read- RTC slow memory and receive interrupts, hence we have to force core 1.
+    // ESPPC: with IDF 5 through the IDF's own RTC interrupt dispatcher. A handler of our own on the
+    // same source raced the IDF's, which the brownout detector installs at boot on the other core:
+    // that one clears every RTC interrupt flag after its handlers, the ULP's too, and when it came
+    // first this one found the flag gone and never collected the byte. The ULP then waits for it
+    // for ever and the keyboard is dead until a reset; bytes in quick succession (Del and Left
+    // together, in Commander Keen) made it likely.
+    #if ESP_IDF_VERSION_MAJOR >= 5
+    rtc_isr_register(ULPWakeISR, nullptr, RTC_CNTL_SAR_INT_ST_M, RTC_INTR_FLAG_IRAM);
+    #else
     esp_intr_alloc_pinnedToCore(ETS_RTC_CORE_INTR_SOURCE, ESP_INTR_FLAG_LEVEL2, ULPWakeISR, nullptr, &s_ULPWakeISRHandle, 1);
+    #endif
     SET_PERI_REG_MASK(RTC_CNTL_INT_ENA_REG, RTC_CNTL_ULP_CP_INT_ENA);
 
     s_initDone = true;
@@ -1365,8 +1378,10 @@ void IRAM_ATTR PS2Controller::ULPWakeISR(void * arg)
 
   }
 
-  // clear interrupt
+  // clear interrupt (with IDF 5 the dispatcher does, after every handler, see begin())
+  #if ESP_IDF_VERSION_MAJOR < 5
   WRITE_PERI_REG(RTC_CNTL_INT_CLR_REG, rtc_intr);
+  #endif
 }
 
 

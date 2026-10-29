@@ -39,6 +39,7 @@ Record every change here as it is made, so a future upstream merge knows what to
 | `src/dispdrivers/vgabasecontroller.cpp`, `src/dispdrivers/vgadirectcontroller.cpp` | `getDMABuffer()` and `getScanlineBuffer()` cast away `const` | IDF 5's `lldesc_t::buf` is `const volatile`. |
 | `src/comdrivers/serialport.cpp` | `soc/uart_reg.h` before the ROM's `uart.h` | IDF 5's ROM header uses the registers without including them. |
 | `src/emudevs/MC146818.cpp` | With IDF >= 5: no `esp_timer_init()` | IDF 5 starts the timer at boot and logs an error for each further call. |
+| `src/comdrivers/ps2controller.cpp` | With IDF >= 5 the ULP's interrupt handler goes through `rtc_isr_register()`, and the IDF's dispatcher clears the flags | A handler of its own on the RTC interrupt raced the IDF's (installed by the brownout detector on the other core), which clears every RTC flag after its handlers. When that one came first, the byte was never collected, the ULP waited for ever, and the keyboard was dead until a reset, even after replugging. |
 | `src/fabui_stub.cpp` (new) | `uiApp::postEvent()` returning false | The keyboard and mouse drivers reference it; ESPPC has no FabGL GUI, and `fabui.cpp` does not build with IDF 5. |
 
 ## Checking against upstream
