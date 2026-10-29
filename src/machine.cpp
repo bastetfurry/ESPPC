@@ -258,6 +258,36 @@ void Machine::init()
 }
 
 
+// Opens m_diskFilename[drive] as m_disk[drive], or leaves it null.
+void Machine::openDiskFile(int drive)
+{
+  char const * filename = m_diskFilename[drive];
+  if (filename[0] == '/') {
+    // Absolute path, used as-is rather than relative to the base directory. Images in the
+    // SPIFFS partition are opened read-only on purpose: SPIFFS is log structured, so random
+    // writes into a large file are slow and wear the flash. A rescue disk is read anyway.
+    bool inFlash = strncmp(filename, SPIFFS_MOUNT_PATH "/", sizeof(SPIFFS_MOUNT_PATH "/") - 1) == 0;
+    m_disk[drive] = fopen(filename, inFlash ? "rb" : "r+b");
+  } else
+    m_disk[drive] = FileBrowser(m_baseDir).openFile(filename, "r+b");
+}
+
+
+// The same image opened again, after an I/O error. FatFs keeps an error on the open file: after one
+// failed read of the SD card every later access to that file fails at once, without trying, until it
+// is closed. So one hiccup of the card lost a hard disk for good while the other, a different file,
+// went on working. Geometry and media state stay as they are: it is still the same disk.
+bool Machine::reopenDisk(int drive)
+{
+  if (!m_diskFilename[drive])
+    return false;
+  if (m_disk[drive])
+    fclose(m_disk[drive]);
+  openDiskFile(drive);
+  return m_disk[drive] != nullptr;
+}
+
+
 void Machine::setDriveImage(int drive, char const * filename, int cylinders, int heads, int sectors)
 {
   if (m_disk[drive]) {
@@ -281,14 +311,7 @@ void Machine::setDriveImage(int drive, char const * filename, int cylinders, int
 
   if (filename) {
     m_diskFilename[drive] = strdup(filename);
-    if (filename[0] == '/') {
-      // Absolute path, used as-is rather than relative to the base directory. Images in the
-      // SPIFFS partition are opened read-only on purpose: SPIFFS is log structured, so random
-      // writes into a large file are slow and wear the flash. A rescue disk is read anyway.
-      bool inFlash = strncmp(filename, SPIFFS_MOUNT_PATH "/", sizeof(SPIFFS_MOUNT_PATH "/") - 1) == 0;
-      m_disk[drive] = fopen(filename, inFlash ? "rb" : "r+b");
-    } else
-      m_disk[drive] = FileBrowser(m_baseDir).openFile(filename, "r+b");
+    openDiskFile(drive);
     if (m_disk[drive]) {
 
       // get image file size

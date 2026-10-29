@@ -25,6 +25,7 @@
 
 
 
+#include <errno.h>
 #include "bios.h"
 #include "machine.h"
 #include "emudevs/i8086.h"
@@ -1421,6 +1422,25 @@ bool BIOS::diskHandler_calcAbsAddr(int drive, uint32_t * pos, uint32_t * dest, u
 // into it is dropped and a write from it stores 0xFF. Straight to m_memory, a transfer there went
 // past the video adapter, overwrote the ROMs, or past 1MB ran off the end of guest RAM.
 size_t BIOS::diskHandler_transfer(int drive, bool read, uint32_t pos, uint32_t dest, uint32_t count)
+{
+  size_t done = diskHandler_transferOnce(drive, read, pos, dest, count);
+  FILE * file = m_machine->disk(drive);
+  if (file && ferror(file)) {
+    // An I/O error, not the end of the image: once more with the image opened again, see
+    // Machine::reopenDisk()
+    printf("disk %d: %s of %u bytes at %u failed (errno %d), opening the image again\n",
+           drive, read ? "read" : "write", (unsigned) count, (unsigned) pos, errno);
+    if (m_machine->reopenDisk(drive)) {
+      done = diskHandler_transferOnce(drive, read, pos, dest, count);
+      if (ferror(m_machine->disk(drive)))
+        printf("disk %d: failed again (errno %d)\n", drive, errno);
+    }
+  }
+  return done;
+}
+
+
+size_t BIOS::diskHandler_transferOnce(int drive, bool read, uint32_t pos, uint32_t dest, uint32_t count)
 {
   FILE * file = m_machine->disk(drive);
   uint32_t ramEnd = i8086::videoMemStart();

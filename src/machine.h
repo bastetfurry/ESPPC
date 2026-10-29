@@ -410,6 +410,7 @@ public:
   }
 
   FILE * disk(int index)               { return m_disk[index]; }
+  bool reopenDisk(int drive);
   char const * diskFilename(int index) { return m_diskFilename[index]; }
   uint64_t diskSize(int index)         { return m_diskSize[index]; }
   uint16_t diskCylinders(int index)    { return m_diskCylinders[index]; }
@@ -519,6 +520,7 @@ private:
   // 0, 1 = floppy
   // >= 2 = hard disk
   char *                   m_diskFilename[DISKCOUNT];
+  void openDiskFile(int drive);
   bool                     m_diskChanged[DISKCOUNT];
   FILE *                   m_disk[DISKCOUNT];
   uint64_t                 m_diskSize[DISKCOUNT];
