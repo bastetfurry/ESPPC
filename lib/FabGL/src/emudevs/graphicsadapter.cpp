@@ -294,8 +294,12 @@ GraphicsAdapter::GraphicsAdapter()
     m_egaBankMask(3),
     m_egaOffsetMask(0x7fff),
     m_egaStart(0),
+    m_egaStartFrame(0),
     m_egaLineCompare(0x3ff),
     m_egaPan(0),
+    m_egaPanFrame(0),
+    m_egaFramesShown(0),
+    m_egaCommitted(0),
     m_egaCharHeight(16),
     m_egaTextColumns(80),
     m_egaTextRows(25),
@@ -1039,6 +1043,13 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_
 
   auto ga = (GraphicsAdapter*) arg;
 
+  // the start address and the panning of this frame, see setEGAStartAddress(); and the frame's
+  // last line, see egaFramesShown()
+  if (scanLine == 0)
+    ga->latchEGAFrame();
+  if (scanLine + LINES >= ga->m_VGADCtrl.getViewPortHeight())
+    ++ga->m_egaFramesShown;
+
   // bank 0 too: EGA::allocVRAM() nulls every bank when it runs out, and this runs from the
   // scanline ISR, where following one of those is a panic rather than a glitch
   if (!ga->m_egaBanks || !ga->m_egaBanks[0] || !ga->m_egaPal2)
@@ -1056,12 +1067,12 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_
     // above the split the page at the start address, below it the memory from address 0
     int      y   = scanLine + line;
     uint32_t off = (y > ga->m_egaLineCompare ? (uint32_t)(y - ga->m_egaLineCompare - 1) * ga->m_egaStride
-                                             : ga->m_egaStart + y * ga->m_egaStride) & ga->m_egaOffsetMask;
+                                             : ga->m_egaStartFrame + y * ga->m_egaStride) & ga->m_egaOffsetMask;
     auto     d32 = (uint32_t*) (dest + line * SCREENWIDTH);
 
     // panned: each column's pixels with the next one's shifted in, one column further along
-    if (ga->m_egaPan) {
-      int      pan = ga->m_egaPan;
+    if (ga->m_egaPanFrame) {
+      int      pan = ga->m_egaPanFrame;
       uint32_t w   = EGA_RENDER_BANK(off);
       uint32_t cur = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
       for (int col = 0; col < WIDTHINBYTES; ++col) {
@@ -1105,8 +1116,16 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_
 void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_t * dest, int scanLine)
 {
   constexpr int WIDTHINBYTES = 320 / 8;
+  constexpr int LINES        = 1;         // scanlines per call, see the mode table
 
   auto ga = (GraphicsAdapter*) arg;
+
+  // the start address and the panning of this frame, see setEGAStartAddress(); and the frame's
+  // last line, see egaFramesShown()
+  if (scanLine == 0)
+    ga->latchEGAFrame();
+  if (scanLine + LINES >= ga->m_VGADCtrl.getViewPortHeight())
+    ++ga->m_egaFramesShown;
 
   // bank 0 too: EGA::allocVRAM() nulls every bank when it runs out, and this runs from the
   // scanline ISR, where following one of those is a panic rather than a glitch
@@ -1121,12 +1140,12 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_
 
   // above the split the page at the start address, below it the memory from address 0
   uint32_t off  = (scanLine > ga->m_egaLineCompare ? (uint32_t)(scanLine - ga->m_egaLineCompare - 1) * ga->m_egaStride
-                                                   : ga->m_egaStart + scanLine * ga->m_egaStride) & ga->m_egaOffsetMask;
+                                                   : ga->m_egaStartFrame + scanLine * ga->m_egaStride) & ga->m_egaOffsetMask;
   auto     d16  = (uint16_t*) dest;
 
   // panned: each column's pixels with the next one's shifted in, one column further along
-  if (ga->m_egaPan) {
-    int      pan = ga->m_egaPan;
+  if (ga->m_egaPanFrame) {
+    int      pan = ga->m_egaPanFrame;
     uint32_t w   = EGA_RENDER_BANK(off);
     uint32_t cur = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
     for (int col = 0; col < WIDTHINBYTES; ++col) {
@@ -1184,8 +1203,12 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
   int textRow  = scanLine / charHeight;
   int glyphRow = scanLine % charHeight;
 
-  if (scanLine == 0)
+  if (scanLine == 0) {
     ++ga->m_frameCounter;
+    ga->latchEGAFrame();
+  }
+  if (scanLine + LINES >= ga->m_VGADCtrl.getViewPortHeight())
+    ++ga->m_egaFramesShown;
 
   // Past the last row: 43 rows of 8 scanlines end at 344, and the rest of the 400 line frame is
   // background, as the bottom of a real EGA's 350 lines is. Rendering on would show whatever
@@ -1207,7 +1230,7 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_Text_80x25(void * arg, uint8_t 
   uint32_t const   bmask    = ga->m_egaBankMask;
   uint32_t * const * banks  = ga->m_egaBanks;
 
-  uint32_t rowBase = (ga->m_egaStart + (uint32_t)textRow * columns) & omask;
+  uint32_t rowBase = (ga->m_egaStartFrame + (uint32_t)textRow * columns) & omask;
 
   for (int col = 0; col < columns; ++col) {
 

@@ -173,6 +173,10 @@ public:
   // which map one to one onto FabGL's RGB222.
   void setEGAVideoBuffer(uint32_t * const * banks, int stride, uint32_t bankMask, uint32_t offsetMask);
   void setEGAPalette(uint8_t const * palette16);
+  // ESPPC: the start address and the pel panning reach the picture as a pair, from the frame after
+  // commitEGAFrame(), as on the card, which latches them at the vertical retrace: applied as they
+  // were written, a page flip came out in the middle of a picture, and a smooth scroll jumped back
+  // and forth when the new start address was shown with the panning of the frame before
   void setEGAStartAddress(uint32_t byteOffset)             { m_egaStart = byteOffset; }
 
   // EGA line compare (CRTC 18h with bit 8 in 07h): the split screen. The scanlines after this one
@@ -183,6 +187,14 @@ public:
   // Controller's horizontal pel panning (13h), 0..7 pixels to the left
   void setEGAStride(int stride)                            { m_egaStride = stride; }
   void setEGAPanning(int pixels)                           { m_egaPan = pixels & 7; }
+  // hands the start address and the panning as written over to the renderer, as one word, so that
+  // the scanline interrupt on the other core never takes one without the other
+  void commitEGAFrame()                                    { m_egaCommitted = (m_egaStart & 0xffff) | ((uint32_t) m_egaPan << 16); }
+  // the renderers call it on the first line of every frame
+  void latchEGAFrame()                                     { uint32_t c = m_egaCommitted; m_egaStartFrame = c & 0xffff; m_egaPanFrame = c >> 16; }
+  // frames of an EGA mode drawn to their last line: it moves on when the VGA output goes into
+  // its vertical blanking, which is when the guest's vertical retrace should begin
+  uint32_t egaFramesShown() const                          { return m_egaFramesShown; }
 
   // EGA text: character height in scanlines (14 for mode 3 on an EGA, 8 for 43 line mode)
   void setEGACharHeight(int h)                             { m_egaCharHeight = h; }
@@ -322,9 +334,13 @@ private:
   int32_t             m_egaStride;     // byte-columns per scanline
   uint32_t            m_egaBankMask;   // banks - 1; video memory is sized to the mode
   uint32_t            m_egaOffsetMask; // banks * EGA_BANK_ENTRIES - 1
-  uint32_t            m_egaStart;      // first byte-column of the displayed page
+  uint32_t            m_egaStart;      // first byte-column of the displayed page, as last written
+  uint32_t            m_egaStartFrame; // the same, taken at the start of the frame being drawn
   int32_t             m_egaLineCompare;// split screen: lines after this one start from address 0
-  uint8_t             m_egaPan;        // pel panning, 0..7 pixels
+  uint8_t             m_egaPan;        // pel panning, 0..7 pixels, as last written
+  uint8_t             m_egaPanFrame;   // the same, taken at the start of the frame being drawn
+  volatile uint32_t   m_egaFramesShown;// see egaFramesShown()
+  volatile uint32_t   m_egaCommitted;  // start address | panning << 16, see commitEGAFrame()
   int16_t             m_egaCharHeight; // scanlines per character in EGA text
   int16_t             m_egaTextColumns;
   int16_t             m_egaTextRows;

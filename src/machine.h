@@ -652,6 +652,8 @@ private:
   uint8_t                  m_EGAACColorPlaneEnable;  // AC register 0x12, incl. the status mux
   uint32_t                 m_EGAFramePos;            // raster position, in status register reads
   int64_t                  m_EGARetraceUs;           // esp_timer time the last vertical retrace began
+  uint32_t                 m_EGAFramesSeen;          // GraphicsAdapter::egaFramesShown() at that time
+  int64_t                  m_EGAPanningUs;           // the last write of the pel panning, see setCGA6845Register()
   int                      m_EGAStride;              // byte-columns per scanline, to re-register
   uint8_t                  m_EGAMiscOutput;
   uint8_t                  m_EGASwitches;     // EGA configuration DIP block, read via 0x3c2

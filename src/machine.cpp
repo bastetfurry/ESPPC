@@ -133,6 +133,8 @@ Machine::Machine() :
     m_EGAACColorPlaneEnable(0x0f),
     m_EGAFramePos(0),
     m_EGARetraceUs(0),
+    m_EGAFramesSeen(0),
+    m_EGAPanningUs(INT64_MIN / 2),
     m_EGAStride(80),
     m_postboxHostOpen(false),
     m_EGASwitches(0x09),
@@ -910,6 +912,11 @@ void Machine::setCGA6845Register(uint8_t value)
       if (m_EGAActive) {
         m_graphicsAdapter.setEGAStartAddress((((uint32_t)m_CGA6845[0xc] << 8) | m_CGA6845[0xd])
                                              & m_EGA.offsetMask());
+        // A program that scrolls with the panning writes the start address first and the panning
+        // in the retrace, and the two are shown together when the panning comes (see the
+        // Attribute Controller). Anything else gets the start address from the next frame on.
+        if (esp_timer_get_time() - m_EGAPanningUs > 1000000)
+          m_graphicsAdapter.commitEGAFrame();
         break;
       }
       m_CGAMemoryOffset = ((m_CGA6845[0xc] << 8) | m_CGA6845[0xd]) << 1;
@@ -1354,6 +1361,8 @@ void Machine::resetEGADisplay(int stride)
   m_EGAStride      = stride;
   m_graphicsAdapter.setEGAStride(stride);
   m_graphicsAdapter.setEGAPanning(0);
+  m_graphicsAdapter.commitEGAFrame();
+  m_EGAPanningUs = INT64_MIN / 2;         // nothing scrolls with the panning yet
 }
 
 
@@ -2103,11 +2112,19 @@ uint8_t Machine::egaInputStatus1()
   uint32_t pos = m_EGAFramePos;
 
   if (pos == activeReads) {
-    // bottom border: hold here until the frame has lasted as long as a real one
-    int64_t now = esp_timer_get_time();
-    if (now - m_EGARetraceUs < frameUs)
+    // Bottom border: hold here until the VGA output has finished a frame, so that the retrace the
+    // guest sees is the real one. Software sets the start address of its next page in it (Commander
+    // Keen), and the renderer takes it at the first line of the next frame, as the card does at the
+    // end of the retrace; off the real one, a page flip came out in the middle of a picture and the
+    // page being drawn showed. Half a frame at least, so one frame is not taken for two. With no
+    // renderer running -- the BIOS POST, pctool -- a real frame's time and a little stand in.
+    int64_t  now   = esp_timer_get_time();
+    uint32_t shown = m_graphicsAdapter.egaFramesShown();
+    bool     ended = shown != m_EGAFramesSeen && now - m_EGARetraceUs >= frameUs / 2;
+    if (!ended && now - m_EGARetraceUs < frameUs + 1000)
       return 0x01;
-    m_EGARetraceUs = now;                         // retrace starts with this read
+    m_EGARetraceUs  = now;                        // retrace starts with this read
+    m_EGAFramesSeen = shown;
   }
 
   m_EGAFramePos = (pos + 1) % frameReads;
@@ -2184,8 +2201,12 @@ void Machine::setEGAAttributeReg(uint8_t value)
     } else if (m_EGAACIndex == 0x13) {
       // Horizontal Pel Panning: the picture moves 0..7 pixels to the left, for smooth scrolling
       // together with the start address (Commander Keen)
-      if (m_EGAActive)
+      // together with the start address written before it, see setCGA6845Register()
+      if (m_EGAActive) {
         m_graphicsAdapter.setEGAPanning(value & 0x07);
+        m_graphicsAdapter.commitEGAFrame();
+        m_EGAPanningUs = esp_timer_get_time();
+      }
     } else if (m_EGAACIndex == 0x12) {
       // Colour Plane Enable. Bits 5-4 are the video status mux, which selects the pair of
       // attribute controller outputs the EGA reports in Input Status Register 1. The BIOS POST
