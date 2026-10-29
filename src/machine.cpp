@@ -880,6 +880,16 @@ void Machine::setCGA6845Register(uint8_t value)
       m_graphicsAdapter.setCGACursorLines(m_CGA6845[0xa] & 0x1f, m_CGA6845[0xb] & 0x1f);
       break;
 
+    // EGA Offset (13h): the distance from one line to the next in words, two byte-columns each.
+    // Software sets it wider than the screen for a virtual screen it scrolls across (Commander
+    // Keen draws on 384 pixels in mode 0Dh, 18h); the BIOS sets it to the mode's width.
+    case 0x13:
+      if (m_EGAActive) {
+        m_EGAStride = value * 2;
+        m_graphicsAdapter.setEGAStride(m_EGAStride);
+      }
+      break;
+
     // EGA line compare (18h, with bit 8 in the overflow register 07h bit 4): the split screen.
     // Catacomb 3-D keeps its status bar below it at address 0 while it page flips the view above.
     case 0x07:
@@ -1322,15 +1332,28 @@ void Machine::refreshCGAGraphics()
 }
 
 
-// No split screen after an EGA mode set: line compare 1FFh, past the last line of every mode,
-// which is what the EGA BIOS's CRTC tables leave (overflow bit 4 set, 18h = FFh). Our mode set does
-// not program the CRTC itself, so without this whatever was last in those registers applied --
-// with 0 there, everything below the first line would come from address 0.
-void Machine::resetEGALineCompare()
+// The display registers as the EGA BIOS's mode set leaves them. Our mode set does not program the
+// CRTC itself, so without this whatever the last program left in them applied to the next one, in
+// the stored registers as well as on the screen -- a program that writes only one byte of a value
+// gets the other back from before:
+//   - no split screen: line compare 1FFh, past the last line of every mode (overflow bit 4 set,
+//     18h = FFh); with 0 there, everything below the first line would come from address 0
+//   - start address 0
+//   - the offset at the mode's width, stride byte-columns
+//   - no pel panning. Commander Keen leaves its scrolling in the start address and the panning,
+//     and Monkey Island, started after it, showed its logo cut in two and shifted sideways.
+void Machine::resetEGADisplay(int stride)
 {
   m_CGA6845[0x18]  = 0xff;
   m_CGA6845[0x07] |= 0x10;
   m_graphicsAdapter.setEGALineCompare(0x1ff);
+  m_CGA6845[0x0c]  = 0;
+  m_CGA6845[0x0d]  = 0;
+  m_graphicsAdapter.setEGAStartAddress(0);
+  m_CGA6845[0x13]  = stride / 2;
+  m_EGAStride      = stride;
+  m_graphicsAdapter.setEGAStride(stride);
+  m_graphicsAdapter.setEGAPanning(0);
 }
 
 
@@ -1845,10 +1868,8 @@ bool Machine::setEGAMode(int biosMode, bool clear)
 
     setEGADefaultPalette(false);
 
-    m_EGAStride = textColumns;
     m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), textColumns, m_EGA.renderBankMask(), m_EGA.renderOffsetMask());
-    m_graphicsAdapter.setEGAStartAddress(0);
-    resetEGALineCompare();
+    resetEGADisplay(textColumns);
     m_graphicsAdapter.setEGACharHeight(16);
     m_graphicsAdapter.setEGATextRows(25);
     m_graphicsAdapter.setEGATextColumns(textColumns);
@@ -1941,10 +1962,8 @@ bool Machine::setEGAMode(int biosMode, bool clear)
 
   setEGADefaultPalette(biosMode == 0x0d || biosMode == 0x0e);
 
-  m_EGAStride = stride;
   m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), stride, m_EGA.renderBankMask(), m_EGA.renderOffsetMask());
-  m_graphicsAdapter.setEGAStartAddress(0);
-  resetEGALineCompare();
+  resetEGADisplay(stride);
   m_graphicsAdapter.setEGAPalette(m_EGAACPalette);
   printf("EGA: planes allocated, internal heap free %d (largest %d)\n",
          heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -2162,6 +2181,11 @@ void Machine::setEGAAttributeReg(uint8_t value)
       // The CGA path keeps blink in its own mode register, so leave it alone there.
       if (m_EGAActive)
         m_graphicsAdapter.setBit7Blink(value & 0x08);
+    } else if (m_EGAACIndex == 0x13) {
+      // Horizontal Pel Panning: the picture moves 0..7 pixels to the left, for smooth scrolling
+      // together with the start address (Commander Keen)
+      if (m_EGAActive)
+        m_graphicsAdapter.setEGAPanning(value & 0x07);
     } else if (m_EGAACIndex == 0x12) {
       // Colour Plane Enable. Bits 5-4 are the video status mux, which selects the pair of
       // attribute controller outputs the EGA reports in Input Status Register 1. The BIOS POST

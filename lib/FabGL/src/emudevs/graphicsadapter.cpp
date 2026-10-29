@@ -295,6 +295,7 @@ GraphicsAdapter::GraphicsAdapter()
     m_egaOffsetMask(0x7fff),
     m_egaStart(0),
     m_egaLineCompare(0x3ff),
+    m_egaPan(0),
     m_egaCharHeight(16),
     m_egaTextColumns(80),
     m_egaTextRows(25),
@@ -1006,6 +1007,21 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_PC_Graphics_640x200_2Colors(void * 
 // VRAM is banked so it can be allocated on a fragmented heap, so the byte-column offset is
 // resolved through the bank table on each iteration -- a shift, a load and a mask.
 
+// ESPPC: horizontal pel panning. The spread tables put pixel k of a column into nibble k ^ 2 (the
+// scanline swizzle); swapping the bytes in each 16 bit half puts it in nibble k, so two columns
+// side by side are one 64 bit run of pixels that a shift moves by whole pixels. The swap is its
+// own inverse.
+static inline __attribute__((always_inline)) uint32_t egaSwizzle(uint32_t v)
+{
+  return ((v & 0x00ff00ffu) << 8) | ((v >> 8) & 0x00ff00ffu);
+}
+
+static inline __attribute__((always_inline)) uint32_t egaPanned(uint32_t cur, uint32_t next, int pan)
+{
+  return egaSwizzle((uint32_t) ((((uint64_t) egaSwizzle(next) << 32) | egaSwizzle(cur)) >> (4 * pan)));
+}
+
+
 // These two must match EGA_BANK_SHIFT and EGA_BANK_ENTRIES in src/ega.h. They are constants
 // rather than values carried in the adapter because this indexes once per byte-column on the
 // scanline hot path.
@@ -1042,6 +1058,24 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_640_16Colors(void * arg, uint8_
     uint32_t off = (y > ga->m_egaLineCompare ? (uint32_t)(y - ga->m_egaLineCompare - 1) * ga->m_egaStride
                                              : ga->m_egaStart + y * ga->m_egaStride) & ga->m_egaOffsetMask;
     auto     d32 = (uint32_t*) (dest + line * SCREENWIDTH);
+
+    // panned: each column's pixels with the next one's shifted in, one column further along
+    if (ga->m_egaPan) {
+      int      pan = ga->m_egaPan;
+      uint32_t w   = EGA_RENDER_BANK(off);
+      uint32_t cur = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
+      for (int col = 0; col < WIDTHINBYTES; ++col) {
+        off = (off + 1) & ga->m_egaOffsetMask;
+        w   = EGA_RENDER_BANK(off);
+        uint32_t next = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
+        uint32_t i    = egaPanned(cur, next, pan);
+        cur = next;
+        d32[0] = (uint32_t)P[i & 0xff]         | ((uint32_t)P[(i >> 8) & 0xff] << 16);
+        d32[1] = (uint32_t)P[(i >> 16) & 0xff] | ((uint32_t)P[i >> 24] << 16);
+        d32 += 2;
+      }
+      continue;
+    }
 
     // A line is 80 consecutive byte-columns and a bank is EGA_BANK_INDEXMASK + 1 of them, so it
     // lies in one bank or runs into the next exactly once (the offset mask can also wrap it back
@@ -1089,6 +1123,26 @@ void IRAM_ATTR GraphicsAdapter::drawScanline_EGA_320_16Colors(void * arg, uint8_
   uint32_t off  = (scanLine > ga->m_egaLineCompare ? (uint32_t)(scanLine - ga->m_egaLineCompare - 1) * ga->m_egaStride
                                                    : ga->m_egaStart + scanLine * ga->m_egaStride) & ga->m_egaOffsetMask;
   auto     d16  = (uint16_t*) dest;
+
+  // panned: each column's pixels with the next one's shifted in, one column further along
+  if (ga->m_egaPan) {
+    int      pan = ga->m_egaPan;
+    uint32_t w   = EGA_RENDER_BANK(off);
+    uint32_t cur = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
+    for (int col = 0; col < WIDTHINBYTES; ++col) {
+      off = (off + 1) & ga->m_egaOffsetMask;
+      w   = EGA_RENDER_BANK(off);
+      uint32_t next = L0[w & 0xff] | L1[(w >> 8) & 0xff] | L2[(w >> 16) & 0xff] | L3[w >> 24];
+      uint32_t i    = egaPanned(cur, next, pan);
+      cur = next;
+      d16[0] = P[i & 0xff];
+      d16[1] = P[(i >> 8) & 0xff];
+      d16[2] = P[(i >> 16) & 0xff];
+      d16[3] = P[i >> 24];
+      d16 += 4;
+    }
+    return;
+  }
 
   for (int col = 0; col < WIDTHINBYTES; ++col) {
     uint32_t w = EGA_RENDER_BANK(off);

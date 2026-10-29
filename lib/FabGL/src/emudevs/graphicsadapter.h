@@ -179,6 +179,10 @@ public:
   // are drawn from address 0, whatever the start address; a value past the last line turns it off.
   // Software keeps a status bar there while it page flips the part above.
   void setEGALineCompare(int line)                         { m_egaLineCompare = line; }
+  // ESPPC: the CRTC's Offset register (13h) as byte-columns per scanline, and the Attribute
+  // Controller's horizontal pel panning (13h), 0..7 pixels to the left
+  void setEGAStride(int stride)                            { m_egaStride = stride; }
+  void setEGAPanning(int pixels)                           { m_egaPan = pixels & 7; }
 
   // EGA text: character height in scanlines (14 for mode 3 on an EGA, 8 for 43 line mode)
   void setEGACharHeight(int h)                             { m_egaCharHeight = h; }
@@ -320,6 +324,7 @@ private:
   uint32_t            m_egaOffsetMask; // banks * EGA_BANK_ENTRIES - 1
   uint32_t            m_egaStart;      // first byte-column of the displayed page
   int32_t             m_egaLineCompare;// split screen: lines after this one start from address 0
+  uint8_t             m_egaPan;        // pel panning, 0..7 pixels
   int16_t             m_egaCharHeight; // scanlines per character in EGA text
   int16_t             m_egaTextColumns;
   int16_t             m_egaTextRows;

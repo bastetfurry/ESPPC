@@ -440,7 +440,7 @@ private:
   void setCGAMode();
   void writeTandyArray(uint8_t value);
   void updatePlantronicsSwap();
-  void resetEGALineCompare();
+  void resetEGADisplay(int stride);
   void hookTandyDACIrq();
   void writeDMA(int port, uint8_t value);
   uint8_t readDMA(int port);
