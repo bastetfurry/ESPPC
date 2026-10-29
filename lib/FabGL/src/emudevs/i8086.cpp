@@ -144,29 +144,32 @@ bool                      i8086::s_trap;
 
 
 // Table 0: R/M mode 1/2 "register 1" lookup
-static uint8_t rm_mode12_reg1[]  = { 3, 3, 5, 5, 6, 7, 5, 3 };
+// ESPPC: every table the core reads is DRAM_ATTR. Static arrays that are never written are moved
+// to .rodata by the compiler, which is flash, read through the cache the guest's RAM in PSRAM keeps
+// evicting: optcodes (read at every instruction), the ModRM and the Jcc tables had gone there.
+static uint8_t DRAM_ATTR rm_mode12_reg1[]  = { 3, 3, 5, 5, 6, 7, 5, 3 };
 
 // Table 1: R/M mode 1/2 "register 2" lookup
 // Table 5: R/M mode 0 "register 2" lookup
-static uint8_t rm_mode012_reg2[] = { 6, 7, 6, 7, 12, 12, 12, 12 };
+static uint8_t DRAM_ATTR rm_mode012_reg2[] = { 6, 7, 6, 7, 12, 12, 12, 12 };
 
 // Table 2: R/M mode 1/2 "DISP multiplier" lookup
-static uint8_t rm_mode12_disp[]  = { 1, 1, 1, 1, 1, 1, 1, 1 };
+static uint8_t DRAM_ATTR rm_mode12_disp[]  = { 1, 1, 1, 1, 1, 1, 1, 1 };
 
 // Table 3: R/M mode 1/2 "default segment" lookup
-static uint8_t rm_mode12_dfseg[] = { 11, 11, 10, 10, 11, 11, 10, 11 };
+static uint8_t DRAM_ATTR rm_mode12_dfseg[] = { 11, 11, 10, 10, 11, 11, 10, 11 };
 
 // Table 4: R/M mode 0 "register 1" lookup
-static uint8_t rm_mode0_reg1[]   = { 3, 3, 5, 5, 6, 7, 12, 3 };
+static uint8_t DRAM_ATTR rm_mode0_reg1[]   = { 3, 3, 5, 5, 6, 7, 12, 3 };
 
 // Table 6: R/M mode 0 "DISP multiplier" lookup
-static uint8_t rm_mode0_disp[]   = { 0, 0, 0, 0, 0, 0, 1, 0 };
+static uint8_t DRAM_ATTR rm_mode0_disp[]   = { 0, 0, 0, 0, 0, 0, 1, 0 };
 
 // Table 7: R/M mode 0 "default segment" lookup
-static uint8_t rm_mode0_dfseg[]  = { 11, 11, 10, 10, 11, 11, 11, 11 };
+static uint8_t DRAM_ATTR rm_mode0_dfseg[]  = { 11, 11, 10, 10, 11, 11, 11, 11 };
 
 // Table 8: Translation of raw opcode index ("Raw ID") to function number ("Xlat'd ID")
-static uint8_t xlat_ids[] = {   9,  9,  9,  9,  7,  7, 25, 26,  9,  9,  9,  9,  7,  7, 25, 50,
+static uint8_t DRAM_ATTR xlat_ids[] = {   9,  9,  9,  9,  7,  7, 25, 26,  9,  9,  9,  9,  7,  7, 25, 50,
                                 9,  9,  9,  9,  7,  7, 25, 26,  9,  9,  9,  9,  7,  7, 25, 26,
                                 9,  9,  9,  9,  7,  7, 27, 28,  9,  9,  9,  9,  7,  7, 27, 28,
                                 9,  9,  9,  9,  7,  7, 27, 29,  9,  9,  9,  9,  7,  7, 27, 29,
@@ -184,7 +187,7 @@ static uint8_t xlat_ids[] = {   9,  9,  9,  9,  7,  7, 25, 26,  9,  9,  9,  9,  
                                 48,  0, 23, 23, 49, 45,  6,  6, 46, 46, 46, 46, 46, 46,  5,  5 };
 
 // Table 9: Translation of Raw ID to Extra Data
-static uint8_t ex_data[] = {  0,  0,  0,  0,  0,  0,  8,  8,  1,  1,  1,  1,  1,  1,  9, 36,
+static uint8_t DRAM_ATTR ex_data[] = {  0,  0,  0,  0,  0,  0,  8,  8,  1,  1,  1,  1,  1,  1,  9, 36,
                               2,  2,  2,  2,  2,  2, 10, 10,  3,  3,  3,  3,  3,  3, 11, 11,
                               4,  4,  4,  4,  4,  4,  8,  0,  5,  5,  5,  5,  5,  5,  9,  1,
                               6,  6,  6,  6,  6,  6, 10,  2,  7,  7,  7,  7,  7,  7, 11,  0,
@@ -202,7 +205,7 @@ static uint8_t ex_data[] = {  0,  0,  0,  0,  0,  0,  8,  8,  1,  1,  1,  1,  1,
                               1, 21,  0,  0,  2, 40, 21, 21, 80, 81, 92, 93, 94, 95,  0,  0 };
 
 // Table 10: How each Raw ID sets the flags (bit 1 = sets SZP, bit 2 = sets AF/OF for arithmetic, bit 3 = sets OF/CF for logic)
-static uint8_t std_flags[] = {  3, 3, 3, 3, 3, 3, 0, 0, 5, 5, 5, 5, 5, 5, 0, 0,
+static uint8_t DRAM_ATTR std_flags[] = {  3, 3, 3, 3, 3, 3, 0, 0, 5, 5, 5, 5, 5, 5, 0, 0,
                                 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0,
                                 5, 5, 5, 5, 5, 5, 0, 1, 3, 3, 3, 3, 3, 3, 0, 1,
                                 5, 5, 5, 5, 5, 5, 0, 1, 3, 3, 3, 3, 3, 3, 0, 1,
@@ -220,7 +223,7 @@ static uint8_t std_flags[] = {  3, 3, 3, 3, 3, 3, 0, 0, 5, 5, 5, 5, 5, 5, 0, 0,
                                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 // Table 11: Parity flag loop-up table (256 entries)
-static uint8_t parity[] = {   1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+static uint8_t DRAM_ATTR parity[] = {   1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
                               0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
                               0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
                               1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
@@ -238,7 +241,7 @@ static uint8_t parity[] = {   1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
                               1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1 };
 
 // Table 12: Translation of Raw ID to base instruction size (bytes)
-static uint8_t base_size[] = {  2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2,
+static uint8_t DRAM_ATTR base_size[] = {  2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2,
                                 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
                                 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
                                 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
@@ -256,7 +259,7 @@ static uint8_t base_size[] = {  2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2,
                                 1, 2, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2 };
 
 // Table 13: Translation of Raw ID to i_w size adder yes/no
-static uint8_t i_w_adder[] = {  0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
+static uint8_t DRAM_ATTR i_w_adder[] = {  0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
                                 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
                                 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
                                 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
@@ -274,7 +277,7 @@ static uint8_t i_w_adder[] = {  0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
                                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 // Table 14: Translation of Raw ID to i_mod size adder yes/no
-static uint8_t i_mod_adder[] = {  1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
+static uint8_t DRAM_ATTR i_mod_adder[] = {  1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
                                   1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
                                   1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
                                   1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
@@ -292,19 +295,19 @@ static uint8_t i_mod_adder[] = {  1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0
                                   0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1 };
 
 // Table 15: Jxx decode table A
-static uint8_t jxx_dec_a[]   = { OF_ADDR, CF_ADDR, ZF_ADDR, CF_ADDR, SF_ADDR, PF_ADDR, XX_ADDR, XX_ADDR };
+static uint8_t DRAM_ATTR jxx_dec_a[]   = { OF_ADDR, CF_ADDR, ZF_ADDR, CF_ADDR, SF_ADDR, PF_ADDR, XX_ADDR, XX_ADDR };
 
 // Table 16: Jxx decode table B
-static uint8_t jxx_dec_b[]   = { XX_ADDR, XX_ADDR, XX_ADDR, ZF_ADDR, XX_ADDR, XX_ADDR, XX_ADDR, ZF_ADDR };
+static uint8_t DRAM_ATTR jxx_dec_b[]   = { XX_ADDR, XX_ADDR, XX_ADDR, ZF_ADDR, XX_ADDR, XX_ADDR, XX_ADDR, ZF_ADDR };
 
 // Table 17: Jxx decode table C
-static uint8_t jxx_dec_c[]   = { XX_ADDR, XX_ADDR, XX_ADDR,XX_ADDR, XX_ADDR, XX_ADDR, SF_ADDR, SF_ADDR };
+static uint8_t DRAM_ATTR jxx_dec_c[]   = { XX_ADDR, XX_ADDR, XX_ADDR,XX_ADDR, XX_ADDR, XX_ADDR, SF_ADDR, SF_ADDR };
 
 // Table 18: Jxx decode table D
-static uint8_t jxx_dec_d[]   = { XX_ADDR, XX_ADDR, XX_ADDR, XX_ADDR,XX_ADDR, XX_ADDR, OF_ADDR, OF_ADDR };
+static uint8_t DRAM_ATTR jxx_dec_d[]   = { XX_ADDR, XX_ADDR, XX_ADDR, XX_ADDR,XX_ADDR, XX_ADDR, OF_ADDR, OF_ADDR };
 
 
-static uint8_t * instr_table_lookup[] = {    rm_mode12_reg1,    // 0
+DRAM_ATTR static uint8_t * instr_table_lookup[] = {    rm_mode12_reg1,    // 0
                                              rm_mode012_reg2,   // 1
                                              rm_mode12_disp,    // 2
                                              rm_mode12_dfseg,   // 3
@@ -546,7 +549,7 @@ void i8086::reset()
 
 
 // tries to make more compact opcode "switch"
-static uint8_t optcodes[] = {
+static uint8_t DRAM_ATTR optcodes[] = {
 // 0    1   2   3   4   5   6   7   8   9   a   b   c   d   e   f
   27, 27, 27, 27, 28, 28, 13, 12, 27, 27, 27, 27, 28, 28, 13,  0, // 00 - 0f
   27, 27, 27, 27, 28, 28, 13, 12, 27, 27, 27, 27, 28, 28, 13, 12, // 10 - 1f
@@ -580,8 +583,8 @@ struct FastRM {
   int32_t  addr;
 };
 
-static const uint8_t RM_BASE[8]  = { REG_BX, REG_BX, REG_BP, REG_BP, REG_SI, REG_DI, REG_BP, REG_BX };
-static const uint8_t RM_INDEX[8] = { REG_SI, REG_DI, REG_SI, REG_DI, REG_ZERO, REG_ZERO, REG_ZERO, REG_ZERO };
+static const uint8_t DRAM_ATTR RM_BASE[8]  = { REG_BX, REG_BX, REG_BP, REG_BP, REG_SI, REG_DI, REG_BP, REG_BX };
+static const uint8_t DRAM_ATTR RM_INDEX[8] = { REG_SI, REG_DI, REG_SI, REG_DI, REG_ZERO, REG_ZERO, REG_ZERO, REG_ZERO };
 
 static inline __attribute__((always_inline)) FastRM decodeRM(uint8_t const * p, bool w)
 {
@@ -1642,8 +1645,8 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
         }
       };
       break;
-    // ESPPC: ADD|OR|ADC|SBB|AND|SUB|XOR|CMP in all their forms (cases 7 to 9) and MOV AL/AX with
-    // [loc] (case 11) were here. step() runs all of them on its fast paths now, so they never get
+    // ESPPC: ADD|OR|ADC|SBB|AND|SUB|XOR|CMP in all their forms (cases 7 to 9), MOV AL/AX with
+    // [loc] (case 11) and TEST (cases 15 and 47) were here. step() runs all of them on its fast paths now, so they never get
     // here, and the IRAM they took went to those paths.
     case 10: // MOV sreg, r/m | POP r/m | LEA reg, r/m
       if (!i_w) { // i_w == 0
@@ -1804,13 +1807,6 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
       }
       reg_ip += i_d && i_w ? (int8_t) i_data0 : i_data0;
       return; // no calc IP, no flags
-    case 15: // TEST reg, r/m
-      if (i_w) {
-        op_result = RMEM16(op_from_addr) & RMEM16(op_to_addr);
-      } else {
-        op_result = RMEM8(op_from_addr) & RMEM8(op_to_addr);
-      }
-      break;
     case 16: // XCHG AX, regs16
       if (i_reg4bit != REG_AX) {
         uint16_t t = regs16[REG_AX];
@@ -1980,13 +1976,6 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
       regs8[REG_AL] = RMEM8(16 * regs16[seg_override_en ? seg_override : REG_DS] + (uint16_t)(regs8[REG_AL] + regs16[REG_BX]));
       ++reg_ip;
       return; // no calc ip, no flags
-    case 47: // TEST AL/AX, immed
-      if (i_w) {
-        op_result = regs16[REG_AX] & i_data0;
-      } else {
-        op_result = regs8[REG_AL] & (uint8_t)i_data0;
-      }
-      break;
     // ESPPC: everything rare lives in stepExCold(), in flash (see there)
     default:
       if (stepExCold(opcode_stream, i_data0, i_data2, op_result))
