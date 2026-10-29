@@ -7,9 +7,9 @@
 */
 
 
-#include <Arduino.h>
-#include <HTTPClient.h>
 #include <sys/stat.h>
+
+#include "compat.h"
 
 #include "repository.h"
 #include "repolist.h"
@@ -36,37 +36,33 @@ static int fetchList(TextUI & ui, char const * listURL, char * buf, int bufSize,
 
   ui.progress("Repository", true, [&](TextUI::Progress & p) {
     p.update(0, "Fetching %.60s", listURL);
-    HTTPClient http;
-    int code = httpOpen(http, listURL);
-    if (code != HTTP_CODE_OK) {
+    HttpRequest http;
+    int code = http.open(listURL);
+    if (code != 200) {
       if (code < 0)
-        snprintf(error, errorSize, "No connection to the server:\n%s", http.errorToString(code).c_str());
+        snprintf(error, errorSize, "No connection to the server:\n%s", HttpRequest::errorText(code));
       else
         snprintf(error, errorSize, "The server answered %d.\nIs there a files.list at that URL?", code);
-      http.end();
       return;
     }
 
-    WiFiClient * stream = http.getStreamPtr();
-    int len = http.getSize();       // -1 without Content-Length: read until the server closes
+    long long len = http.size();    // -1 without Content-Length: read until the server closes
     int n = 0;
     bool aborted = false;
     uint32_t idle = millis();
-    while (stream && n < bufSize && (len < 0 || n < len)) {
-      int avail = stream->available();
-      if (avail > 0) {
-        n += stream->readBytes(buf + n, imin(avail, bufSize - n));
+    while (n < bufSize && (len < 0 || n < len)) {
+      int r = http.read(buf + n, bufSize - n);
+      if (r > 0) {
+        n   += r;
         idle = millis();
-      } else if (!http.connected() || millis() - idle > 10000)
+      } else if (r == 0 || r == HttpRequest::READ_ERROR || millis() - idle > 10000)
         break;
-      else
-        delay(5);
-      if (!p.update(len > 0 ? n * 100 / len : 0, "Fetching %.60s", listURL)) {
+      if (!p.update(len > 0 ? (int) (n * 100 / len) : 0, "Fetching %.60s", listURL)) {
         aborted = true;
         break;
       }
     }
-    http.end();
+    http.close();
 
     if (aborted)
       return;
@@ -75,7 +71,7 @@ static int fetchList(TextUI & ui, char const * listURL, char * buf, int bufSize,
       return;
     }
     if (len > 0 && n < len) {
-      snprintf(error, errorSize, "The connection dropped after %d of %d bytes.", n, len);
+      snprintf(error, errorSize, "The connection dropped after %d of %d bytes.", n, (int) len);
       return;
     }
     got = n;
@@ -98,10 +94,9 @@ static long long imageSize(TextUI & ui, char const * url)
   long long size = -1;
   ui.progress("Repository", true, [&](TextUI::Progress & p) {
     p.update(0, "Asking for the size of %.50s", repoImageName(url));
-    HTTPClient http;
-    if (httpOpen(http, url, "HEAD") == HTTP_CODE_OK)
-      size = http.getSize();
-    http.end();
+    HttpRequest http;
+    if (http.open(url, "HEAD") == 200)
+      size = http.size();
   });
   return size;
 }

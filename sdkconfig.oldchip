@@ -1,0 +1,6 @@
+# For ESP32s before revision 3 ("pio run -e esp32old"): the PSRAM cache workaround, in the IDF's
+# libraries, with the compiler's -mfix-esp32-psram-cache-issue, and in the CPU core (its memw, see
+# PSRAM_WORKAROUND2 in lib/FabGL/src/fabutils.h). Read after sdkconfig.defaults and overrides it.
+# Slower than the revision 3 build, but without it the guest's memory gets corrupted now and then.
+CONFIG_ESP32_REV_MIN_0=y
+CONFIG_SPIRAM_CACHE_WORKAROUND=y

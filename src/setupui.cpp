@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-#include <Arduino.h>
+#include "compat.h"
 #include "soc/soc.h"
 
 #include "setupui.h"

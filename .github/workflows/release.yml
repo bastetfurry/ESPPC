@@ -43,39 +43,47 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
-      - name: Build the firmware and the flash file system
+      - name: Build the firmware, for revision 3 and for older ESP32s, and the flash file system
         run: |
           pio run -e esp32dev
+          pio run -e esp32old
           pio run -e esp32dev -t buildfs
 
-      - name: Collect the images and write the manifest
+      - name: Collect the images and write the manifests
         run: |
           mkdir -p site
           cp web/index.html site/
           B=.pio/build/esp32dev
-          cp $B/bootloader.bin $B/partitions.bin $B/firmware.bin $B/spiffs.bin site/
-          cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin site/
+          O=.pio/build/esp32old
+          cp $B/bootloader.bin $B/partitions.bin $B/ota_data_initial.bin $B/firmware.bin $B/spiffs.bin site/
+          # the build for ESP32s before revision 3: its own bootloader and firmware, the rest is the same
+          cp $O/bootloader.bin site/oldchip-bootloader.bin
+          cp $O/firmware.bin   site/oldchip-firmware.bin
           # The offsets are the ESP32 bootloader's and partitions.csv's. NVS (0x9000) is left out on
           # purpose, so an update keeps the Wi-Fi and the settings.
-          cat > site/manifest.json <<EOF
+          manifest() {
+            cat <<EOF
           {
-            "name": "ESPPC",
+            "name": "ESPPC$3",
             "version": "${GITHUB_REF_NAME}",
             "new_install_prompt_erase": true,
             "builds": [
               {
                 "chipFamily": "ESP32",
                 "parts": [
-                  { "path": "bootloader.bin", "offset": 4096 },
-                  { "path": "partitions.bin", "offset": 32768 },
-                  { "path": "boot_app0.bin",  "offset": 57344 },
-                  { "path": "firmware.bin",   "offset": 65536 },
-                  { "path": "spiffs.bin",     "offset": 1900544 }
+                  { "path": "$1",                 "offset": 4096 },
+                  { "path": "partitions.bin",       "offset": 32768 },
+                  { "path": "ota_data_initial.bin", "offset": 57344 },
+                  { "path": "$2",                   "offset": 65536 },
+                  { "path": "spiffs.bin",           "offset": 1900544 }
                 ]
               }
             ]
           }
           EOF
+          }
+          manifest bootloader.bin firmware.bin "" > site/manifest.json
+          manifest oldchip-bootloader.bin oldchip-firmware.bin " (ESP32 before revision 3)" > site/manifest-oldchip.json
           sed -i "s/@VERSION@/${GITHUB_REF_NAME}/" site/index.html
 
       - name: Make the release
@@ -85,7 +93,8 @@ jobs:
         run: |
           cd site
           gh release create "$GITHUB_REF_NAME" --title "ESPPC $GITHUB_REF_NAME" --generate-notes \
-            bootloader.bin partitions.bin boot_app0.bin firmware.bin spiffs.bin
+            bootloader.bin partitions.bin ota_data_initial.bin firmware.bin spiffs.bin \
+            oldchip-bootloader.bin oldchip-firmware.bin
 
       - uses: actions/upload-pages-artifact@v3
         with:

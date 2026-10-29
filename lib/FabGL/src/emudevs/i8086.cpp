@@ -840,7 +840,7 @@ void IRAM_ATTR i8086::step()
       // opcodes 0xf8 ... 0xfd
       case 4:
       {
-        static int16_t FADDR[3] = { CF_ADDR, IF_ADDR, DF_ADDR };
+        static DRAM_ATTR int16_t FADDR[3] = { CF_ADDR, IF_ADDR, DF_ADDR };
         flags[FADDR[(*opcode_stream >> 1) & 3]] = *opcode_stream & 1;
         ++reg_ip;
         break;  // reloop, this is required to inhibit interrupt until next instruction (actually should be just for STI...)

@@ -239,7 +239,9 @@ void MC146818::updateTime()
 
 void MC146818::enableTimers()
 {
+  #if ESP_IDF_VERSION_MAJOR < 5
   esp_timer_init(); // can be called multiple times
+  #endif            // ESPPC: IDF 5 starts it at boot, and logs an error for each further call
 
   // Setup Periodic Interrupt timer
   stopPeriodicTimer();

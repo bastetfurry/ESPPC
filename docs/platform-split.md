@@ -61,10 +61,10 @@ Tied to the platform:
 | video output | graphicsadapter (FabGL's VGADirectController) | RGB222 plus sync in one byte, the x ^ 2 byte swizzle, FabGL modelines |
 | input | i8042 | FabGL's PS2Controller, Keyboard and Mouse (ULP coprocessor) |
 | sound | machine, sn76496, tandydac, adlib | FabGL's SoundGenerator and WaveformGenerator (DAC on GPIO25) |
-| serial ports | PC8250, machine, serialdbg | FabGL's SerialPort, the ESP32 UARTs, Arduino `Serial` |
+| serial ports | PC8250, machine, serialdbg | FabGL's SerialPort, the ESP32 UARTs, the console's `Serial` (compat) |
 | tasks and cores | machine (runTask), adlib, serialdbg | FreeRTOS, `CoreUsage`, core pinning |
 | storage | main, mconf, machine | SPIFFS, SD via FabGL's FileBrowser, `fopen` on VFS paths |
-| settings | main, setupui | Arduino `Preferences` (NVS) |
+| settings | main, setupui | `Preferences` (compat, on NVS) |
 | network | main | Wi-Fi, SNTP, HTTP downloads |
 | host screens | textui, setupui, main | drawn with the machine's GraphicsAdapter in text mode |
 

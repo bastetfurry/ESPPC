@@ -32,6 +32,14 @@ Record every change here as it is made, so a future upstream merge knows what to
 | `src/emudevs/graphicsadapter.cpp`, `src/emudevs/graphicsadapter.h` | Most of the video work: EGA (planar engine hookup, text mode with the font in plane 2, 350 line modes, split screen, resident planes, 6 bit palette), CGA mode 5 palette and skipped no-op register writes, Tandy modes 8 and 9, Plantronics ColorPlus, composite colour, drive LED, faster renderers, font fallback to flash; Hercules removed | The emulator's video adapters. See the git log of these files for the reasoning behind each. |
 | `src/dispdrivers/vgadirectcontroller.cpp`, `src/dispdrivers/vgadirectcontroller.h` | Scanline interrupt timing counters (`s_isrMaxCycles`, `s_isrMinPeriod`, `s_isrOverruns`) | Read by the debug monitor's `v` command to catch renderer overruns. |
 | `src/displaycontroller.cpp`, `src/fabutils.cpp` | `IRAM_ATTR` removed from the primitive machinery and `Rect` helpers | Only FabGL's paletted controllers ran them from an interrupt, and this build uses none; frees about 8 KB of IRAM. |
+| `library.json` | `build.srcFilter`: only the files ESPPC uses are compiled | The rest (GUI, terminal, other emulated chips and display drivers) is not needed, and much of it does not build with ESP-IDF 5. |
+| `src/fabutils.h` | With IDF >= 5: includes `string.h`, `esp_timer.h`, `soc/io_mux_reg.h`, `soc/rtc_io_reg.h`, `soc/gpio_sig_map.h`, `soc/gpio_periph.h`, `esp32/rom/gpio.h`, `driver/gpio.h`; `PSRAM_WORKAROUND2` (the CPU core's `memw`) only with `CONFIG_SPIRAM_CACHE_WORKAROUND` or `ESPPC_PSRAM_WORKAROUND` | IDF 5 no longer pulls them in through other headers; the `memw` is for ESP32s before revision 3 only. |
+| `src/devdrivers/swgenerator.cpp` | With IDF >= 5: `rtc_clk_apll_enable(bool)` plus `rtc_clk_apll_coeff_set()` | The APLL API changed in IDF 5 (the VGA dot clock). |
+| `src/fabutils.cpp` | With IDF >= 5: no `esp_task_wdt_init(45, false)`; `f_mkfs()` with `MKFS_PARM` | Both APIs changed in IDF 5 (only used to format SD cards). |
+| `src/dispdrivers/vgabasecontroller.cpp`, `src/dispdrivers/vgadirectcontroller.cpp` | `getDMABuffer()` and `getScanlineBuffer()` cast away `const` | IDF 5's `lldesc_t::buf` is `const volatile`. |
+| `src/comdrivers/serialport.cpp` | `soc/uart_reg.h` before the ROM's `uart.h` | IDF 5's ROM header uses the registers without including them. |
+| `src/emudevs/MC146818.cpp` | With IDF >= 5: no `esp_timer_init()` | IDF 5 starts the timer at boot and logs an error for each further call. |
+| `src/fabui_stub.cpp` (new) | `uiApp::postEvent()` returning false | The keyboard and mouse drivers reference it; ESPPC has no FabGL GUI, and `fabui.cpp` does not build with IDF 5. |
 
 ## Checking against upstream
 

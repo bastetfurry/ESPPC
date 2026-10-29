@@ -60,9 +60,9 @@ The board needs at least 4 MB **PSRAM** (the guest's RAM lives there) and **4 MB
 
 The builds are for **ESP32 revision 3** chips (ESP32-D0WD-V3, as on current WROVER-E modules),
 which have the PSRAM cache bug of the earlier revisions fixed in silicon. On an older chip
-(`esptool.py chip_id` reports revision v1.x or v2.x), build it yourself with the
-`build_flags = -D ESPPC_PSRAM_WORKAROUND` line in `platformio.ini` uncommented, or the guest's
-memory can get corrupted now and then.
+(`esptool.py chip_id` reports revision v1.x or v2.x) that firmware stops at boot; there is a build
+with the workaround for those, a little slower: the second button in the installer, or
+`pio run -e esp32old -t upload` (`sdkconfig.oldchip` on top of `sdkconfig.defaults`).
 
 ## Build & flash
 
@@ -81,16 +81,18 @@ pio device monitor      # serial console, 115200 baud
 The two uploads are independent: flashing the firmware leaves the file system alone and the other
 way round. `data/README.md` explains what goes into the file system and how much fits.
 
-Two settings in `platformio.ini` are important; keep them as they are:
+The firmware is built on plain **ESP-IDF 5.2** (`platform = espressif32@6.7.0`,
+`framework = espidf`), without the Arduino core: the few Arduino calls the code makes are in
+`src/compat.*`. The IDF's settings are in `sdkconfig.defaults`; after changing it, delete the
+generated `sdkconfig.esp32dev` so that it is made again. Two of them matter most:
 
-- **PSRAM is not enabled at build time.** `setup()` brings it up itself with
-  `esp_spiram_init()`, because `-DBOARD_HAS_PSRAM` would add gcc's
-  `-mfix-esp32-psram-cache-issue` workaround, which slows the emulator down far too much.
-- **`platform = espressif32@6.7.0`** (arduino-esp32 2.0.17, ESP-IDF 4.4). `esp_spiram_init_cache()`
-  is gone in ESP-IDF 5.
+- **PSRAM is mapped by `setup()` itself** (`esp_psram_init()`), not at boot and not for the heap:
+  the guest's RAM starts at its first byte.
+- **No PSRAM cache workaround**, which only ESP32s before revision 3 need and which slows the
+  emulator down: the firmware requires revision 3 (see Hardware above).
 
 The other environments in `platformio.ini` (`psrambench`, `egabench`, `sdbench`, `dltest`,
-`uarttest`) are test programs for the board, not the emulator.
+`uarttest`) are test programs for the board, not the emulator. They are still Arduino programs.
 
 ## Using it
 

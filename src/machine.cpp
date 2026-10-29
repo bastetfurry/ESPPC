@@ -600,9 +600,9 @@ void IRAM_ATTR Machine::runTask(void * pvParameters)
       OpProfile * prof = s_opProfile;
       for (int i = 0; i < BATCH; ++i) {
         uint8_t  op = s_memory[(((uint32_t)i8086::CS() << 4) + i8086::IP()) & 0xfffff];
-        uint32_t t  = esp_cpu_get_ccount();
+        uint32_t t  = esp_cpu_get_cycle_count();
         i8086::step();
-        prof->cycles[op] += esp_cpu_get_ccount() - t;
+        prof->cycles[op] += esp_cpu_get_cycle_count() - t;
         ++prof->count[op];
       }
       m->tick(BATCH);
@@ -610,7 +610,7 @@ void IRAM_ATTR Machine::runTask(void * pvParameters)
     }
 
     bool stats = s_vmStats;
-    uint32_t t0 = stats ? esp_cpu_get_ccount() : 0;
+    uint32_t t0 = stats ? esp_cpu_get_cycle_count() : 0;
 
     for (int i = 0; i < BATCH; ++i) {
       if (m->m_breakAddr &&
@@ -622,10 +622,10 @@ void IRAM_ATTR Machine::runTask(void * pvParameters)
     }
 
     if (__builtin_expect(stats, 0)) {
-      uint32_t t1 = esp_cpu_get_ccount();
+      uint32_t t1 = esp_cpu_get_cycle_count();
       m->tick(BATCH);
       s_stepCycles += t1 - t0;
-      s_tickCycles += esp_cpu_get_ccount() - t1;
+      s_tickCycles += esp_cpu_get_cycle_count() - t1;
     } else
       m->tick(BATCH);
 
@@ -2866,10 +2866,10 @@ Machine::OpProfile * volatile Machine::s_opProfile = nullptr;
 void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t value)
 {
   bool     stats = s_vmStats;
-  uint32_t t     = stats ? esp_cpu_get_ccount() : 0;
+  uint32_t t     = stats ? esp_cpu_get_cycle_count() : 0;
   writeVideoMemory8Impl(context, address, value);
   if (__builtin_expect(stats, 0)) {
-    s_vmCycles += esp_cpu_get_ccount() - t;
+    s_vmCycles += esp_cpu_get_cycle_count() - t;
     ++s_vmWrites;
   }
 }
@@ -2878,10 +2878,10 @@ void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t v
 void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t value)
 {
   bool     stats = s_vmStats;
-  uint32_t t     = stats ? esp_cpu_get_ccount() : 0;
+  uint32_t t     = stats ? esp_cpu_get_cycle_count() : 0;
   writeVideoMemory16Impl(context, address, value);
   if (__builtin_expect(stats, 0)) {
-    s_vmCycles += esp_cpu_get_ccount() - t;
+    s_vmCycles += esp_cpu_get_cycle_count() - t;
     ++s_vmWrites;
   }
 }
@@ -2890,10 +2890,10 @@ void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t
 uint8_t IRAM_ATTR Machine::readVideoMemory8(void * context, int address)
 {
   bool     stats = s_vmStats;
-  uint32_t t     = stats ? esp_cpu_get_ccount() : 0;
+  uint32_t t     = stats ? esp_cpu_get_cycle_count() : 0;
   uint8_t  v     = readVideoMemory8Impl(context, address);
   if (__builtin_expect(stats, 0)) {
-    s_vmCycles += esp_cpu_get_ccount() - t;
+    s_vmCycles += esp_cpu_get_cycle_count() - t;
     ++s_vmReads;
   }
   return v;
@@ -2903,10 +2903,10 @@ uint8_t IRAM_ATTR Machine::readVideoMemory8(void * context, int address)
 uint16_t IRAM_ATTR Machine::readVideoMemory16(void * context, int address)
 {
   bool     stats = s_vmStats;
-  uint32_t t     = stats ? esp_cpu_get_ccount() : 0;
+  uint32_t t     = stats ? esp_cpu_get_cycle_count() : 0;
   uint16_t v     = readVideoMemory16Impl(context, address);
   if (__builtin_expect(stats, 0)) {
-    s_vmCycles += esp_cpu_get_ccount() - t;
+    s_vmCycles += esp_cpu_get_cycle_count() - t;
     ++s_vmReads;
   }
   return v;

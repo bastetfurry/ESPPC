@@ -69,6 +69,15 @@
       cursor: pointer;
     }
     esp-web-install-button button[slot="activate"]:hover { filter: brightness(1.08); }
+    .older { margin: 1rem 0 0; color: var(--muted); font-size: 0.95rem; }
+    .older esp-web-install-button { display: inline; }
+    esp-web-install-button button.link[slot="activate"] {
+      background: none;
+      color: var(--accent);
+      padding: 0;
+      font: inherit;
+      text-decoration: underline;
+    }
     .note {
       background: var(--warn-bg);
       color: var(--text);
@@ -98,6 +107,10 @@
         Firefox, Chrome or Edge on a desktop computer.</span>
       <span slot="not-allowed">Flashing needs a secure connection (https).</span>
     </esp-web-install-button>
+    <p class="older">Older ESP32, before revision 3?
+      <esp-web-install-button manifest="manifest-oldchip.json">
+        <button slot="activate" class="link">Install the build for it</button>
+      </esp-web-install-button></p>
     <p class="note">The first install offers to <strong>erase</strong> the board. Do that when it
       ran other firmware before. When updating ESPPC, leave it unticked: your Wi-Fi and settings
       are kept. The flash file system is always rewritten, so a rescue disk you put there
@@ -113,6 +126,15 @@
         ports.</li>
       <li>A USB cable that carries data, not only power.</li>
     </ul>
+  </div>
+
+  <div class="card">
+    <h2>Which build?</h2>
+    <p>The main build is for ESP32s of revision 3 and later, which have the PSRAM bug of the
+      earlier ones fixed in the chip: WROVER-E modules and nearly everything sold since 2020.
+      Older chips, such as on WROVER-B modules, need the build with the workaround, which is a
+      little slower. If the board stays dark after installing the main build, it is an older
+      chip. <code>esptool.py chip_id</code> tells the revision too.</p>
   </div>
 
   <div class="card">

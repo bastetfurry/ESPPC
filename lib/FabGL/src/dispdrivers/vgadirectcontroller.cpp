@@ -160,7 +160,7 @@ void VGADirectController::setScanlineBuffer(int scanline, uint8_t volatile * lin
 
 uint8_t volatile * VGADirectController::getScanlineBuffer(int scanline)
 {
-  return s_DMALines[scanline]->buf;
+  return (uint8_t volatile *) s_DMALines[scanline]->buf;   // ESPPC: IDF 5's lldesc_t::buf is const
 }
 
 

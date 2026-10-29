@@ -1,0 +1,67 @@
+# ESP-IDF settings for ESPPC (plain ESP-IDF, no Arduino core). Applied when sdkconfig.esp32dev is
+# generated: delete that file after changing this one.
+
+# 240 MHz, 4 MB flash in QIO at 80 MHz, the app partition as before
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# ESP32 revision 3 and up only: they have the PSRAM cache bug of the earlier revisions fixed in
+# silicon, so neither the compiler's workaround nor the CPU core's memw is needed, and the C
+# library's functions stay out of IRAM. On an older chip this firmware stops at boot rather than
+# corrupt the guest's memory now and then; for one, set CONFIG_ESP32_REV_MIN_0=y and
+# CONFIG_SPIRAM_CACHE_WORKAROUND=y here instead and build it yourself.
+CONFIG_ESP32_REV_MIN_3=y
+CONFIG_SPIRAM_CACHE_WORKAROUND=n
+
+# PSRAM: initialised and mapped by setup() (esp_psram_init()), not at boot and not for the heap.
+# The guest's RAM starts at its first byte, SOC_EXTRAM_DATA_LOW (see Machine::init()).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_BOOT_INIT=n
+CONFIG_SPIRAM_USE_MEMMAP=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# setup() and the machine list run in the main task on core 1, as in Arduino's loop task, with its
+# stack; the emulator task goes to the other core (Machine::run()). No idle task watchdogs: the
+# emulator keeps its core busy (Arduino's setup() turned them off).
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+
+# FabGL's PS/2 driver runs on the ULP coprocessor
+CONFIG_ULP_COPROC_ENABLED=y
+CONFIG_ULP_COPROC_TYPE_FSM=y
+CONFIG_ULP_COPROC_RESERVE_MEM=512
+
+# SD card and SPIFFS: long file names, code page 850 as before
+CONFIG_FATFS_CODEPAGE_850=y
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+CONFIG_FATFS_API_ENCODING_UTF_8=y
+
+# Downloads over https are encrypted but not certificate checked, as with Arduino's HTTPClient
+# without a CA (see httpopen.h)
+CONFIG_ESP_TLS_INSECURE=y
+CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+
+# IRAM is for the emulator (the CPU core runs from it): Wi-Fi, which only runs for the clock and
+# downloads, without its IRAM speed-ups, as in the Arduino build; no SPI slave
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_SPI_SLAVE_ISR_IN_IRAM=n
+CONFIG_HAL_SPI_SLAVE_FUNC_IN_IRAM=n
+
+# no Bluetooth
+CONFIG_BT_ENABLED=n
+
+# quiet boot, no core dumps
+CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y
+CONFIG_LOG_DEFAULT_LEVEL_ERROR=y
+CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y

@@ -3,6 +3,7 @@
 */
 
 
+#include "esp_rom_sys.h"
 #include "driver/gpio.h"
 #include "esp_timer.h"
 #include "rom/ets_sys.h"
@@ -21,10 +22,10 @@ struct Pins {
     uint8_t in = 0;
     for (int b = 7; b >= 0; --b) {
       gpio_set_level(mosi, (out >> b) & 1);
-      ets_delay_us(2);
+      esp_rom_delay_us(2);
       gpio_set_level(clk, 1);
       in = (in << 1) | gpio_get_level(miso);
-      ets_delay_us(2);
+      esp_rom_delay_us(2);
       gpio_set_level(clk, 0);
     }
     return in;

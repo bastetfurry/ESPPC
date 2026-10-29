@@ -24,12 +24,14 @@
  */
  
  
+// ESPPC: the registers before the ROM's uart.h, which uses them and in ESP-IDF 5 no longer
+// includes them itself
+#include "soc/uart_reg.h"
 #if __has_include("esp32/rom/uart.h")
   #include "esp32/rom/uart.h"
 #else
   #include "rom/uart.h"
 #endif
-#include "soc/uart_reg.h"
 #include "soc/uart_struct.h"
 #include "soc/io_mux_reg.h"
 #include "soc/gpio_sig_map.h"

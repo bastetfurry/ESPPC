@@ -39,25 +39,18 @@
 // platformio.ini (equivalent to the Arduino IDE's "Huge APP" scheme).
 
 
-#include <Arduino.h>
-
 #include <memory>
 
-#include "esp32-hal-psram.h"
-extern "C" {
-#include "esp_spiram.h"
-}
+#include "esp_psram.h"
 #include "esp_sntp.h"
 
-#include <Preferences.h>
-#include <WiFi.h>
-#include <HTTPClient.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 
 #include "fabgl.h"
 
+#include "compat.h"
 #include "mconf.h"
 #include "machine.h"
 #include "textui.h"
@@ -85,7 +78,7 @@ using fabgl::imin;
 using fabgl::imax;
 
 
-// forward declarations (the Arduino preprocessor used to generate these automatically)
+// forward declarations
 bool tryToConnect();
 bool checkWiFi();
 void shutdownHandler();
@@ -161,7 +154,7 @@ bool tryToConnect()
         // was powered off (2026-10-04, board on a USB 3 port). At 8.5 dBm a 26 MB download ran
         // through without a stall, at 180 KB/s against 100 before, with the signal still at -50 dBm.
         WiFi.setTxPower(WIFI_POWER_8_5dBm);
-        ui.postResult(WiFi.localIP().toString().c_str(), TUI_POST_OK);
+        ui.postResult(WiFi.localIP().c_str(), TUI_POST_OK);
       } else {
         WiFi.disconnect();
         ui.postResult("Failed", TUI_POST_FAIL);
@@ -291,9 +284,9 @@ void updateDateTime()
     ui.postItem("Real Time Clock");
     bool synced = false;
     ui.progress("Date and Time", true, [&](TextUI::Progress & p) {
-      sntp_setoperatingmode(SNTP_OPMODE_POLL);
-      sntp_setservername(0, (char*) ntpServer());
-      sntp_init();
+      esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+      esp_sntp_setservername(0, ntpServer());
+      esp_sntp_init();
       // sntp_get_sync_status() reports COMPLETED once and then resets itself, so the answer has to
       // be kept from the read that saw it; asking again afterwards always says it failed.
       for (int i = 0; i < 12; ++i) {
@@ -305,7 +298,7 @@ void updateDateTime()
           break;
         delay(500);
       }
-      sntp_stop();
+      esp_sntp_stop();
     });
     {
       char r[80];
@@ -407,9 +400,9 @@ bool downloadURL(char const * URL, char const * path)
   static bool reasonLogged = false;
   if (!reasonLogged) {
     reasonLogged = true;
-    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
-      printf("Wi-Fi disconnected, reason %d\n", (int) info.wifi_sta_disconnected.reason);
-    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+    WiFi.onDisconnect([](int reason) {
+      printf("Wi-Fi disconnected, reason %d\n", reason);
+    });
   }
 
   printf("download %s: starting at %lld bytes, internal RAM %u free, %u largest\n", name, have,
@@ -487,7 +480,7 @@ bool downloadURL(char const * URL, char const * path)
         if (!aborted && (WiFi.status() != WL_CONNECTED || wifiSuspect)) {
           printf("download: Wi-Fi %s (status %d), reconnecting\n", WiFi.status() == WL_CONNECTED ? "deaf" : "lost", (int) WiFi.status());
           wifiSuspect = false;
-          WiFi.disconnect(false, false);
+          WiFi.disconnect();
           delay(100);
           WiFi.reconnect();
           for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED && !aborted; ++i) {
@@ -501,49 +494,41 @@ bool downloadURL(char const * URL, char const * path)
       }
       show(true);
 
-      HTTPClient http;
-      int code = httpOpen(http, URL, "GET", have);
+      HttpRequest http;
+      int code = http.open(URL, "GET", have);
       long long before = have;
 
-      if (code == HTTP_CODE_PARTIAL_CONTENT) {
+      if (code == 206) {
         // the rest, from where the part ends
-        if (http.getSize() > 0)
-          total = have + http.getSize();
-      } else if (code == HTTP_CODE_OK) {
+        if (http.size() > 0)
+          total = have + http.size();
+      } else if (code == 200) {
         // everything: the server cannot resume, or there was nothing yet
         have  = 0;
         rateB = 0;
-        total = http.getSize();
-      } else if (code == HTTP_CODE_RANGE_NOT_SATISFIABLE && have > 0) {
+        total = http.size();
+      } else if (code == 416 && have > 0) {
         // asked from the end of the file: the part is the whole of it
-        http.end();
         complete = true;
         break;
       } else {
         if (code < 0)
-          snprintf(reason, sizeof(reason), "%s", http.errorToString(code).c_str());
+          snprintf(reason, sizeof(reason), "%s", HttpRequest::errorText(code));
         else
           snprintf(reason, sizeof(reason), "Server answered %d", code);
         printf("download %s: request failed (%s), Wi-Fi %s, RSSI %d dBm\n", name, reason,
                WiFi.status() == WL_CONNECTED ? "up" : "down", (int) WiFi.RSSI());
         wifiSuspect = code < 0;
-        http.end();
         ++failures;
         continue;
       }
 
       // plain file descriptors: stdio would cut the blocks up into its own buffer's size
       int file = open(part, O_WRONLY | O_CREAT | (have ? O_APPEND : O_TRUNC), 0666);
-      WiFiClient * stream = http.getStreamPtr();
-      if (file < 0 || !stream) {
-        snprintf(reason, sizeof(reason), file >= 0 ? "No data stream" : "Cannot write to the SD card");
-        if (file >= 0)
-          close(file);
-        http.end();
+      if (file < 0) {
+        snprintf(reason, sizeof(reason), "Cannot write to the SD card");
         ++failures;
-        if (file < 0)
-          break;              // retrying will not help
-        continue;
+        break;                    // retrying will not help
       }
 
       bool writeFailed = false;
@@ -554,15 +539,14 @@ bool downloadURL(char const * URL, char const * path)
       while (!aborted) {
         if (total > 0 && have + fill >= total)
           break;
-        int avail = stream->available();
-        if (avail > 0) {
-          int n = stream->read(buf + fill, imin(avail, limit - fill));
-          if (n > 0) {
-            fill    += n;
-            lastData = esp_timer_get_time();
-          }
+        int64_t t = esp_timer_get_time();
+        int n = http.read(buf + fill, limit - fill);
+        netUs += esp_timer_get_time() - t;
+        if (n > 0) {
+          fill    += n;
+          lastData = esp_timer_get_time();
           if (fill == limit) {
-            int64_t t = esp_timer_get_time();
+            t = esp_timer_get_time();
             writeFailed = write(file, buf, fill) != fill;
             sdUs += esp_timer_get_time() - t;
             have += fill;
@@ -575,16 +559,12 @@ bool downloadURL(char const * URL, char const * path)
             if (have % (512 * 1024) < BLOCK)
               fsync(file);
           }
-        } else if (!http.connected()) {
-          ended = "closed by the other end";
+        } else if (n == 0 || n == HttpRequest::READ_ERROR) {
+          ended = n == 0 ? "closed by the other end" : "connection failed";
           break;
         } else if (esp_timer_get_time() - lastData > STALLMS * 1000LL) {
           ended = "no data for 10 s";
           break;
-        } else {
-          int64_t t = esp_timer_get_time();
-          delay(2);
-          netUs += esp_timer_get_time() - t;
         }
         show(false);
       }
@@ -593,7 +573,7 @@ bool downloadURL(char const * URL, char const * path)
         have += fill;
       }
       close(file);
-      http.end();
+      http.close();
 
       if (writeFailed) {
         snprintf(reason, sizeof(reason), "Cannot write to the SD card");
@@ -1063,8 +1043,11 @@ static void migrateOldPreferences()
   if (!old.begin("PCEmulator", true))    // read only, so a fresh board does not get the namespace
     return;
   for (char const * key : { "SSID", "WiFiPsw", "NtpServer", "TimeZone", "RepoURL" })
-    if (old.isKey(key) && !preferences.isKey(key))
-      preferences.putString(key, old.getString(key));
+    if (old.isKey(key) && !preferences.isKey(key)) {
+      char value[256] = "";
+      old.getString(key, value, sizeof(value));
+      preferences.putString(key, value);
+    }
   for (char const * key : { "AutoBoot", "DriveLed", "dconf" })
     if (old.isKey(key) && !preferences.isKey(key))
       preferences.putInt(key, old.getInt(key));
@@ -1080,12 +1063,7 @@ static void migrateOldPreferences()
 
 void setup()
 {
-  Serial.begin(115200); delay(500);
-
-
-  disableCore0WDT();
-  delay(100); // experienced crashes without this delay!
-  disableCore1WDT();
+  Serial.begin(115200);
 
   preferences.begin("ESPPC", false);
   migrateOldPreferences();
@@ -1119,25 +1097,17 @@ void setup()
   if (hostSettings.autoBootSeconds == 0)
     ui.postFooter("Press DEL to enter SETUP");
 
-  // we need PSRAM for this app, but we will handle it manually, so please DO NOT enable PSRAM on your development env
-  #ifdef BOARD_HAS_PSRAM
-  ui.message("Warning", "Please disable PSRAM to improve performance!");
-  #endif
-
-  // note: we use just 2MB of PSRAM so the infamous PSRAM bug should not happen. But to avoid gcc compiler hack (-mfix-esp32-psram-cache-issue)
-  // we enable PSRAM at runtime, otherwise the hack slows down CPU too much (PSRAM_HACK is no more required).
+  // PSRAM is set up here rather than at boot, so that a board without it gets this message, and
+  // it is mapped but not given to the heap: the guest's RAM starts at its first byte (see
+  // sdkconfig.defaults)
   ui.postItem("PSRAM");
-  if (esp_spiram_init() != ESP_OK) {
+  if (esp_psram_init() != ESP_OK) {
     ui.postResult("Not found", TUI_POST_FAIL);
     fatal("This app requires a board with PSRAM!");
   }
-
-  #ifndef BOARD_HAS_PSRAM
-  esp_spiram_init_cache();
-  #endif
   {
     char r[32];
-    snprintf(r, sizeof(r), "%u KB OK", (unsigned)(esp_spiram_get_size() / 1024));
+    snprintf(r, sizeof(r), "%u KB OK", (unsigned)(esp_psram_get_size() / 1024));
     ui.postResult(r, TUI_POST_OK);
   }
 
@@ -1456,6 +1426,14 @@ void loop()
   vTaskDelete(NULL);
 
 #endif
+}
+
+
+// the IDF starts here, in the main task (core 1, see sdkconfig.defaults), as Arduino's loop task did
+extern "C" void app_main()
+{
+  setup();
+  loop();
 }
 
 

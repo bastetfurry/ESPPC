@@ -25,3 +25,8 @@ host/pctool
 
 # test images and logs (tests/run.sh)
 tests/build/
+# generated from sdkconfig.defaults by the ESP-IDF build
+sdkconfig.esp32dev
+sdkconfig.old
+dependencies.lock
+sdkconfig.esp32old

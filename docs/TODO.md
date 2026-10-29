@@ -23,9 +23,9 @@ Repositories are done and merged, see [repositories.md](repositories.md). Still 
   image from a repository.
 - **Paging:** a repository with more than 20 machines is only reachable by typing the page URL
   (`.../2`). A key to go to the next page would be nicer.
-- **Faster downloads:** about 180 KB/s now. The next limit is the lwIP and Wi-Fi buffer sizes the
-  Arduino framework is compiled with (TCP window 5760), which means building those libraries
-  ourselves.
+- **Faster downloads:** about 180 KB/s on the Arduino build. The next limit was the lwIP and
+  Wi-Fi buffer sizes (TCP window 5760), which the ESP-IDF build can now set in
+  `sdkconfig.defaults`; internal RAM is what they would cost.
 - Seen once, not reproduced: a LoadProhibited in lwIP's `poll_tcp` (tcp_slowtmr) during a
   download, before the Wi-Fi power fix.
 

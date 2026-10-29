@@ -45,6 +45,19 @@
 #include "soc/frc_timer_reg.h"
 #include "rom/lldesc.h"
 
+// ESPPC: ESP-IDF 5 no longer includes these through the headers above
+#include "esp_idf_version.h"
+#if ESP_IDF_VERSION_MAJOR >= 5
+  #include <string.h>
+  #include "esp_timer.h"
+  #include "soc/io_mux_reg.h"
+  #include "soc/rtc_io_reg.h"
+  #include "soc/gpio_sig_map.h"
+  #include "soc/gpio_periph.h"
+  #include "esp32/rom/gpio.h"
+  #include "driver/gpio.h"
+#endif
+
 #ifdef ARDUINO
 #include "Arduino.h"
 #endif
@@ -111,8 +124,9 @@ namespace fabgl {
 
   // ESPPC: the memw is for the PSRAM cache bug of ESP32s before revision 3, which have it fixed in
   // silicon. The CPU core runs it at every instruction, where it waits for all pending writes,
-  // so it is left out unless the build asks for it: -D ESPPC_PSRAM_WORKAROUND (see platformio.ini).
-  #ifdef ESPPC_PSRAM_WORKAROUND
+  // so it goes with the IDF's own workaround, CONFIG_SPIRAM_CACHE_WORKAROUND (see
+  // sdkconfig.defaults).
+  #if defined(CONFIG_SPIRAM_CACHE_WORKAROUND) || defined(ESPPC_PSRAM_WORKAROUND)
     #define PSRAM_WORKAROUND2 asm(" memw");
   #else
     #define PSRAM_WORKAROUND2

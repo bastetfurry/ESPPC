@@ -3,7 +3,8 @@
  */
 
 
-#include <Arduino.h>
+#include "esp_rom_sys.h"
+#include "compat.h"
 #include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
@@ -960,7 +961,7 @@ void SerialDebug::cmdVideoState()
     for (int i = 0; i < 2000 && !moved; ++i) {
       if (ga->VSync() != first)
         moved = true;
-      ets_delay_us(50);
+      esp_rom_delay_us(50);
     }
     writeFmt("scanline ISR %s\r\n", moved ? "running" : "STOPPED");
 
@@ -1335,10 +1336,10 @@ struct CoreLoadRun {
 void IRAM_ATTR coreLoadTask(void * arg)
 {
   auto run = (CoreLoadRun*) arg;
-  uint32_t last = esp_cpu_get_ccount();
+  uint32_t last = esp_cpu_get_cycle_count();
   uint64_t freeC = 0, totalC = 0;
   while (!run->stop) {
-    uint32_t now = esp_cpu_get_ccount();
+    uint32_t now = esp_cpu_get_cycle_count();
     uint32_t d   = now - last;
     last = now;
     totalC += d;
@@ -1503,10 +1504,10 @@ void SerialDebug::cmdOPLBench()
     write("no memory for the chip\r\n");
     return;
   }
-  uint32_t t0 = esp_cpu_get_ccount();
+  uint32_t t0 = esp_cpu_get_cycle_count();
   DBOPL::InitTables();
   chip->Setup(RATE);
-  uint32_t initCycles = esp_cpu_get_ccount() - t0;
+  uint32_t initCycles = esp_cpu_get_cycle_count() - t0;
 
   chip->WriteReg(0x01, 0x20);                        // waveform select enable
   for (int c = 0; c < 9; ++c) {
@@ -1527,13 +1528,13 @@ void SerialDebug::cmdOPLBench()
 
   static int32_t buf[BLOCK];
   int64_t peak = 0;
-  uint32_t start = esp_cpu_get_ccount();
+  uint32_t start = esp_cpu_get_cycle_count();
   for (int n = 0; n < RATE; n += BLOCK) {
     chip->GenerateBlock2(BLOCK, buf);
     for (int i = 0; i < BLOCK; ++i)
       peak = buf[i] > peak ? buf[i] : (-buf[i] > peak ? -buf[i] : peak);
   }
-  uint32_t cycles = esp_cpu_get_ccount() - start;
+  uint32_t cycles = esp_cpu_get_cycle_count() - start;
 
   uint32_t perSample = cycles / RATE;
   uint32_t mhz       = ESP.getCpuFreqMHz();
