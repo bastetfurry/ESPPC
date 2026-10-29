@@ -108,7 +108,15 @@ namespace fabgl {
   #define ASM_NOP asm(" NOP");
 
   #define PSRAM_WORKAROUND1 asm(" nop;nop;nop;nop");
-  #define PSRAM_WORKAROUND2 asm(" memw");
+
+  // ESPPC: the memw is for the PSRAM cache bug of ESP32s before revision 3, which have it fixed in
+  // silicon. The CPU core runs it at every instruction, where it waits for all pending writes,
+  // so it is left out unless the build asks for it: -D ESPPC_PSRAM_WORKAROUND (see platformio.ini).
+  #ifdef ESPPC_PSRAM_WORKAROUND
+    #define PSRAM_WORKAROUND2 asm(" memw");
+  #else
+    #define PSRAM_WORKAROUND2
+  #endif
 
 #endif
 

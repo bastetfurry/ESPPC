@@ -58,6 +58,12 @@ Olimex board has been tested.
 
 The board needs at least 4 MB **PSRAM** (the guest's RAM lives there) and **4 MB of flash**.
 
+The builds are for **ESP32 revision 3** chips (ESP32-D0WD-V3, as on current WROVER-E modules),
+which have the PSRAM cache bug of the earlier revisions fixed in silicon. On an older chip
+(`esptool.py chip_id` reports revision v1.x or v2.x), build it yourself with the
+`build_flags = -D ESPPC_PSRAM_WORKAROUND` line in `platformio.ini` uncommented, or the guest's
+memory can get corrupted now and then.
+
 ## Build & flash
 
 **Without building anything:** open [the installer](https://bastetfurry.github.io/ESPPC/) in
