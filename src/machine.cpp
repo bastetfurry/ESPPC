@@ -136,6 +136,7 @@ Machine::Machine() :
     m_EGAStride(80),
     m_postboxHostOpen(false),
     m_EGASwitches(0x09),
+    m_EGAMemKB(256),
     m_debugConsoleRequested(false),
     m_usbSerialRoute(0),
     m_breakAddr(0),
@@ -176,6 +177,10 @@ void Machine::init()
   i8086::setVideoMemStart(m_ramSizeKB > 640 ? 0xB0000 : 0xA0000);
 
   memset(s_memory, 0, RAM_SIZE);
+
+  // The EGA's upper 128 KB, after the guest's RAM in this core's half of the PSRAM (see ega.h)
+  m_EGA.setUpperMemory(s_memory + RAM_SIZE);
+  m_EGA.setSizeKB(m_EGAMemKB);
 
   // A real EGA BIOS, if one is configured, replaces the stub entirely: it carries its own
   // signature and provides the INT 10h implementation the stub only pretends to stand for.
@@ -1605,7 +1610,8 @@ void Machine::setCGAMode()
 
 // --- EGA ---------------------------------------------------------------------------------------
 //
-// The EGA's 128 KB of planar video memory and the 64 KB CGA buffer cannot both be held
+// The EGA's 128 KB of planar video memory in internal RAM (the upper 128 KB are in PSRAM) and
+// the 64 KB CGA buffer cannot both be held
 // in internal RAM on this board, so entering an EGA mode releases the CGA buffer and leaving one
 // puts it back. The video memory callbacks tolerate s_videoMemory being null meanwhile: a guest
 // write to 0xB8000 while an EGA graphics mode is up is discarded, which is also what a real EGA
@@ -1840,7 +1846,7 @@ bool Machine::setEGAMode(int biosMode, bool clear)
     setEGADefaultPalette(false);
 
     m_EGAStride = textColumns;
-    m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), textColumns, m_EGA.bankMask(), m_EGA.offsetMask());
+    m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), textColumns, m_EGA.renderBankMask(), m_EGA.renderOffsetMask());
     m_graphicsAdapter.setEGAStartAddress(0);
     resetEGALineCompare();
     m_graphicsAdapter.setEGACharHeight(16);
@@ -1874,9 +1880,8 @@ bool Machine::setEGAMode(int biosMode, bool clear)
   // software page-flips through them. With two banks everything past byte-column 16384 wrapped
   // onto page 0, which is what made Planet X3 glitch.
   //
-  // All of them give 32768 byte-columns per plane, so two pages in mode 0Eh and four in 0Dh --
-  // still half of a real EGA's 64 KB per plane, but enough for the double buffering software
-  // actually does.
+  // All of them get the whole card: 65536 byte-columns per plane on a 256 KB EGA, as software
+  // expects, or 32768 on a 128 KB one (allocVRAM() narrows it to the card's size).
   constexpr int banks = EGA_BANK_COUNT;
 
   // stop the scanline ISR before anything it reads is freed or reallocated
@@ -1937,7 +1942,7 @@ bool Machine::setEGAMode(int biosMode, bool clear)
   setEGADefaultPalette(biosMode == 0x0d || biosMode == 0x0e);
 
   m_EGAStride = stride;
-  m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), stride, m_EGA.bankMask(), m_EGA.offsetMask());
+  m_graphicsAdapter.setEGAVideoBuffer(m_EGA.banks(), stride, m_EGA.renderBankMask(), m_EGA.renderOffsetMask());
   m_graphicsAdapter.setEGAStartAddress(0);
   resetEGALineCompare();
   m_graphicsAdapter.setEGAPalette(m_EGAACPalette);

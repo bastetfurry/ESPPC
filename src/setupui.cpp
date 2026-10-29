@@ -537,13 +537,14 @@ char const * const RAM_OPTS[]   = { "64 KB", "128 KB", "192 KB", "256 KB", "320 
                                     "448 KB", "512 KB", "576 KB", "640 KB", "704 KB" };
 char const * const VIDEO_OPTS[] = { "CGA", "EGA (BIOS ROM)", "Tandy 1000" };
 char const * const ONOFF_OPTS[] = { "Disabled", "Enabled" };
+char const * const EGAMEM_OPTS[] = { "256 KB", "128 KB" };
 char const * const USB_OPTS[]   = { "Not Connected", "COM1", "COM2" };
 char const * const HWDISK_OPTS[] = { "BIOS Only", "Direct Access" };
 char const * const CLOCK_OPTS[]  = { "AT (MC146818)", "MM58174", "None" };
 
 enum {
   F_DESC, F_FD0, F_FD1, F_HD0, F_HD0CHS, F_HD1, F_HD1CHS,
-  F_BOOT, F_RAM, F_HWDISK, F_CLOCK, F_VIDEO, F_COMPOSITE, F_EGAROM, F_TSOUND, F_TDAC, F_ADLIB, F_DEBUG, F_USB, F_HWSER,
+  F_BOOT, F_RAM, F_HWDISK, F_CLOCK, F_VIDEO, F_COMPOSITE, F_EGAROM, F_EGAMEM, F_TSOUND, F_TDAC, F_ADLIB, F_DEBUG, F_USB, F_HWSER,
   F_COUNT
 };
 
@@ -562,6 +563,7 @@ Field const FIELDS[F_COUNT] = {
   { "Video Adapter",    Kind::Choice, "CGA is the original adapter. EGA runs a real EGA BIOS option ROM. Tandy 1000 adds its 16 colour modes 8 and 9 and the three voice sound chip.", VIDEO_OPTS, 3 },
   { "  Composite Mon.", Kind::Choice, "A composite colour monitor instead of RGB: CGA graphics with the colour burst on show NTSC artifact colours, 160x200 in 16 colours, for games that offer a composite mode.", ONOFF_OPTS, 2 },
   { "EGA BIOS ROM",     Kind::Path,   "Option ROM image for the EGA adapter. None uses /spiffs/ega.bin.", nullptr, 0 },
+  { "  EGA Memory",     Kind::Choice, "256 KB, as most EGA cards had and games expect, some without asking. 128 KB is the smaller card, whose memory wraps at 32 KB per plane.", EGAMEM_OPTS, 2 },
   { "Tandy Sound",      Kind::Choice, "The Tandy 1000's three voice SN76496 at port C0h, as on the TNDY style sound cards, for games that offer Tandy sound. Tandy 1000 video always has it.", ONOFF_OPTS, 2 },
   { "  Tandy DAC",      Kind::Choice, "The Tandy 1000 SL/TL digital sound next to the sound chip, as KQ5 and other Sierra games use it for speech and effects. Played through the BIOS, INT 1Ah.", ONOFF_OPTS, 2 },
   { "AdLib",            Kind::Choice, "An AdLib sound card: the Yamaha OPL2 FM synthesiser at port 388h, the music of most games from the late 1980s on. It is synthesised on the video core, after the picture.", ONOFF_OPTS, 2 },
@@ -614,7 +616,7 @@ void valueText(Values & v, int f, char * out, int size)
 bool isVisible(Values & v, int f)
 {
   // the ROM only matters for the EGA path, and the Tandy video has the sound chip anyway
-  if (f == F_EGAROM)
+  if (f == F_EGAROM || f == F_EGAMEM)
     return v.choice[F_VIDEO] == 1;
   if (f == F_COMPOSITE)
     return v.choice[F_VIDEO] == 0;
@@ -654,6 +656,7 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
   v->choice[F_TSOUND] = item->tandySound ? 1 : 0;
   v->choice[F_TDAC]   = item->tandyDAC ? 1 : 0;
   v->choice[F_COMPOSITE] = item->composite ? 1 : 0;
+  v->choice[F_EGAMEM]    = item->egaMemKB == 128 ? 1 : 0;
   v->choice[F_ADLIB]  = item->adlib ? 1 : 0;
   v->choice[F_HWDISK] = item->hwDisk ? 1 : 0;
   v->choice[F_CLOCK]  = item->clock % 3;
@@ -889,6 +892,7 @@ bool setupEditMachine(TextUI & ui, MachineConf & mconf, int idx)
       item->tandySound   = v->choice[F_TSOUND] != 0;
       item->tandyDAC     = v->choice[F_TDAC] != 0;
       item->composite    = v->choice[F_COMPOSITE] != 0;
+      item->egaMemKB     = v->choice[F_EGAMEM] ? 128 : 256;
       item->adlib        = v->choice[F_ADLIB] != 0;
       item->hwDisk       = v->choice[F_HWDISK] != 0;
       item->clock        = v->choice[F_CLOCK];

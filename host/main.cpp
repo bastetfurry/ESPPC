@@ -5,13 +5,16 @@
 // The machine, with the tags of mconfs.txt as tag=value (a bare tag means 1):
 //   fd0= fd1= hd0= hd1=   disk images        chs0= chs1=  C,H,S of a hard disk
 //   boot=fd0|fd1|hd0|hd1  ram=KB             video=cga|ega|tandy   egarom=FILE (default data/fs/ega.bin)
+//   egamem=256|128        the EGA's memory (256 KB default)
 //   tandysound tandydac adlib composite hwdisk   clock=at|mm58174|none
 //   com=1|2               an 8250 at COM1 or COM2 with nothing attached: what it sends is dropped
 //
 // The script, at emulated times in seconds (decimals allowed):
 //   type=T:TEXT           types TEXT on the keyboard from T on (US layout, \n is Enter)
+//   hold=T:NAME:SECONDS   holds one key down that long (names as for key=)
 //   key=T:NAME[+NAME..]   presses keys one after the other: ENTER ESC SPACE TAB BKSP UP DOWN LEFT
-//                         RIGHT HOME END PGUP PGDN INS DEL F1-F10, or a single character
+//                         RIGHT HOME END PGUP PGDN INS DEL F1-F10, KP2 KP4 KP6 KP8 (the keypad's
+//                         arrows, which some games read instead), or a single character
 //   shot=T:FILE.ppm       draws a frame with the emulator's own renderer and writes it
 //   text=T                prints the text screen (CGA or EGA text modes)
 //   regs=T                prints the CPU registers and the code at CS:IP
@@ -97,6 +100,7 @@ static int keyNameToScancode(std::string const & name)
     { "UP", 0x275 }, { "DOWN", 0x272 }, { "LEFT", 0x26b }, { "RIGHT", 0x274 },
     { "HOME", 0x26c }, { "END", 0x269 }, { "PGUP", 0x27d }, { "PGDN", 0x27a },
     { "INS", 0x270 }, { "DEL", 0x271 },
+    { "KP2", 0x72 }, { "KP4", 0x6b }, { "KP6", 0x74 }, { "KP8", 0x75 },   // the keypad's arrows, without E0
     { "F1", 0x05 }, { "F2", 0x06 }, { "F3", 0x04 }, { "F4", 0x0c }, { "F5", 0x03 },
     { "F6", 0x0b }, { "F7", 0x83 }, { "F8", 0x0a }, { "F9", 0x01 }, { "F10", 0x09 },
   };
@@ -108,10 +112,10 @@ static int keyNameToScancode(std::string const & name)
   return -1;
 }
 
-// a key press as the keyboard sends it: make, held 40 ms, break, then 40 ms before the next
-static int64_t addKeyStroke(int64_t us, int code)
+// a key press as the keyboard sends it: make, held 40 ms (or hold), break, then 40 ms before the next
+static int64_t addKeyStroke(int64_t us, int code, int64_t HOLD = 40000)
 {
-  constexpr int64_t HOLD = 40000, GAP = 40000;
+  constexpr int64_t GAP = 40000;
   bool shift = code & 0x100, ext = code & 0x200;
   int  sc    = code & 0xff;
   auto add = [&](int64_t t, int c) { s_events.push_back({ t, Event::Scancode, c, "" }); };
@@ -416,6 +420,7 @@ static int run(int argc, char * argv[])
   bool tandySound = false, tandyDAC = false, adlib = false, composite = false, hwDisk = false, write = false;
   std::string clock = "at";
   int  com = 0;
+  int  egaMem = 256;
   int64_t endUs = 30000000;
 
   for (int i = 0; i < argc; ++i) {
@@ -441,6 +446,7 @@ static int run(int argc, char * argv[])
     else if (tag == "hwdisk")      hwDisk = val != "0";
     else if (tag == "clock")       clock = val;
     else if (tag == "com")         com = atoi(val.c_str());
+    else if (tag == "egamem")      egaMem = atoi(val.c_str());
     else if (tag == "mips")        s_nsPerInstruction = 1000.0 / atof(val.c_str());
     else if (tag == "write")       write = val != "0";
     else if (tag == "time")        endUs = secondsToUs(val.c_str());
@@ -471,6 +477,17 @@ static int run(int argc, char * argv[])
         }
         t = addKeyStroke(t, code);
       }
+    } else if (tag == "hold") {
+      // hold=T:NAME:SECONDS, one key held down (make, then the break that much later), for games
+      // that move while a key is down
+      auto colon2 = arg.find(':');
+      std::string name = arg.substr(0, colon2);
+      int code = keyNameToScancode(name);
+      if (code < 0 || colon2 == std::string::npos) {
+        fprintf(stderr, "hold: use hold=T:KEY:SECONDS\n");
+        return 1;
+      }
+      addKeyStroke(secondsToUs(at.c_str()), code, secondsToUs(arg.substr(colon2 + 1).c_str()));
     } else if (tag == "key") {
       int64_t t = secondsToUs(at.c_str());
       size_t p = 0;
@@ -507,6 +524,7 @@ static int run(int argc, char * argv[])
     s_machine->setClock(Machine::Clock::None);
   if (com)
     s_machine->bridgeCOM(com, nullptr, [](void *, uint8_t) { });
+  s_machine->setEGAMemory(egaMem);
 
   for (int i = 0; i < 4; ++i) {
     if (disk[i].empty())

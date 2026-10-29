@@ -199,6 +199,8 @@ void MachineConf::loadFromFile(FILE * file)
       item->setVideoAdapter(value);
     else if (strcmp("egarom", tag) == 0)
       item->setEgaRom(value);
+    else if (strcmp("egamem", tag) == 0)
+      item->setEgaMem(value);
     else if (strcmp("tandysound", tag) == 0)
       item->setTandySound(value);
     else if (strcmp("tandydac", tag) == 0)
@@ -257,6 +259,9 @@ void MachineConf::saveToFile(FILE * file)
         fputs(item->egaRom, file);
         fputs("\" ", file);
       }
+      // only written when not the 256 KB, the default
+      if (item->egaMemKB == 128)
+        fputs("egamem 128 ", file);
     } else if (item->videoAdapter == 2) {
       fputs("video tandy ", file);
     }

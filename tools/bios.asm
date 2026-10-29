@@ -859,7 +859,7 @@ int10_not_ega_call:
   ;
   ; Leaving 1Bh unanswered sends it down the EGA path instead, where it reads the switch settings
   ; from AH=12h/BL=10h: CL=09h gives adapter byte 0x04, which SCREEN 7, 8 and 9 all accept, and
-  ; the 128 KB we report picks the 16 colour variant of SCREEN 9.
+  ; 128 KB or more picks the 16 colour variant of SCREEN 9.
   ;
   ; int10_get_state_info below is kept, and kept correct, for anything that asks for it another
   ; way, but nothing dispatches to it.
@@ -2802,7 +2802,11 @@ int10_video_subsystem_cfg:
   cmp   bl, 0x10
   jne   int10_video_subsystem_cfg_done
   mov   bh, 0          ; colour mode in effect
-  mov   bl, 1          ; 128 KB of video memory (four 32 KB planes, see src/ega.h)
+  push  ax
+  mov   ah, 0x0e       ; which adapter, and in AH the EGA's memory: 1 = 128 KB, 3 = 256 KB
+  emu_helper           ; (256 unless the machine has "egamem 128", see src/ega.h)
+  mov   bl, ah
+  pop   ax
   mov   ch, 0          ; feature bits
   ; Switch settings. 0x09 is what the EGA BIOS option ROM's own POST is happy with: it drives
   ; the ROM's configuration choice and, with it, the 350 scanlines per frame that

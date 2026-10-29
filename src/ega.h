@@ -18,11 +18,15 @@
   planes at once. The renderer wants the same layout, because a scanline needs all four planes of a
   byte-column together.
 
-  Memory is split into eight banks of 16 KB so that it can be allocated on a fragmented heap, and
-  it is allocated once and kept: see EGA::allocVRAM().
+  Memory is split into banks of 16 KB so that it can be allocated on a fragmented heap, and it is
+  allocated once and kept: see EGA::allocVRAM().
 
-  Addressable offset range is 0..0x7FFF (32 K byte-columns per plane), which covers mode 10h's
-  28000. A real EGA has 64 KB per plane; the extra is off-screen memory we cannot afford.
+  A 256 KB EGA, as most were and as games assume (Monkey Island's EGA version and Commander Keen
+  keep their cursor buffer and their tiles above 32 KB per plane without asking): 64 KB per plane,
+  offsets 0..0xFFFF. The lower half, everything a page on the screen uses, is internal RAM; the
+  upper half lives in PSRAM after the guest's RAM, which only this core reads (setUpperMemory()).
+  So the renderer, on the other core, sees the lower half only: a display start above 0x7FFF wraps
+  there. setSizeKB(128) makes it a 128 KB card, whose offsets wrap at 0x8000.
  */
 
 
@@ -33,8 +37,8 @@
 #include <stddef.h>
 
 
-// Bytes per bank and number of banks -- 8 * 4096 uint32 = 8 * 16 KB = 128 KB total, the same
-// amount as before in half sized pieces.
+// Bytes per bank and number of banks -- 16 * 4096 uint32 = 16 * 16 KB = 256 KB, of which the first
+// EGA_INTERNAL_BANKS are internal RAM and the rest PSRAM.
 //
 // The size matters more than the total. Internal RAM here is chopped up enough that the largest
 // free block sits around 47 KB with a mode running, so four 32 KB banks could not reliably be
@@ -45,8 +49,10 @@
 // index banks on the per scanline hot path and cannot afford a runtime divide. Change both.
 #define EGA_BANK_ENTRIES  4096
 #define EGA_BANK_SHIFT    12
-#define EGA_BANK_COUNT    8
-#define EGA_OFFSET_MASK   ((EGA_BANK_ENTRIES * EGA_BANK_COUNT) - 1)   // 0x7FFF
+#define EGA_BANK_COUNT    16
+#define EGA_INTERNAL_BANKS 8
+#define EGA_OFFSET_MASK   ((EGA_BANK_ENTRIES * EGA_BANK_COUNT) - 1)   // 0xFFFF
+#define EGA_UPPER_BYTES   ((EGA_BANK_COUNT - EGA_INTERNAL_BANKS) * EGA_BANK_ENTRIES * 4)   // 128 KB
 
 
 class EGA {
@@ -56,21 +62,32 @@ public:
   EGA();
   ~EGA();
 
-  // Makes all EGA_BANK_COUNT banks resident in internal RAM (keeping any that already are) and
-  // sets the address masks for a mode that uses the first `banks` of them. Returns false, with
-  // everything freed, if the memory cannot be found.
+  // Makes the internal banks resident (keeping any that already are), places the upper ones in
+  // the PSRAM given to setUpperMemory(), and sets the address masks for a mode that uses the first
+  // `banks` of them, as far as the card's size goes. Returns false, with everything freed, if the
+  // memory cannot be found.
   //
-  // banks must be 1, 2, 4 or 8 so that the bank index can be masked rather than compared. It only
-  // narrows the addressing; the memory is always the full set, because reallocating it on mode
+  // banks must be 1, 2, 4, 8 or 16 so that the bank index can be masked rather than compared. It
+  // only narrows the addressing; the memory is always the full set, because reallocating it on mode
   // changes is what fragmented the heap badly enough to lose it (see allocVRAM()).
   bool allocVRAM(int banks);
   void freeVRAM();
   bool hasVRAM()                                 { return m_bank[0] != nullptr; }
 
+  // EGA_UPPER_BYTES of PSRAM for the upper 128 KB, and the card's size, 128 or 256 KB (256 needs
+  // the PSRAM). Before allocVRAM().
+  void setUpperMemory(void * upper)              { m_upper = (uint32_t *) upper; }
+  void setSizeKB(int kb)                         { m_sizeKB = kb; }
+  int  sizeKB() const                            { return (m_sizeKB == 256 && m_upper) ? 256 : 128; }
+
   // bank table for the renderer in GraphicsAdapter, with the masks it needs to index it
   uint32_t * const * banks() const               { return m_bank; }
   uint32_t           bankMask() const            { return m_bankMask; }
   uint32_t           offsetMask() const          { return m_offsetMask; }
+  // the same narrowed to the internal banks: the renderer runs on the other core and must not read
+  // the PSRAM of this one
+  uint32_t           renderBankMask() const      { return m_bankMask & (EGA_INTERNAL_BANKS - 1); }
+  uint32_t           renderOffsetMask() const    { return m_offsetMask & (EGA_INTERNAL_BANKS * EGA_BANK_ENTRIES - 1); }
 
   void clearVRAM();
 
@@ -257,6 +274,8 @@ private:
   static const uint32_t s_expand[16];
 
   uint32_t * m_bank[EGA_BANK_COUNT];
+  uint32_t * m_upper;             // PSRAM for the banks from EGA_INTERNAL_BANKS on, or null
+  int        m_sizeKB;            // 128 or 256
   uint32_t   m_bankMask;          // banks - 1, so the bank index is a mask not a compare
   uint32_t   m_offsetMask;        // banks * EGA_BANK_ENTRIES - 1
 

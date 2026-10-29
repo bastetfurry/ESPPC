@@ -1331,6 +1331,7 @@ void setup()
     printf("Sound: AdLib (OPL2) at 388h\n");
     machine->setAdLib(true);
   }
+  machine->setEGAMemory(conf->egaMemKB);
   if (conf->composite && conf->videoAdapter == 0) {
     printf("Monitor: composite colour\n");
     machine->setComposite(true);

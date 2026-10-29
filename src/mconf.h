@@ -121,6 +121,7 @@ struct MachineConfItem {
   uint8_t           hwSerial;                 // "hwserial": port on the U1 header, 0 = off, 1 = COM1, 2 = COM2
   uint8_t           videoAdapter;             // "video": 0 = CGA (default), 1 = EGA, 2 = Tandy 1000
   char            * egaRom;                   // "egarom": path to the EGA BIOS option ROM
+  int               egaMemKB;                 // "egamem": the EGA's memory, 256 (default) or 128 KB
   bool              tandySound;               // "tandysound": SN76496 at C0h without the Tandy video
   bool              tandyDAC;                 // "tandydac": the SL/TL DAC, needs the sound chip
   bool              composite;                // "composite": a composite colour monitor on the CGA
@@ -143,6 +144,7 @@ struct MachineConfItem {
       hwSerial(0),
       videoAdapter(0),
       egaRom(nullptr),
+      egaMemKB(256),
       tandySound(false),
       tandyDAC(false),
       composite(false),
@@ -193,6 +195,9 @@ struct MachineConfItem {
     tandyDAC = value && (value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
                          value[0] == 't' || value[0] == 'T');
   }
+
+  // "egamem 128": a 128 KB EGA instead of the usual 256 KB, whose memory wraps at 32 KB per plane
+  void setEgaMem(char const * value)            { egaMemKB = (value && atoi(value) == 128) ? 128 : 256; }
 
   // "composite 1": the CGA machine drives a composite colour monitor, so graphics modes with the
   // colour burst on show NTSC artifact colours

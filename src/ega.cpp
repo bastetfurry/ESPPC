@@ -11,12 +11,13 @@
 #include <string.h>
 
 #include "esp_heap_caps.h"
+#include "esp_attr.h"
 
 #include "ega.h"
 
 
 // plane nibble -> one 0xff/0x00 byte lane per plane
-const uint32_t EGA::s_expand[16] = {
+DRAM_ATTR const uint32_t EGA::s_expand[16] = {   // in DRAM: read on every planar write
   0x00000000, 0x000000ff, 0x0000ff00, 0x0000ffff,
   0x00ff0000, 0x00ff00ff, 0x00ffff00, 0x00ffffff,
   0xff000000, 0xff0000ff, 0xff00ff00, 0xff00ffff,
@@ -27,6 +28,8 @@ const uint32_t EGA::s_expand[16] = {
 EGA::EGA()
 {
   memset(m_bank, 0, sizeof(m_bank));
+  m_upper      = nullptr;
+  m_sizeKB     = 256;
   m_bankMask   = EGA_BANK_COUNT - 1;
   m_offsetMask = EGA_OFFSET_MASK;
   m_oddEven    = false;
@@ -44,8 +47,11 @@ EGA::~EGA()
 
 bool EGA::allocVRAM(int banks)
 {
-  if (banks != 1 && banks != 2 && banks != 4 && banks != 8)
-    banks = EGA_BANK_COUNT;
+  int count = sizeKB() == 256 ? EGA_BANK_COUNT : EGA_INTERNAL_BANKS;
+  if (banks != 1 && banks != 2 && banks != 4 && banks != 8 && banks != 16)
+    banks = count;
+  if (banks > count)
+    banks = count;
 
   m_bankMask   = (uint32_t)banks - 1;
   m_offsetMask = (uint32_t)banks * EGA_BANK_ENTRIES - 1;
@@ -56,12 +62,12 @@ bool EGA::allocVRAM(int banks)
   // just been reallocated into the holes: 85 KB free, but in pieces of 16372 bytes, twelve short.
   // The EGA ROM's POST switches modes exactly like that, dropped to CGA, and failed its plane
   // test with 1 long 3 short. Allocated once, early, the planes never have to be found again.
-  for (int i = 0; i < EGA_BANK_COUNT; ++i) {
+  for (int i = 0; i < EGA_INTERNAL_BANKS; ++i) {
     if (!m_bank[i]) {
       m_bank[i] = (uint32_t*) heap_caps_malloc(EGA_BANK_ENTRIES * sizeof(uint32_t),
                                                MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
       if (!m_bank[i]) {
-        printf("EGA: bank %d of %d failed, internal heap free %d (largest %d)\n", i, EGA_BANK_COUNT,
+        printf("EGA: bank %d of %d failed, internal heap free %d (largest %d)\n", i, EGA_INTERNAL_BANKS,
                heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         freeVRAM();
@@ -70,18 +76,19 @@ bool EGA::allocVRAM(int banks)
       memset(m_bank[i], 0, EGA_BANK_ENTRIES * sizeof(uint32_t));
     }
   }
+  // the upper half in PSRAM, on a 256 KB card
+  for (int i = EGA_INTERNAL_BANKS; i < EGA_BANK_COUNT; ++i)
+    m_bank[i] = count == EGA_BANK_COUNT ? m_upper + (i - EGA_INTERNAL_BANKS) * EGA_BANK_ENTRIES : nullptr;
   return true;
 }
 
 
 void EGA::freeVRAM()
 {
-  for (int i = 0; i < EGA_BANK_COUNT; ++i) {
-    if (m_bank[i]) {
+  for (int i = 0; i < EGA_INTERNAL_BANKS; ++i)
+    if (m_bank[i])
       heap_caps_free(m_bank[i]);
-      m_bank[i] = nullptr;
-    }
-  }
+  memset(m_bank, 0, sizeof(m_bank));     // the upper ones are PSRAM, not ours to free
 }
 
 

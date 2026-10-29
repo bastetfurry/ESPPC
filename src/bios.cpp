@@ -329,12 +329,14 @@ void BIOS::helpersEntry()
 
     // AH = 0x0E, which adapter is fitted?
     //   returns AL = 0 CGA, 1 EGA (the EGA BIOS ROM is loaded), 2 Tandy 1000
+    //           AH = the EGA's memory as INT 10h AH=12h BL=10h reports it: 1 = 128 KB, 3 = 256 KB
     //
     // INT 10h AH=10h..12h are EGA calls. A CGA BIOS leaves the registers alone for them, and
     // that is how software tells the two apart, so bios.asm only answers them when this says so.
     // A Tandy answers AH=10h AL=00h..02h, its palette calls, and nothing else of the three.
     case 0x0e:
       i8086::setAL(m_machine->egaBiosInstalled() ? 1 : (m_machine->tandy() ? 2 : 0));
+      i8086::setAH(m_machine->EGAMemory() / 64 - 1);
       break;
 
     // AH = 0x0B, video mode hook, called from int10_set_vm before it programs the CGA registers.

@@ -137,6 +137,7 @@ desc "Rescue" fd0 "/spiffs/rescue.img" boot fd0
 | `ram` | KB of conventional memory, 64 to 704 in steps of 64, default 640 |
 | `video` | `cga` (default), `ega` or `tandy` |
 | `egarom` | another EGA BIOS than `/spiffs/ega.bin` |
+| `egamem` | `128` for a 128 KB EGA; the default is 256 KB, as games expect (the upper half lives in PSRAM) |
 | `composite` | `1` for a composite colour monitor on CGA |
 | `tandysound` | `1` for the SN76496 on CGA or EGA (Tandy video always has it) |
 | `tandydac` | `1` for the Tandy SL/TL DAC |

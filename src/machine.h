@@ -204,6 +204,10 @@ public:
   void fdcInterrupt()                          { m_PIC8259A.signalInterrupt(6); }
   void hdcInterrupt()                          { m_PIC8259A.signalInterrupt(5); }
 
+  // The EGA's memory, 256 KB (the default, the upper half in PSRAM) or 128 KB. Before run().
+  void setEGAMemory(int kb)                    { m_EGAMemKB = kb; }
+  int  EGAMemory() const                       { return m_EGA.sizeKB(); }   // what the card has
+
   void setComposite(bool value)                { m_composite = value; }
   bool composite() const                       { return m_composite; }
   bool compositeCapable() const                { return !m_tandy && !m_egaBiosLoaded; }
@@ -651,6 +655,7 @@ private:
   int                      m_EGAStride;              // byte-columns per scanline, to re-register
   uint8_t                  m_EGAMiscOutput;
   uint8_t                  m_EGASwitches;     // EGA configuration DIP block, read via 0x3c2
+  int                      m_EGAMemKB;        // 128 or 256, see setEGAMemory()
 
   SerialDebug              m_serialDebug;
   bool                     m_debugConsoleRequested;
