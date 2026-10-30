@@ -120,11 +120,31 @@ uint8_t            i8086::s_flags[10];
 // register access first had to load the pointer
 #define regs8      i8086::s_regs
 #define regs16     ((uint16_t *) i8086::s_regs)
-static int32_t    regs_offset;
-static uint8_t    i_mod_size, i_d, i_w, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en;
-static uint16_t   seg_override;
-static uint32_t   op_source, op_dest, set_flags_type;
-static int32_t    op_to_addr, op_from_addr;
+// The decoder's state in one struct: Xtensa loads every global's address from a literal pool, so
+// as separate variables each needed its own address load, where one base register serves them all
+static struct {
+  int32_t  regs_offset;
+  uint32_t op_source, op_dest, set_flags_type;
+  int32_t  op_to_addr, op_from_addr;
+  uint16_t seg_override;
+  uint8_t  i_mod_size, i_d, i_w, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en;
+} cs;
+#define regs_offset     cs.regs_offset
+#define op_source       cs.op_source
+#define op_dest         cs.op_dest
+#define set_flags_type  cs.set_flags_type
+#define op_to_addr      cs.op_to_addr
+#define op_from_addr    cs.op_from_addr
+#define seg_override    cs.seg_override
+#define i_mod_size      cs.i_mod_size
+#define i_d             cs.i_d
+#define i_w             cs.i_w
+#define raw_opcode_id   cs.raw_opcode_id
+#define xlat_opcode_id  cs.xlat_opcode_id
+#define extra           cs.extra
+#define rep_mode        cs.rep_mode
+#define seg_override_en cs.seg_override_en
+#define rep_override_en cs.rep_override_en
 
 
 void *                    i8086::s_context;
