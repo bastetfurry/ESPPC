@@ -786,6 +786,8 @@ void Machine::stepCPU()
 }
 
 
+// In flash, unlike the device ticks it calls: moved to IRAM it still took 14 cycles per
+// instruction (TOPBENCH, the monitor's 'm'), the same as from flash. Its cost is the work.
 void Machine::tick(int n)
 {
   m_ticksCounter += n;
