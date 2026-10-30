@@ -170,6 +170,11 @@ public:
     ReadVideoMemory16  readVideoMemory16;
     Interrupt          interrupt;
     Acknowledge        acknowledge;
+    // the decoder's tables, copied in from i8086.cpp by reset(): reached from the same base, they
+    // cost no l32r of their own
+    uint8_t            optcodes[256], parity[256], ex_data[256], xlat_ids[256], std_flags[256];
+    uint8_t            i_mod_adder[256], base_size[256], i_w_adder[256];
+    uint8_t            jxx_dec_a[8], jxx_dec_b[8], jxx_dec_c[8], jxx_dec_d[8], RM_BASE[8], RM_INDEX[8];
   };
   static State s_state;
 

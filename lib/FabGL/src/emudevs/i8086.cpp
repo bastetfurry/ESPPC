@@ -132,14 +132,30 @@ i8086::State i8086::s_state;
 #define rep_mode        i8086::s_state.rep_mode
 #define seg_override_en i8086::s_state.seg_override_en
 #define rep_override_en i8086::s_state.rep_override_en
+#define optcodes        i8086::s_state.optcodes
+#define parity          i8086::s_state.parity
+#define ex_data         i8086::s_state.ex_data
+#define xlat_ids        i8086::s_state.xlat_ids
+#define std_flags       i8086::s_state.std_flags
+#define i_mod_adder     i8086::s_state.i_mod_adder
+#define base_size       i8086::s_state.base_size
+#define i_w_adder       i8086::s_state.i_w_adder
+#define jxx_dec_a       i8086::s_state.jxx_dec_a
+#define jxx_dec_b       i8086::s_state.jxx_dec_b
+#define jxx_dec_c       i8086::s_state.jxx_dec_c
+#define jxx_dec_d       i8086::s_state.jxx_dec_d
+#define RM_BASE         i8086::s_state.RM_BASE
+#define RM_INDEX        i8086::s_state.RM_INDEX
 
 
 
 
 // Table 0: R/M mode 1/2 "register 1" lookup
-// ESPPC: every table the core reads is DRAM_ATTR. Static arrays that are never written are moved
-// to .rodata by the compiler, which is flash, read through the cache the guest's RAM in PSRAM keeps
-// evicting: optcodes (read at every instruction), the ModRM and the Jcc tables had gone there.
+// ESPPC: every table the core reads is in internal RAM. Static arrays that are never written are
+// moved to .rodata by the compiler, which is flash, read through the cache the guest's RAM in PSRAM
+// keeps evicting: optcodes (read at every instruction), the ModRM and the Jcc tables had gone there.
+// The ones below are DRAM_ATTR; those named ..._init are only templates, read once by initTables()
+// into i8086::s_state, where the core finds them next to its other state.
 static uint8_t DRAM_ATTR rm_mode12_reg1[]  = { 3, 3, 5, 5, 6, 7, 5, 3 };
 
 // Table 1: R/M mode 1/2 "register 2" lookup
@@ -162,7 +178,7 @@ static uint8_t DRAM_ATTR rm_mode0_disp[]   = { 0, 0, 0, 0, 0, 0, 1, 0 };
 static uint8_t DRAM_ATTR rm_mode0_dfseg[]  = { 11, 11, 10, 10, 11, 11, 11, 11 };
 
 // Table 8: Translation of raw opcode index ("Raw ID") to function number ("Xlat'd ID")
-static uint8_t DRAM_ATTR xlat_ids[] = {   9,  9,  9,  9,  7,  7, 25, 26,  9,  9,  9,  9,  7,  7, 25, 50,
+static const uint8_t xlat_ids_init[256] = {   9,  9,  9,  9,  7,  7, 25, 26,  9,  9,  9,  9,  7,  7, 25, 50,
                                 9,  9,  9,  9,  7,  7, 25, 26,  9,  9,  9,  9,  7,  7, 25, 26,
                                 9,  9,  9,  9,  7,  7, 27, 28,  9,  9,  9,  9,  7,  7, 27, 28,
                                 9,  9,  9,  9,  7,  7, 27, 29,  9,  9,  9,  9,  7,  7, 27, 29,
@@ -180,7 +196,7 @@ static uint8_t DRAM_ATTR xlat_ids[] = {   9,  9,  9,  9,  7,  7, 25, 26,  9,  9,
                                 48,  0, 23, 23, 49, 45,  6,  6, 46, 46, 46, 46, 46, 46,  5,  5 };
 
 // Table 9: Translation of Raw ID to Extra Data
-static uint8_t DRAM_ATTR ex_data[] = {  0,  0,  0,  0,  0,  0,  8,  8,  1,  1,  1,  1,  1,  1,  9, 36,
+static const uint8_t ex_data_init[256] = {  0,  0,  0,  0,  0,  0,  8,  8,  1,  1,  1,  1,  1,  1,  9, 36,
                               2,  2,  2,  2,  2,  2, 10, 10,  3,  3,  3,  3,  3,  3, 11, 11,
                               4,  4,  4,  4,  4,  4,  8,  0,  5,  5,  5,  5,  5,  5,  9,  1,
                               6,  6,  6,  6,  6,  6, 10,  2,  7,  7,  7,  7,  7,  7, 11,  0,
@@ -198,7 +214,7 @@ static uint8_t DRAM_ATTR ex_data[] = {  0,  0,  0,  0,  0,  0,  8,  8,  1,  1,  
                               1, 21,  0,  0,  2, 40, 21, 21, 80, 81, 92, 93, 94, 95,  0,  0 };
 
 // Table 10: How each Raw ID sets the flags (bit 1 = sets SZP, bit 2 = sets AF/OF for arithmetic, bit 3 = sets OF/CF for logic)
-static uint8_t DRAM_ATTR std_flags[] = {  3, 3, 3, 3, 3, 3, 0, 0, 5, 5, 5, 5, 5, 5, 0, 0,
+static const uint8_t std_flags_init[256] = {  3, 3, 3, 3, 3, 3, 0, 0, 5, 5, 5, 5, 5, 5, 0, 0,
                                 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0,
                                 5, 5, 5, 5, 5, 5, 0, 1, 3, 3, 3, 3, 3, 3, 0, 1,
                                 5, 5, 5, 5, 5, 5, 0, 1, 3, 3, 3, 3, 3, 3, 0, 1,
@@ -216,7 +232,7 @@ static uint8_t DRAM_ATTR std_flags[] = {  3, 3, 3, 3, 3, 3, 0, 0, 5, 5, 5, 5, 5,
                                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 // Table 11: Parity flag loop-up table (256 entries)
-static uint8_t DRAM_ATTR parity[] = {   1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
+static const uint8_t parity_init[256] = {   1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
                               0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
                               0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,
                               1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,
@@ -234,7 +250,7 @@ static uint8_t DRAM_ATTR parity[] = {   1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0
                               1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1 };
 
 // Table 12: Translation of Raw ID to base instruction size (bytes)
-static uint8_t DRAM_ATTR base_size[] = {  2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2,
+static const uint8_t base_size_init[256] = {  2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2,
                                 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
                                 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
                                 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
@@ -252,7 +268,7 @@ static uint8_t DRAM_ATTR base_size[] = {  2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1,
                                 1, 2, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2 };
 
 // Table 13: Translation of Raw ID to i_w size adder yes/no
-static uint8_t DRAM_ATTR i_w_adder[] = {  0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
+static const uint8_t i_w_adder_init[256] = {  0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
                                 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
                                 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
                                 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
@@ -270,7 +286,7 @@ static uint8_t DRAM_ATTR i_w_adder[] = {  0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1,
                                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 // Table 14: Translation of Raw ID to i_mod size adder yes/no
-static uint8_t DRAM_ATTR i_mod_adder[] = {  1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
+static const uint8_t i_mod_adder_init[256] = {  1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
                                   1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
                                   1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
                                   1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
@@ -288,16 +304,16 @@ static uint8_t DRAM_ATTR i_mod_adder[] = {  1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 
                                   0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1 };
 
 // Table 15: Jxx decode table A
-static uint8_t DRAM_ATTR jxx_dec_a[]   = { OF_ADDR, CF_ADDR, ZF_ADDR, CF_ADDR, SF_ADDR, PF_ADDR, XX_ADDR, XX_ADDR };
+static const uint8_t jxx_dec_a_init[8] = { OF_ADDR, CF_ADDR, ZF_ADDR, CF_ADDR, SF_ADDR, PF_ADDR, XX_ADDR, XX_ADDR };
 
 // Table 16: Jxx decode table B
-static uint8_t DRAM_ATTR jxx_dec_b[]   = { XX_ADDR, XX_ADDR, XX_ADDR, ZF_ADDR, XX_ADDR, XX_ADDR, XX_ADDR, ZF_ADDR };
+static const uint8_t jxx_dec_b_init[8] = { XX_ADDR, XX_ADDR, XX_ADDR, ZF_ADDR, XX_ADDR, XX_ADDR, XX_ADDR, ZF_ADDR };
 
 // Table 17: Jxx decode table C
-static uint8_t DRAM_ATTR jxx_dec_c[]   = { XX_ADDR, XX_ADDR, XX_ADDR,XX_ADDR, XX_ADDR, XX_ADDR, SF_ADDR, SF_ADDR };
+static const uint8_t jxx_dec_c_init[8] = { XX_ADDR, XX_ADDR, XX_ADDR,XX_ADDR, XX_ADDR, XX_ADDR, SF_ADDR, SF_ADDR };
 
 // Table 18: Jxx decode table D
-static uint8_t DRAM_ATTR jxx_dec_d[]   = { XX_ADDR, XX_ADDR, XX_ADDR, XX_ADDR,XX_ADDR, XX_ADDR, OF_ADDR, OF_ADDR };
+static const uint8_t jxx_dec_d_init[8] = { XX_ADDR, XX_ADDR, XX_ADDR, XX_ADDR,XX_ADDR, XX_ADDR, OF_ADDR, OF_ADDR };
 
 
 DRAM_ATTR static uint8_t * instr_table_lookup[] = {    rm_mode12_reg1,    // 0
@@ -518,8 +534,13 @@ static int32_t DAA_DAS()
 }
 
 
+static void initTables();
+
+
 void i8086::reset()
 {
+  initTables();
+
   regs_offset = (int32_t)(regs - s_state.memory);
 
   memset(regs8, 0, sizeof(regs));
@@ -539,7 +560,7 @@ void i8086::reset()
 
 
 // tries to make more compact opcode "switch"
-static uint8_t DRAM_ATTR optcodes[] = {
+static const uint8_t optcodes_init[256] = {
 // 0    1   2   3   4   5   6   7   8   9   a   b   c   d   e   f
   27, 27, 27, 27, 28, 28, 13, 12, 27, 27, 27, 27, 28, 28, 13,  0, // 00 - 0f
   27, 27, 27, 27, 28, 28, 13, 12, 27, 27, 27, 27, 28, 28, 13, 12, // 10 - 1f
@@ -573,8 +594,27 @@ struct FastRM {
   int32_t  addr;
 };
 
-static const uint8_t DRAM_ATTR RM_BASE[8]  = { REG_BX, REG_BX, REG_BP, REG_BP, REG_SI, REG_DI, REG_BP, REG_BX };
-static const uint8_t DRAM_ATTR RM_INDEX[8] = { REG_SI, REG_DI, REG_SI, REG_DI, REG_ZERO, REG_ZERO, REG_ZERO, REG_ZERO };
+static const uint8_t RM_BASE_init[8] = { REG_BX, REG_BX, REG_BP, REG_BP, REG_SI, REG_DI, REG_BP, REG_BX };
+static const uint8_t RM_INDEX_init[8] = { REG_SI, REG_DI, REG_SI, REG_DI, REG_ZERO, REG_ZERO, REG_ZERO, REG_ZERO };
+
+// the tables into s_state, next to the state they work on (see i8086.h); reset() calls it
+static void initTables()
+{
+  memcpy(optcodes, optcodes_init, sizeof(optcodes));
+  memcpy(parity, parity_init, sizeof(parity));
+  memcpy(ex_data, ex_data_init, sizeof(ex_data));
+  memcpy(xlat_ids, xlat_ids_init, sizeof(xlat_ids));
+  memcpy(std_flags, std_flags_init, sizeof(std_flags));
+  memcpy(i_mod_adder, i_mod_adder_init, sizeof(i_mod_adder));
+  memcpy(base_size, base_size_init, sizeof(base_size));
+  memcpy(i_w_adder, i_w_adder_init, sizeof(i_w_adder));
+  memcpy(jxx_dec_a, jxx_dec_a_init, sizeof(jxx_dec_a));
+  memcpy(jxx_dec_b, jxx_dec_b_init, sizeof(jxx_dec_b));
+  memcpy(jxx_dec_c, jxx_dec_c_init, sizeof(jxx_dec_c));
+  memcpy(jxx_dec_d, jxx_dec_d_init, sizeof(jxx_dec_d));
+  memcpy(RM_BASE, RM_BASE_init, sizeof(RM_BASE));
+  memcpy(RM_INDEX, RM_INDEX_init, sizeof(RM_INDEX));
+}
 
 static inline __attribute__((always_inline)) FastRM decodeRM(uint8_t const * p, bool w)
 {
