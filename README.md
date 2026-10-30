@@ -16,7 +16,9 @@ I had the board lying around and wanted to see how far it could be taken. Also, 
 had a bunch of annoying bugs, which are squashed now.
 
 I could have written all of it myself, but PC emulation has been done to death already, there is nothing new to invent here,
-and I don't think most people will mind an enhanced port done by an AI under watchful human eyes. And Claude did a very good job here. If I had done all that the old fashioned way, it would have taken me weeks of full time work. Maybe I could have gotten this to a Topbench score of 18 or 19, but sometimes good enough is good enough.
+and I don't think most people will mind an enhanced port done by an AI under watchful human eyes. And Claude did a very good job here. If I had done all that the old fashioned way, it would have taken me weeks of full time work. ~~Maybe I could have gotten this to a Topbench score of 18 or 19, but sometimes good enough is good enough.~~
+
+As of 30th of October i am eating my own words here, Topbench of 31 for now. And Checkit says 6.3 times as fast as an original IBM XT.
 
 Also, this is an old MCU. The first time I saw this exact chip run emulation was on the venerable ODROID-GO, and there are other projects out there for better MCUs; heck, someone made a 386 fit into an RP2350 with PSRAM. But if you have such an old ESP32 with VGA and an SD card lying around, take this project for a spin. It is still good enough for some old games, or for writing your novel on if you want. If you can get such a board cheaply, grab it, but don't pay more than around 30€ for one, including taxes and shipping.
 
