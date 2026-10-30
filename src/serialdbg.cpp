@@ -571,6 +571,7 @@ void SerialDebug::help()
   write("  a                 benchmark the OPL2 synthesiser: all nine channels, one second of samples\r\n");
   write("  n                 load latency of internal RAM and guest RAM (PSRAM), in CPU cycles\r\n");
   write("  n step            cycles per i8086::step(), timed here: it RUNS the guest's next instructions\r\n");
+  write("  n gaps            what this core loses to interrupts (gaps) and to contention (the loop's pace)\r\n");
   write("  m on|off          video memory statistics: count and time the guest's accesses; m  report\r\n");
   write("  y on|off          per opcode CPU profile (cycles and counts); y  report the top 24\r\n");
   write("  s [n]             single step n instructions, then show registers\r\n");
@@ -1558,14 +1559,62 @@ void SerialDebug::cmdOPLBench()
 // The first line is the loop on internal RAM, the floor the others are measured against.
 // 'n step' times i8086::step() instead, called from here: it runs the guest's next instructions
 // (meant for a loop put there with 'e' and 'j', which leaves the cache warm and the profile out).
+// 'n gaps' shows what this core loses to others: a loop in IRAM that only reads the cycle counter.
+// A gap well beyond its own pace is time something else took (an interrupt); a slower pace with
+// no gaps is the loop itself held up (contention for memory).
 static void IRAM_ATTR __attribute__((noinline)) emptyCall()
 {
   asm volatile ("");
 }
 
+struct GapScan {
+  uint32_t loops, gaps, stolen, longest, fast;
+};
+
+static void IRAM_ATTR __attribute__((noinline)) gapScan(uint32_t cycles, GapScan & r)
+{
+  constexpr uint32_t GAP = 100;
+  r = { };
+  r.fast = ~0u;
+  uint32_t start = esp_cpu_get_cycle_count(), prev = start;
+  while (prev - start < cycles) {
+    uint32_t now = esp_cpu_get_cycle_count();
+    uint32_t d   = now - prev;
+    if (d > GAP) {
+      ++r.gaps;
+      r.stolen += d;
+      if (d > r.longest)
+        r.longest = d;
+    } else {
+      ++r.loops;
+      if (d < r.fast)
+        r.fast = d;
+    }
+    prev = now;
+  }
+}
+
 void SerialDebug::cmdLatency(char const * args)
 {
   constexpr int N = 100000;
+
+  if (strncmp(args, "gaps", 4) == 0) {
+    uint32_t mhz   = ESP.getCpuFreqMHz();
+    uint32_t total = mhz * 250000;                  // a quarter of a second
+    GapScan  r;
+    gapScan(total, r);
+    uint32_t own = total - r.stolen;
+    writeFmt("  core %d, 0.25 s: %u gaps (%u per s), %.1f%% of the time, longest %u cycles\r\n",
+             xPortGetCoreID(), (unsigned) r.gaps, (unsigned)(r.gaps * 4), r.stolen * 100.0 / total,
+             (unsigned) r.longest);
+    writeFmt("  the loop itself: %.2f cycles per pass on average, %u at best, at %p\r\n",
+             r.loops ? (double) own / r.loops : 0.0, (unsigned) r.fast, (void *) &gapScan);
+    // a loop in the IRAM block of step(): compare its pace between machines (CGA against EGA)
+    uint32_t passes = i8086::paceProbe(total);
+    writeFmt("  a loop next to step(), at %p: %u passes in 0.25 s, %.2f cycles per pass\r\n",
+             (void *) &i8086::paceProbe, (unsigned) passes, passes ? (double) total / passes : 0.0);
+    return;
+  }
 
   if (strncmp(args, "step", 4) == 0) {
     uint32_t t = esp_cpu_get_cycle_count();
@@ -1601,6 +1650,16 @@ void SerialDebug::cmdLatency(char const * args)
   }
   uint8_t const * guest = m_machine->memory();
   writeFmt("  %-40s %4u cycles per load\r\n", "internal RAM, one word",            (unsigned) chase(dram, 0, 0));
+  // the CPU core's own state and this task's stack: internal RAM too, but maybe in another of its
+  // blocks, which the other core and the video DMA may be busy with
+  uint8_t stack[64] = { };
+  writeFmt("  %-40s %4u cycles per load\r\n", "internal RAM, the CPU state (s_state)",
+           (unsigned) chase((uint8_t const *) &i8086::s_state, 0, 0));
+  writeFmt("  %-40s %4u cycles per load\r\n", "internal RAM, this task's stack", (unsigned) chase(stack, 0, 0));
+  auto ega = m_machine->ega();
+  writeFmt("  at: s_state %p, stack %p, buffer %p, EGA planes %p %p %p %p\r\n", &i8086::s_state, stack, dram,
+           ega->hasVRAM() ? ega->bankPtr(0) : nullptr, ega->hasVRAM() ? ega->bankPtr(EGA_BANK_ENTRIES) : nullptr,
+           ega->hasVRAM() ? ega->bankPtr(2 * EGA_BANK_ENTRIES) : nullptr, ega->hasVRAM() ? ega->bankPtr(3 * EGA_BANK_ENTRIES) : nullptr);
   // what every l32r does: its literal is in IRAM, next to the code (step() itself here)
   writeFmt("  %-40s %4u cycles per load\r\n", "IRAM, one word",
            (unsigned) chase((uint8_t const *)((uintptr_t) &i8086::step & ~3u), 0, 0));

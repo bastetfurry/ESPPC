@@ -130,6 +130,9 @@ public:
   static void setAcknowledgeCallback(Acknowledge value)   { s_state.acknowledge = value; }
   static void setINTR(bool value)                         { s_state.intr = value; }
 
+  // the monitor's 'n gaps': a loop timed in IRAM next to step() (see i8086.cpp)
+  static uint32_t paceProbe(uint32_t cycles);
+
   // runs count instructions (see i8086.cpp)
   static void step(int count = 1);
 
