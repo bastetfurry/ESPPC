@@ -1505,8 +1505,13 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
   }
 
   // Instruction execution unit
-  switch (xlat_opcode_id) {
-    case 2: // INC|DEC regs16
+  // ESPPC: dispatched through a table of label addresses in DRAM, as in step() and for the same
+  // reason: the IDF's -fno-jump-tables made the switch here a tree of compares. 'goto ex_done' is
+  // the switch's old 'break', on to the IP update and the flags below.
+  static void * const DRAM_ATTR dispatch[73] = { &&ex_default, &&ex_default, &&ex_2, &&ex_default, &&ex_default, &&ex_5, &&ex_6, &&ex_default, &&ex_default, &&ex_default, &&ex_10, &&ex_default, &&ex_12, &&ex_13, &&ex_14, &&ex_default, &&ex_16, &&ex_17, &&ex_18, &&ex_19, &&ex_20, &&ex_21, &&ex_22, &&ex_default, &&ex_24, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_30, &&ex_31, &&ex_32, &&ex_33, &&ex_34, &&ex_35, &&ex_36, &&ex_37, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_44, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default };
+  goto *dispatch[xlat_opcode_id];
+  {
+    ex_2: // INC|DEC regs16
     {
       i_w = 1;
       i_d = 0;
@@ -1516,7 +1521,7 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
       op_from_addr = regs_offset + 2 * i_reg;
       i_reg = extra;
     } // not break!
-    case 5: // INC|DEC|JMP|CALL|PUSH
+    ex_5: // INC|DEC|JMP|CALL|PUSH
       if (i_reg < 2) {
         // INC|DEC
         if (i_w) {
@@ -1562,8 +1567,8 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
         regs16[REG_SP] -= 2;
         MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = RMEM16(rm_addr);
       }
-      break;
-    case 6: // TEST r/m, imm16 / NOT|NEG|MUL|IMUL|DIV|IDIV reg
+      goto ex_done;
+    ex_6: // TEST r/m, imm16 / NOT|NEG|MUL|IMUL|DIV|IDIV reg
       op_to_addr = op_from_addr;
 
       switch (i_reg) {
@@ -1673,11 +1678,11 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
           break;
         }
       };
-      break;
+      goto ex_done;
     // ESPPC: ADD|OR|ADC|SBB|AND|SUB|XOR|CMP in all their forms (cases 7 to 9), MOV AL/AX with
     // [loc] (case 11) and TEST (cases 15 and 47) were here. step() runs all of them on its fast paths now, so they never get
     // here, and the IRAM they took went to those paths.
-    case 10: // MOV sreg, r/m | POP r/m | LEA reg, r/m
+    ex_10: // MOV sreg, r/m | POP r/m | LEA reg, r/m
       if (!i_w) { // i_w == 0
         // MOV
         i_w = 1;
@@ -1702,8 +1707,8 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
         regs16[REG_SP] += 2;
         WMEM16(rm_addr, MEM16(16 * regs16[REG_SS] + (uint16_t)(-2 + regs16[REG_SP])));
       }
-      break;
-    case 12: // ROL|ROR|RCL|RCR|SHL|SHR|???|SAR reg/MEM, 1/CL/imm (80186)
+      goto ex_done;
+    ex_12: // ROL|ROR|RCL|RCR|SHL|SHR|???|SAR reg/MEM, 1/CL/imm (80186)
     {
       uint16_t scratch2_uint = (1 & (i_w ? (int16_t)RMEM16(rm_addr) : RMEM8(rm_addr)) >> (8 * (i_w + 1) - 1));
       uint16_t scratch_uint  = extra ? // xxx reg/MEM, imm
@@ -1813,14 +1818,14 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
           }
           break;
       };
-      break;
+      goto ex_done;
     }
-    case 13: // LOOPxx
+    ex_13: // LOOPxx
       // i_reg4bit: 0=LOOPNZ, 1=LOOPZ, 2=LOOP
       if (--regs16[REG_CX])
         reg_ip += ((FLAG_ZF ^ !i_reg4bit) | (bool)(i_reg4bit & 2)) * (int8_t) i_data0;
-      break;
-    case 14: // JMP | CALL int16_t/near
+      goto ex_done;
+    ex_14: // JMP | CALL int16_t/near
       reg_ip += 3 - i_d;
       if (!i_w) {
         if (i_d) {
@@ -1836,7 +1841,7 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
       }
       reg_ip += i_d && i_w ? (int8_t) i_data0 : i_data0;
       return; // no calc IP, no flags
-    case 16: // XCHG AX, regs16
+    ex_16: // XCHG AX, regs16
       if (i_reg4bit != REG_AX) {
         uint16_t t = regs16[REG_AX];
         regs16[REG_AX] = regs16[i_reg4bit];
@@ -1844,7 +1849,7 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
       }
       ++reg_ip;
       return; // no calc ip, no flags
-    case 24: // NOP|XCHG reg, r/m
+    ex_24: // NOP|XCHG reg, r/m
       if (op_to_addr != op_from_addr) {
         if (i_w) {
           uint16_t t = RMEM16(op_to_addr);
@@ -1856,8 +1861,8 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
           WMEM8(op_from_addr, t);
         }
       }
-      break;
-    case 17: // MOVSx (extra=0)|STOSx (extra=1)|LODSx (extra=2)
+      goto ex_done;
+    ex_17: // MOVSx (extra=0)|STOSx (extra=1)|LODSx (extra=2)
     {
       int32_t seg = seg_override_en ? seg_override : REG_DS;
       if (i_w) {
@@ -1891,7 +1896,7 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
       ++reg_ip;
       return; // no calc ip, no flags
     }
-    case 18: // CMPSx (extra=0)|SCASx (extra=1)
+    ex_18: // CMPSx (extra=0)|SCASx (extra=1)
     {
       int count = rep_override_en ? regs16[REG_CX] : 1;
       if (count) {
@@ -1929,9 +1934,9 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
       };
       ++reg_ip;
       calcIP = false;
-      break;
+      goto ex_done;
     }
-    case 19: // RET / RETF imm16
+    ex_19: // RET / RETF imm16
       reg_ip = MEM16(16 * regs16[REG_SS] + regs16[REG_SP]);
       regs16[REG_SP] += 2;
       if (extra) {
@@ -1941,36 +1946,36 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
       }
       regs16[REG_SP] += i_data0;
       return; // no calc ip, no flags
-    case 20: // MOV r/m, immed
+    ex_20: // MOV r/m, immed
       if (i_w) {
         WMEM16(op_from_addr, i_data2);
       } else {
         WMEM8(op_from_addr, i_data2);
       }
-      break;
-    case 21: // IN AL/AX, DX/imm8
+      goto ex_done;
+    ex_21: // IN AL/AX, DX/imm8
     {
       int32_t port = extra ? regs16[REG_DX] : (uint8_t) i_data0;
       regs8[REG_AL] = s_readPort(s_context, port);
       if (i_w)
         regs8[REG_AH] = s_readPort(s_context, port + 1);
-      break;
+      goto ex_done;
     }
-    case 22: // OUT DX/imm8, AL/AX
+    ex_22: // OUT DX/imm8, AL/AX
     {
       int32_t port = extra ? regs16[REG_DX] : (uint8_t) i_data0;
       s_writePort(s_context, port, regs8[REG_AL]);
       if (i_w)
         s_writePort(s_context, port + 1, regs8[REG_AH]);
-      break;
+      goto ex_done;
     }
-    case 30: // CBW
+    ex_30: // CBW
       regs8[REG_AH] = -(1 & (i_w ? * (int16_t *) & regs8[REG_AL] : regs8[REG_AL]) >> (8 * (i_w + 1) - 1));
-      break;
-    case 31: // CWD
+      goto ex_done;
+    ex_31: // CWD
       regs16[REG_DX] = -(1 & (i_w ? * (int16_t *) & regs16[REG_AX] : regs16[REG_AX]) >> (8 * (i_w + 1) - 1));
-      break;
-    case 32: // CALL FAR imm16:imm16
+      goto ex_done;
+    ex_32: // CALL FAR imm16:imm16
     {
       regs16[REG_SP] -= 4;
       uint16_t * stack = &MEM16(16 * regs16[REG_SS] + regs16[REG_SP]);
@@ -1980,37 +1985,38 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
       reg_ip          = i_data0;
       return; // no calc ip, no flags
     }
-    case 33: // PUSHF
+    ex_33: // PUSHF
       regs16[REG_SP] -= 2;
       MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = make_flags();
       ++reg_ip;
       return; // no calc ip, no flags
-    case 34: // POPF
+    ex_34: // POPF
       regs16[REG_SP] += 2;
       set_flags(MEM16(16 * regs16[REG_SS] + (uint16_t)(-2 + regs16[REG_SP])));
       ++reg_ip;
       return; // no calc ip, no flags
-    case 35: // SAHF
+    ex_35: // SAHF
       set_flags((make_flags() & 0xFF00) + regs8[REG_AH]);
-      break;
-    case 36: // LAHF
+      goto ex_done;
+    ex_36: // LAHF
       regs8[REG_AH] = make_flags();
-      break;
-    case 37: // LES|LDS reg, r/m
+      goto ex_done;
+    ex_37: // LES|LDS reg, r/m
       i_w = i_d = 1;
       regs16[i_reg] = RMEM16(rm_addr);
       regs16[extra / 2] = RMEM16(rm_addr + 2);
-      break;
-    case 44: // XLAT
+      goto ex_done;
+    ex_44: // XLAT
       regs8[REG_AL] = RMEM8(16 * regs16[seg_override_en ? seg_override : REG_DS] + (uint16_t)(regs8[REG_AL] + regs16[REG_BX]));
       ++reg_ip;
       return; // no calc ip, no flags
     // ESPPC: everything rare lives in stepExCold(), in flash (see there)
-    default:
+    ex_default:
       if (stepExCold(opcode_stream, i_data0, i_data2, op_result))
         return; // no calc ip, no flags
-      break;
+      goto ex_done;
   }
+  ex_done:
 
   // Increment instruction pointer by computed instruction length.
   if (calcIP)
