@@ -20,6 +20,9 @@
 //   regs=T                prints the CPU registers and the code at CS:IP
 //   steps=T:N             prints CS:IP and IF at the next N batch boundaries (16 instructions each)
 //   mem=T:ADDR,LEN        dumps guest memory, hex linear address (B8000 is the CGA's memory)
+//   ports=LO-HI           records the guest's writes to ports LO..HI (hex) from the start and
+//                         prints them when the run ends, as the monitor's 't' does (ports=61-61
+//                         shows the speaker: a BIOS that beeps an error turns it on and off)
 //   time=T                ends the run (default 30)
 //
 // Checks, for tests. Each prints "ok" or "FAIL"; the run ends with a summary, and pctool's exit
@@ -65,6 +68,7 @@ static std::vector<Event> s_events;
 static int                s_checks = 0;      // expect= and framesum= with a value
 static size_t             s_nextEvent = 0;
 static int                s_stepsToPrint = 0;
+static int                s_portsLo = -1, s_portsHi = -1;     // ports=
 
 static int64_t secondsToUs(char const * s)
 {
@@ -353,6 +357,8 @@ static void printMem(std::string const & arg)
 
 //// The run
 
+static void printPorts();
+
 static void step(void *)
 {
   hostAdvance((uint64_t) (16 * s_nsPerInstruction));   // the machine runs 16 instructions a step
@@ -373,12 +379,27 @@ static void step(void *)
       case Event::Expect:   expectText(e.arg); break;
       case Event::FrameSum: frameSum(e.arg); break;
       case Event::End:
+        if (s_portsLo >= 0)
+          printPorts();
         if (s_checks)
           printf("[result] %s: %d of %d checks failed\n", s_failures ? "FAIL" : "ok", s_failures, s_checks);
         fflush(stdout);
         exit(s_failures ? 1 : 0);
     }
   }
+}
+
+
+// the writes ports= recorded, one line per run of equal writes from the same place
+static void printPorts()
+{
+  int      count;
+  uint32_t missed;
+  auto     t = s_machine->portTrace(&count, &missed);
+  for (int i = 0; t && i < count; ++i)
+    printf("[port] %04X:%04X out %04X <= %02X%s\n", t[i].cs, t[i].ip, t[i].port, t[i].value,
+           t[i].repeat > 1 ? (" x" + std::to_string(t[i].repeat)).c_str() : "");
+  printf("[port] %d entries%s\n", count, missed ? (", " + std::to_string(missed) + " more not recorded").c_str() : "");
 }
 
 
@@ -454,6 +475,7 @@ static int run(int argc, char * argv[])
     else if (tag == "regs")        s_events.push_back({ secondsToUs(at.c_str()), Event::Regs, 0, "" });
     else if (tag == "steps")       s_events.push_back({ secondsToUs(at.c_str()), Event::Steps, atoi(arg.c_str()), "" });
     else if (tag == "mem")         s_events.push_back({ secondsToUs(at.c_str()), Event::Mem, 0, arg });
+    else if (tag == "ports")       sscanf(val.c_str(), "%x-%x", &s_portsLo, &s_portsHi);
     else if (tag == "expect") {
       s_events.push_back({ secondsToUs(at.c_str()), Event::Expect, 0, arg });
       ++s_checks;
@@ -561,6 +583,8 @@ static int run(int argc, char * argv[])
   if (tandyDAC && (tandySound || video == "tandy"))
     s_machine->setTandyDAC(true);
 
+  if (s_portsLo >= 0)
+    s_machine->armPortTrace(s_portsLo, s_portsHi, false, true);
   s_machine->setStepCallback(step);
   s_machine->run();
   hostRunTask();
