@@ -109,15 +109,20 @@ namespace fabgl {
 // Global variable definitions
 // The register file, flags and IP are class members so the accessors in i8086.h can be inline;
 // the code below keeps its original names for them.
+// Having the registers and flags in arrays is actually faster on the target platform, the ESP32 with its Xtensa cores.
 alignas(4) uint8_t i8086::s_regs[48];
 uint16_t           i8086::s_regIP;
 uint8_t            i8086::s_flags[10];
 #define regs       i8086::s_regs
 #define flags      i8086::s_flags
 #define reg_ip     i8086::s_regIP
+// regs8 and regs16 name the register file at its fixed address: as pointer variables, every
+// register access first had to load the pointer
+#define regs8      i8086::s_regs
+#define regs16     ((uint16_t *) i8086::s_regs)
 static int32_t    regs_offset;
-static uint8_t    * regs8, i_mod_size, i_d, i_w, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en;
-static uint16_t   * regs16, seg_override;
+static uint8_t    i_mod_size, i_d, i_w, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en;
+static uint16_t   seg_override;
 static uint32_t   op_source, op_dest, set_flags_type;
 static int32_t    op_to_addr, op_from_addr;
 
@@ -350,7 +355,7 @@ bool IRAM_ATTR i8086::IRQ(uint8_t interrupt_num)
 #define MEM16(addr) (*(uint16_t*)(s_memory + (addr)))
 
 
-uint8_t i8086::RMEM8(int addr)
+inline __attribute__((always_inline)) uint8_t i8086::RMEM8(int addr)
 {
   if (addr >= s_videoMemStart && addr < VIDEOMEM_END) {
     return s_readVideoMemory8(s_context, addr);
@@ -360,7 +365,7 @@ uint8_t i8086::RMEM8(int addr)
 }
 
 
-uint16_t i8086::RMEM16(int addr)
+inline __attribute__((always_inline)) uint16_t i8086::RMEM16(int addr)
 {
   if (addr >= s_videoMemStart && addr < VIDEOMEM_END) {
     return s_readVideoMemory16(s_context, addr);
@@ -396,7 +401,7 @@ inline __attribute__((always_inline)) uint16_t i8086::WMEM16(int addr, uint16_t 
 
 
 // Set auxiliary and overflow flag after arithmetic operations
-void set_AF_OF_arith(int32_t op_result)
+static inline __attribute__((always_inline)) void set_AF_OF_arith(int32_t op_result)
 {
   FLAG_AF = (bool)((op_source ^= op_dest ^ op_result) & 0x10);
   if (op_result == op_dest)
@@ -435,7 +440,7 @@ void i8086::set_flags(int new_flags)
 
 // Convert raw opcode to translated opcode index. This condenses a large number of different encodings of similar
 // instructions into a much smaller number of distinct functions, which we then execute
-void set_opcode(uint8_t opcode)
+static inline __attribute__((always_inline)) void set_opcode(uint8_t opcode)
 {
   raw_opcode_id  = opcode;
   xlat_opcode_id = xlat_ids[opcode];
@@ -528,9 +533,6 @@ static int32_t DAA_DAS()
 void i8086::reset()
 {
   regs_offset = (int32_t)(regs - s_memory);
-
-  regs8  = (uint8_t *)(s_memory + regs_offset);
-  regs16 = (uint16_t *)(s_memory + regs_offset);
 
   memset(regs8, 0, sizeof(regs));
   set_flags(0);
