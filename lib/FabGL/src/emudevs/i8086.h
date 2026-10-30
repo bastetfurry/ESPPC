@@ -147,14 +147,27 @@ public:
     alignas(4) uint8_t regs[48];
     uint8_t            flags[10];
     uint16_t           regIP;
-    bool               trap;            // TF was set when the last instruction began
-    bool               pendingIRQ;
+    // the three reasons to interrupt before an instruction, in one word: step() tests it once and
+    // looks at them one by one only when it is not 0 (the fourth byte stays 0)
+    union {
+      struct {
+        bool           trap;            // TF was set when the last instruction began
+        bool           pendingIRQ;
+        bool           intr;
+        uint8_t        attentionPad;
+      };
+      uint32_t         attention;
+    };
     uint8_t            pendingIRQIndex;
-    bool               intr;
     bool               halted;
     // the decoder's state, see i8086.cpp
     uint8_t            i_mod_size, i_d, i_w, raw_opcode_id, xlat_opcode_id, extra, rep_mode;
-    uint8_t            seg_override_en, rep_override_en;
+    union {                             // both prefix countdowns, tested at once
+      struct {
+        uint8_t        seg_override_en, rep_override_en;
+      };
+      uint16_t         override_en;
+    };
     uint16_t           seg_override;
     int32_t            regs_offset;
     uint32_t           op_source, op_dest, set_flags_type;

@@ -767,20 +767,24 @@ begin:
   // POPF that sets TF runs before the first trap, and the one that clears TF still traps. Taken
   // before it, a handler that IRETs back with TF set got the trap again at once and never returned
   // to the code it steps (CheckIt's "CPU Interrupt Bug" test hung there).
-  if (s_state.trap && !seg_override_en && !rep_override_en) {
-    pc_interrupt(1);
-  }
-  // Check for interrupts triggered by system interfaces
-  else if (FLAG_IF && (s_state.pendingIRQ || s_state.intr) && !seg_override_en && !rep_override_en) {
-    if (s_state.pendingIRQ) {
-      pc_interrupt(s_state.pendingIRQIndex);
-      s_state.pendingIRQ = false;
-    } else {
-      // ESPPC: INTR, acknowledged now that the CPU takes it (see setINTR())
-      s_state.intr = false;
-      int vector = s_state.acknowledge(s_state.context);
-      if (vector >= 0)
-        pc_interrupt(vector);
+  // ESPPC: trap, pendingIRQ and intr share a word (see i8086.h). When none of them is set, which
+  // is nearly always, that one test takes the place of the checks.
+  if (__builtin_expect(s_state.attention != 0, 0)) {
+    if (s_state.trap && !seg_override_en && !rep_override_en) {
+      pc_interrupt(1);
+    }
+    // Check for interrupts triggered by system interfaces
+    else if (FLAG_IF && (s_state.pendingIRQ || s_state.intr) && !seg_override_en && !rep_override_en) {
+      if (s_state.pendingIRQ) {
+        pc_interrupt(s_state.pendingIRQIndex);
+        s_state.pendingIRQ = false;
+      } else {
+        // ESPPC: INTR, acknowledged now that the CPU takes it (see setINTR())
+        s_state.intr = false;
+        int vector = s_state.acknowledge(s_state.context);
+        if (vector >= 0)
+          pc_interrupt(vector);
+      }
     }
   }
 
@@ -794,10 +798,13 @@ begin:
   while (true) {
 
     // seg_override_en and rep_override_en contain number of instructions to hold segment override and REP prefix respectively
-    if (seg_override_en)
-      --seg_override_en;
-    if (rep_override_en)
-      --rep_override_en;
+    // ESPPC: both in one halfword, tested at once
+    if (__builtin_expect(s_state.override_en != 0, 0)) {
+      if (seg_override_en)
+        --seg_override_en;
+      if (rep_override_en)
+        --rep_override_en;
+    }
 
     uint8_t const * opcode_stream = s_state.memory + 16 * regs16[REG_CS] + reg_ip;
 
