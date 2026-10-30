@@ -116,15 +116,16 @@ measured against the CGA Compatibility Tester:
 - **Side borders:** the border shows above and below the picture only, because our modes fill the
   width of their output timing.
 - **The EGA's overscan register** (attribute controller 11h): the EGA's border stays black.
-- **IRAM** is down to about 350 bytes; the next renderer change has to find its own room.
+- **IRAM:** 24.2 KB free on `esp32dev` and 5.6 KB on `esp32old` (2026-10-30, after the CPU core
+  gave back about 4 KB); `esp32old` is the tight one.
 
 ## A speed limit for the guest
 
-At Topbench 17 the emulator is a turbo XT, and early games that time themselves by the CPU run too
-fast. A per machine setting (full speed, or about 4.77 MHz) that paces instruction batches against
-the emulated PIT clock, not host time. The planned game port needs that same clock for its
-one-shots. (Games that time themselves by the CGA's vertical retrace already run at the right
-speed, since the status register follows a 59.92 Hz raster.)
+At Topbench 30 (2026-10-30) the emulator is well past a turbo XT, and early games that time
+themselves by the CPU run too fast. A per machine setting (full speed, or about 4.77 MHz) that
+paces instruction batches against the emulated PIT clock, not host time. The planned game port
+needs that same clock for its one-shots. (Games that time themselves by the CGA's vertical retrace
+already run at the right speed, since the status register follows a 59.92 Hz raster.)
 
 ## Save states
 
@@ -134,3 +135,55 @@ chips, DAC, floppy/disk state) to the SD card, and restore it. The work is in th
 needs a versioned save and load of its state, and the vendored FabGL ones have none. Possibly one
 for the port (see [platform-split.md](platform-split.md)), where the device code gets restructured
 anyway.
+
+## An 8087 coprocessor
+
+Planned 2026-10-30. Today ESC (D8-DF) and WAIT (9B) end in `stepExCold()`'s case 69: the core
+decodes the ModRM bytes, skips the instruction and prints "not implemented", which is an 8088
+without a coprocessor, so detection code rightly finds none. The BIOS's equipment word (40:10h)
+has bit 1 clear and INT 75h is 0.
+
+- **Where:** a module of its own, `i8087.cpp/.h` next to the CPU in `lib/FabGL/src/emudevs/`, all
+  in flash: no IRAM. Case 69 calls it with the address `stepEx` already decoded, operands go through
+  `RMEM`/`WMEM` (so the video window works). The `printf` goes. State is about 110 bytes: eight
+  registers, TOP, status, control and tag words, instruction and operand pointers. WAIT is a no-op,
+  as we compute synchronously.
+- **Two modes, chosen per machine** in the setup (`fpu off|fast|exact` in `mconfs.txt`), as PCjs
+  and others offer. Decoder, stack, tags, status and control word, memory formats, BCD and
+  exceptions are shared; only the arithmetic differs:
+  - *fast:* `double`, 53 bit mantissa and a smaller exponent range. Fine for games (perhaps
+    Flight Simulator; which games use an 8087 is still to be found out); accuracy tests
+    notice.
+  - *exact:* 80 bit extended precision through Berkeley SoftFloat 3e (`extFloat80`, BSD-3-Clause,
+    GPLv3 compatible, vendored like DBOPL), bit exact for + - * /, square root, the conversions,
+    rounding and precision control. About 20-30 KB of flash.
+  - The ESP32 has single precision in hardware only, so `double` is software too and the gap is
+    smaller than it looks. Either is far faster than an 8087: FADD took 15-20 us at 4.77 MHz,
+    FDIV about 40, FPTAN about 100; emulated, 1-5 us.
+  - With the FPU on, the machine sets bit 1 of the equipment word.
+- **Errors, AT style:** an unmasked exception raises IRQ 13 on the slave PIC; the BIOS gets an INT
+  75h handler that EOIs both PICs and calls INT 2, as AT BIOSes do, so XT software hooking INT 2
+  still works. (The XT's own path, NMI through the mask at A0h, does not fit: A0h is our slave
+  PIC.) All exceptions are masked by default and most programs leave them so.
+- **8087 quirks:** no FSTSW AX (that came with the 287; detection code relies on it), projective
+  infinity by default (IC bit), FENI/FDISI exist, FPTAN and FPATAN take restricted ranges only.
+- **Phases,** each a branch of its own, mergeable after each:
+  1. State, decoder for all D8-DF forms, FNINIT, FNSTCW, FNSTSW m16, FLDCW, FCLEX, FWAIT, the
+     option and the equipment bit: CheckIt, MSD and Norton SI see an 8087.
+  2. Data movement: FLD/FST/FSTP (m32, m64, m80, ST(i)), FILD/FIST/FISTP (m16, m32, m64),
+     FBLD/FBSTP (18 digit BCD), FXCH, the constants, FFREE, FINCSTP/FDECSTP, the tag word.
+  3. Arithmetic: FADD, FSUB(R), FMUL, FDIV(R) with their P and I forms, FCOM(P)(P), FICOM(P),
+     FTST, FXAM, FCHS, FABS, FSQRT, FRNDINT, FSCALE, FXTRACT, FPREM; rounding and precision
+     control, the masked responses, C0-C3. Turbo Pascal `{$N+}` and MS C programs work from here.
+  4. F2XM1, FYL2X, FYL2XP1, FPTAN, FPATAN through libm `double` in both modes (the 8087 was no
+     more accurate there): Fractint, AutoCAD.
+  5. FSTENV/FLDENV/FSAVE/FRSTOR in the real mode layout (14 and 94 bytes).
+  6. Unmasked exceptions through IRQ 13; FENI/FDISI.
+- **Testing:** a differential test in pctool against the host's x87 (`long double` is 80 bit on
+  x86-64): millions of random operands per instruction, bit for bit in exact mode, within a few
+  ulp in fast mode; the 387's differences (infinity, unnormals, FPTAN/FPATAN) by hand. CheckIt's
+  coprocessor tests become applicable. Programs: Fractint, Turbo Pascal and MS C programs, Lotus
+  1-2-3 2.x, AutoCAD 2.x, QBasic (uses an FPU when there is one), and a game that has 8087 support.
+  The cputest harness keeps the FPU off: SingleStepTests' D8-DF and 9B describe an 8088 without one.
+- **Cost:** 2000-3000 lines of our own plus SoftFloat; 40-60 KB of flash, no IRAM, about 110
+  bytes of internal RAM.
