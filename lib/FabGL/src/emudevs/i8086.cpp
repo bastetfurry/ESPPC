@@ -581,12 +581,12 @@ static uint8_t DRAM_ATTR optcodes[] = {
    9,  9,  9,  9,  9,  9,  9,  9,  8,  8,  8,  8,  8,  8,  8,  8, // 50 - 5f
    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, // 60 - 6f
    2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2, // 70 - 7f
-  22, 22, 22, 22, 34, 34,  0,  0, 21, 21, 21, 21,  0,  0, 18, 35, // 80 - 8f
+  22, 22, 22, 22, 34, 34,  0,  0, 21, 21, 21, 21, 37,  0, 18, 35, // 80 - 8f
    0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 32,  0,  0,  0,  0,  0, // 90 - 9f
   31, 31, 31, 31, 26, 26,  0,  0, 28, 28, 26, 26, 26, 26,  0,  0, // a0 - af
   10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, // b0 - bf
    0,  0, 36,  7,  0,  0, 25, 25,  0,  0, 36, 17,  0, 15,  0, 16, // c0 - cf
-  23, 23, 23, 23,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, // d0 - df
+  23, 23, 23, 23,  0,  0,  0, 38,  0,  0,  0,  0,  0,  0,  0,  0, // d0 - df
    0,  0,  0,  5, 20, 20, 20, 20,  6, 33,  0,  3, 20, 20, 20, 20, // e0 - ef
    0,  0, 14, 14,  0,  0, 29, 29,  4,  4,  4,  4,  4,  4, 24, 30, // f0 - ff
 };
@@ -817,7 +817,7 @@ void IRAM_ATTR i8086::step()
     // a tree of compares and branches: 13 instructions on average for the opcodes Doom runs
     // most, 8 of them taken branches. Index 0 is everything left to stepEx. 'continue' is the
     // switch's old 'break': the next instruction in the same step.
-    static void * const DRAM_ATTR dispatch[37] = { &&op_0, &&op_1, &&op_2, &&op_3, &&op_4, &&op_5, &&op_6, &&op_7, &&op_8, &&op_9, &&op_10, &&op_11, &&op_12, &&op_13, &&op_14, &&op_15, &&op_16, &&op_17, &&op_18, &&op_19, &&op_20, &&op_21, &&op_22, &&op_23, &&op_24, &&op_25, &&op_26, &&op_27, &&op_28, &&op_29, &&op_30, &&op_31, &&op_32, &&op_33, &&op_34, &&op_35, &&op_36 };
+    static void * const DRAM_ATTR dispatch[39] = { &&op_0, &&op_1, &&op_2, &&op_3, &&op_4, &&op_5, &&op_6, &&op_7, &&op_8, &&op_9, &&op_10, &&op_11, &&op_12, &&op_13, &&op_14, &&op_15, &&op_16, &&op_17, &&op_18, &&op_19, &&op_20, &&op_21, &&op_22, &&op_23, &&op_24, &&op_25, &&op_26, &&op_27, &&op_28, &&op_29, &&op_30, &&op_31, &&op_32, &&op_33, &&op_34, &&op_35, &&op_36, &&op_37, &&op_38 };
     goto *dispatch[optcodes[*opcode_stream]];
     {
 
@@ -990,10 +990,16 @@ void IRAM_ATTR i8086::step()
         return;
       }
 
-      // MOV SS, r/m
+      // MOV sreg, r/m16 (0x8e). The 8088 decodes two bits of the reg field: 4..7 are ES..DS again.
+      // Then the next instruction in the same step, as the 8086 takes no interrupt after a segment
+      // register load (which is what keeps MOV SS, xx / MOV SP, xx safe).
       op_18:
-        stepEx(opcode_stream);
-        continue;  // reloop, this is required to inhibit interrupt until next instruction
+      {
+        FastRM rm = decodeRM(opcode_stream + 1, true);
+        regs16[REG_ES + ((opcode_stream[1] >> 3) & 3)] = rm.reg ? regs16[rm.idx] : RMEM16(rm.addr);
+        reg_ip += 1 + rm.len;
+        continue;
+      }
 
       // ESPPC: the fast paths below were measured as frequent in games (the monitor's 'y'
       // profile) and cost 450-550 host cycles through stepEx's generic decoding. They set exactly
@@ -1448,7 +1454,23 @@ void IRAM_ATTR i8086::step()
         return;
       }
 
-      op_0:   
+      // MOV r/m16, sreg (0x8c), reg field decoded as for 0x8e
+      op_37:
+      {
+        FastRM   rm = decodeRM(opcode_stream + 1, true);
+        uint16_t v  = regs16[REG_ES + ((opcode_stream[1] >> 3) & 3)];
+        if (rm.reg) regs16[rm.idx] = v; else WMEM16(rm.addr, v);
+        reg_ip += 1 + rm.len;
+        return;
+      }
+
+      // XLAT (0xd7)
+      op_38:
+        regs8[REG_AL] = RMEM8(16 * regs16[seg_override_en ? seg_override : REG_DS] + (uint16_t)(regs8[REG_AL] + regs16[REG_BX]));
+        ++reg_ip;
+        return;
+
+      op_0:
         stepEx(opcode_stream);
         return;
 
@@ -1508,7 +1530,7 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
   // ESPPC: dispatched through a table of label addresses in DRAM, as in step() and for the same
   // reason: the IDF's -fno-jump-tables made the switch here a tree of compares. 'goto ex_done' is
   // the switch's old 'break', on to the IP update and the flags below.
-  static void * const DRAM_ATTR dispatch[73] = { &&ex_default, &&ex_default, &&ex_2, &&ex_default, &&ex_default, &&ex_5, &&ex_6, &&ex_default, &&ex_default, &&ex_default, &&ex_10, &&ex_default, &&ex_12, &&ex_13, &&ex_14, &&ex_default, &&ex_16, &&ex_17, &&ex_18, &&ex_19, &&ex_20, &&ex_21, &&ex_22, &&ex_default, &&ex_24, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_30, &&ex_31, &&ex_32, &&ex_33, &&ex_34, &&ex_35, &&ex_36, &&ex_37, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_44, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default };
+  static void * const DRAM_ATTR dispatch[73] = { &&ex_default, &&ex_default, &&ex_2, &&ex_default, &&ex_default, &&ex_5, &&ex_6, &&ex_default, &&ex_default, &&ex_default, &&ex_10, &&ex_default, &&ex_12, &&ex_13, &&ex_14, &&ex_default, &&ex_16, &&ex_17, &&ex_18, &&ex_19, &&ex_20, &&ex_21, &&ex_22, &&ex_default, &&ex_24, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_30, &&ex_31, &&ex_32, &&ex_33, &&ex_34, &&ex_35, &&ex_36, &&ex_37, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default, &&ex_default };
   goto *dispatch[xlat_opcode_id];
   {
     ex_2: // INC|DEC regs16
@@ -1682,27 +1704,12 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
     // ESPPC: ADD|OR|ADC|SBB|AND|SUB|XOR|CMP in all their forms (cases 7 to 9), MOV AL/AX with
     // [loc] (case 11) and TEST (cases 15 and 47) were here. step() runs all of them on its fast paths now, so they never get
     // here, and the IRAM they took went to those paths.
-    ex_10: // MOV sreg, r/m | POP r/m | LEA reg, r/m
-      if (!i_w) { // i_w == 0
-        // MOV
-        i_w = 1;
-        i_reg += 8;
-        int32_t scratch2_uint = 4 * !i_mod;
-        rm_addr = i_mod < 3 ?
-                              16 * regs16[seg_override_en ?
-                                                            seg_override
-                                                          : instr_table_lookup[scratch2_uint + 3][i_rm]] + (uint16_t)(regs16[instr_table_lookup[scratch2_uint + 1][i_rm]] + instr_table_lookup[scratch2_uint + 2][i_rm] * i_data1 + regs16[instr_table_lookup[scratch2_uint][i_rm]])
-                            : (regs_offset + (2 * i_rm));
-        if (i_d) {
-          regs16[i_reg] = RMEM16(rm_addr);
-        } else {
-          WMEM16(rm_addr, regs16[i_reg]);
-        }
-      } else if (!i_d) {  // i_w == 1 && i_d == 0
+    ex_10: // LEA reg, r/m | POP r/m (MOV sreg, both ways, is in step())
+      if (!i_d) {  // 0x8d
         // LEA
         int idx = 4 * !i_mod;
         regs16[i_reg] = regs16[instr_table_lookup[idx + 1][i_rm]] + instr_table_lookup[idx + 2][i_rm] * i_data1 + regs16[instr_table_lookup[idx][i_rm]];
-      } else {  // i_w == 1 && i_d == 1
+      } else {  // 0x8f
         // POP
         regs16[REG_SP] += 2;
         WMEM16(rm_addr, MEM16(16 * regs16[REG_SS] + (uint16_t)(-2 + regs16[REG_SP])));
@@ -2006,10 +2013,6 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
       regs16[i_reg] = RMEM16(rm_addr);
       regs16[extra / 2] = RMEM16(rm_addr + 2);
       goto ex_done;
-    ex_44: // XLAT
-      regs8[REG_AL] = RMEM8(16 * regs16[seg_override_en ? seg_override : REG_DS] + (uint16_t)(regs8[REG_AL] + regs16[REG_BX]));
-      ++reg_ip;
-      return; // no calc ip, no flags
     // ESPPC: everything rare lives in stepExCold(), in flash (see there)
     ex_default:
       if (stepExCold(opcode_stream, i_data0, i_data2, op_result))
