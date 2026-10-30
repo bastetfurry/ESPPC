@@ -1,6 +1,6 @@
 # ESPPC
 
-An IBM PC/XT on the ESP32: 8086 at roughly turbo XT speed, up to 704 KB of RAM, CGA, EGA or
+An IBM PC/XT on the ESP32: 8086 at about six times XT speed, up to 704 KB of RAM, CGA, EGA or
 Tandy 1000 video on a VGA monitor, PC speaker, Tandy sound and an AdLib, floppy and hard disk
 images on the SD card or downloaded over Wi-Fi.
 
@@ -24,8 +24,9 @@ Pull requests are welcome of course.
 
 ## What it emulates
 
-- **CPU:** 8086, Topbench 17 (a turbo XT at 10–12 MHz; up from 11 in the original example).
-  Checked against the SingleStepTests 8088 suite, see `tools/cputest/`.
+- **CPU:** 8086, Topbench 31 to 32 with CGA, EGA or Tandy video, and about six times an IBM XT
+  in CheckIt (up from Topbench 11 in the original example). Checked against the SingleStepTests
+  8088 suite, see `tools/cputest/`.
 - **Memory:** 64 to 704 KB of conventional memory. 704 KB is the classic non-IBM XT
   configuration: video moves up to B000 and the A000 segment becomes ordinary RAM.
 - **Video:** per machine:
