@@ -607,7 +607,7 @@ void Machine::run()
 // a few microseconds, as they are on real hardware at the end of a long instruction. The batch is a
 // single call to i8086::step(), which saves the call per instruction; while a breakpoint is armed
 // the instructions go one by one, so that it is checked before each of them.
-void IRAM_ATTR Machine::runTask(void * pvParameters)
+void EMU_IRAM Machine::runTask(void * pvParameters)
 {
   constexpr int BATCH = 16;
 
@@ -2838,13 +2838,13 @@ bool Machine::COM2Interrupt(PC8250 * source, void * context)
 // inlined into them, so they live in IRAM as well.
 // The EGA byte accesses, out of line so the 16 bit handlers can use them without carrying two more
 // inlined copies of the planar engine.
-void IRAM_ATTR __attribute__((noinline)) Machine::egaWrite8(Machine * m, uint32_t off, uint8_t value)
+void EMU_IRAM __attribute__((noinline)) Machine::egaWrite8(Machine * m, uint32_t off, uint8_t value)
 {
   m->m_EGA.write8(off, value);
 }
 
 
-uint8_t IRAM_ATTR __attribute__((noinline)) Machine::egaRead8(Machine * m, uint32_t off)
+uint8_t EMU_IRAM __attribute__((noinline)) Machine::egaRead8(Machine * m, uint32_t off)
 {
   return m->m_EGA.read8(off);
 }
@@ -2944,7 +2944,7 @@ Machine::OpProfile * volatile Machine::s_opProfile = nullptr;
 
 // The callbacks the CPU core calls: the access itself, and while the monitor's statistics are on,
 // its count and its time in cycles (see s_vmStats).
-void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t value)
+void EMU_IRAM Machine::writeVideoMemory8(void * context, int address, uint8_t value)
 {
   bool     stats = s_vmStats;
   uint32_t t     = stats ? esp_cpu_get_cycle_count() : 0;
@@ -2956,7 +2956,7 @@ void IRAM_ATTR Machine::writeVideoMemory8(void * context, int address, uint8_t v
 }
 
 
-void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t value)
+void EMU_IRAM Machine::writeVideoMemory16(void * context, int address, uint16_t value)
 {
   bool     stats = s_vmStats;
   uint32_t t     = stats ? esp_cpu_get_cycle_count() : 0;
@@ -2968,7 +2968,7 @@ void IRAM_ATTR Machine::writeVideoMemory16(void * context, int address, uint16_t
 }
 
 
-uint8_t IRAM_ATTR Machine::readVideoMemory8(void * context, int address)
+uint8_t EMU_IRAM Machine::readVideoMemory8(void * context, int address)
 {
   bool     stats = s_vmStats;
   uint32_t t     = stats ? esp_cpu_get_cycle_count() : 0;
@@ -2981,7 +2981,7 @@ uint8_t IRAM_ATTR Machine::readVideoMemory8(void * context, int address)
 }
 
 
-uint16_t IRAM_ATTR Machine::readVideoMemory16(void * context, int address)
+uint16_t EMU_IRAM Machine::readVideoMemory16(void * context, int address)
 {
   bool     stats = s_vmStats;
   uint32_t t     = stats ? esp_cpu_get_cycle_count() : 0;
@@ -2998,7 +2998,7 @@ uint16_t IRAM_ATTR Machine::readVideoMemory16(void * context, int address)
 // are none of the emulator's business: only INT FFh (the postbox) and the traps the BIOS makes from
 // its own segment are. So this front is in IRAM and decides with two compares, and the handling
 // itself stays in flash, in interruptHandler().
-bool IRAM_ATTR Machine::interrupt(void * context, int num)
+bool EMU_IRAM Machine::interrupt(void * context, int num)
 {
   auto m = (Machine*)context;
   if (m->m_portTrace && num >= m->m_intTraceLo && num <= m->m_intTraceHi && i8086::CS() != BIOS_SEG)

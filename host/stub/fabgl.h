@@ -21,6 +21,7 @@
 #include "fabglconf.h"
 
 #define IRAM_ATTR
+#define EMU_IRAM
 #define DRAM_ATTR
 #define WORD_ALIGNED_ATTR __attribute__((aligned(4)))
 #define PSRAM_WORKAROUND1

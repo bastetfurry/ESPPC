@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #define IRAM_ATTR
+#define EMU_IRAM
 #define DRAM_ATTR
 #define PSRAM_WORKAROUND2
 #define FABGL_ESP_IDF_VERSION_VAL(a, b, c) (((a) << 16) | ((b) << 8) | (c))

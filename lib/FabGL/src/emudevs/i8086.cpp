@@ -29,15 +29,6 @@
 #include "i8086.h"
 
 
-// ESPPC: the code that runs for every instruction goes to IRAM after all other code
-// (src/esppc_iram.ld): in the block the scanline renderers and the VGA interrupt run from on the
-// other core, the two took turns fetching and the CPU core lost 12% in EGA text mode.
-#ifdef _SECTION_ATTR_IMPL
-  #define CPU_IRAM _SECTION_ATTR_IMPL(".iram_cpu", __COUNTER__)
-#else
-  #define CPU_IRAM
-#endif
-
 
 namespace fabgl {
 
@@ -348,7 +339,7 @@ DRAM_ATTR static uint8_t * instr_table_lookup[] = {    rm_mode12_reg1,    // 0
 
 // ret false if not acked
 // ESPPC: in IRAM, the machine's loop calls it whenever an interrupt is pending
-bool CPU_IRAM i8086::IRQ(uint8_t interrupt_num)
+bool EMU_IRAM i8086::IRQ(uint8_t interrupt_num)
 {
   if (!s_state.pendingIRQ) {
     s_state.pendingIRQ = true;
@@ -466,7 +457,7 @@ static inline __attribute__((always_inline)) void set_opcode(uint8_t opcode)
 
 // Execute INT #interrupt_num on the emulated machine
 // ESPPC: in IRAM, taken on every software INT and hardware IRQ
-void CPU_IRAM i8086::pc_interrupt(uint8_t interrupt_num)
+void EMU_IRAM i8086::pc_interrupt(uint8_t interrupt_num)
 {
   // fab: interrupt can exit from halt state
   if (s_state.halted) {
@@ -608,7 +599,7 @@ static const uint8_t RM_BASE_init[8] = { REG_BX, REG_BX, REG_BP, REG_BP, REG_SI,
 static const uint8_t RM_INDEX_init[8] = { REG_SI, REG_DI, REG_SI, REG_DI, REG_ZERO, REG_ZERO, REG_ZERO, REG_ZERO };
 
 // ESPPC: for the monitor's 'n gaps' only. The same kind of loop as gapScan() in serialdbg.cpp, but
-// in IRAM next to step() (CPU_IRAM): run on two machines, its pace shows whether the other core
+// in IRAM next to step() (EMU_IRAM): run on two machines, its pace shows whether the other core
 // fetches code from the same block of IRAM.
 #ifndef ESP_PLATFORM
 uint32_t i8086::paceProbe(uint32_t cycles)
@@ -616,7 +607,7 @@ uint32_t i8086::paceProbe(uint32_t cycles)
   return 0;   // no cycle counter, and no other core to share IRAM with
 }
 #else
-uint32_t CPU_IRAM __attribute__((noinline)) i8086::paceProbe(uint32_t cycles)
+uint32_t EMU_IRAM __attribute__((noinline)) i8086::paceProbe(uint32_t cycles)
 {
   uint32_t passes = 0;
   uint32_t start  = esp_cpu_get_cycle_count(), prev = start;
@@ -785,7 +776,7 @@ static inline __attribute__((always_inline)) uint32_t fastShift1(int op, uint32_
 // whole batch in one, which saves the call (call8, entry and retw, about 14 cycles, the monitor's
 // 'n') for all but the first, and lets the state's base stay in a register. Every 'return' of an
 // instruction is a 'goto next'.
-void CPU_IRAM i8086::step(int count)
+void EMU_IRAM i8086::step(int count)
 {
 begin:
 
@@ -1541,7 +1532,7 @@ next:
 
 // ESPPC: in IRAM too, for the same reason as step(). This is the instruction interpreter
 // proper, about 21 KB, and the largest single piece of code in IRAM.
-void CPU_IRAM i8086::stepEx(uint8_t const * opcode_stream)
+void EMU_IRAM i8086::stepEx(uint8_t const * opcode_stream)
 {
   set_opcode(*opcode_stream);
 

@@ -171,7 +171,7 @@ uint8_t PIC8259::read(int addr)
 // ret: 0..7
 // 256 = no bit set
 // ESPPC: the interrupt path, from the devices' ticks and the machine's loop, is in IRAM
-int IRAM_ATTR PIC8259::getHighestPriorityBitNum(uint8_t value)
+int EMU_IRAM PIC8259::getHighestPriorityBitNum(uint8_t value)
 {
   if (value) {
     for (int i = 0; i < 8; ++i)
@@ -183,7 +183,7 @@ int IRAM_ATTR PIC8259::getHighestPriorityBitNum(uint8_t value)
 
 
 // set as pending interrupt the higher priority bit in M_IRR
-void IRAM_ATTR PIC8259::setPendingInterrupt()
+void EMU_IRAM PIC8259::setPendingInterrupt()
 {
   int highestInt   = getHighestPriorityBitNum(m_IRR & ~m_IMR);
   int servicingInt = getHighestPriorityBitNum(m_ISR);
@@ -197,7 +197,7 @@ void IRAM_ATTR PIC8259::setPendingInterrupt()
 
 
 // Device->8259: a device reports interrupt to 8259
-bool IRAM_ATTR PIC8259::signalInterrupt(int intnum)
+bool EMU_IRAM PIC8259::signalInterrupt(int intnum)
 {
   //printf("PIC8259::signalInterrupt(%d)\n", intnum);
   bool success = false;
@@ -214,7 +214,7 @@ bool IRAM_ATTR PIC8259::signalInterrupt(int intnum)
 
 
 // CPU->8259: CPU acks the pending interrupt to 8259
-void IRAM_ATTR PIC8259::ackPendingInterrupt()
+void EMU_IRAM PIC8259::ackPendingInterrupt()
 {
   //printf("PIC8259::ackPendingInterrupt(), pending IR = %d\n", m_pendingIR);
   int pendmsk = 1 << m_pendingIR;
@@ -227,7 +227,7 @@ void IRAM_ATTR PIC8259::ackPendingInterrupt()
 
 // ESPPC: the pending request goes away unserviced: out of IRR, nothing put in service, and the
 // next highest request, if any, becomes the pending one
-void IRAM_ATTR PIC8259::cancelPendingInterrupt()
+void EMU_IRAM PIC8259::cancelPendingInterrupt()
 {
   m_IRR &= ~(1 << m_pendingIR);
   m_pendingInterrupt = false;

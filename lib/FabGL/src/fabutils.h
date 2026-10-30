@@ -135,6 +135,17 @@ namespace fabgl {
 #endif
 
 
+// ESPPC: IRAM code of the emulator's own core (the CPU, the video memory callbacks, the device
+// ticks), placed after all other IRAM code by src/esppc_iram.ld: away from the 32 KB block the
+// scanline renderers and the VGA interrupt run from on the other core. Two cores fetching code from
+// one block take turns; it cost the CPU core 12% in EGA text mode (the monitor's 'n gaps').
+#if defined(_SECTION_ATTR_IMPL)
+  #define EMU_IRAM _SECTION_ATTR_IMPL(".iram_emu", __COUNTER__)
+#else
+  #define EMU_IRAM IRAM_ATTR
+#endif
+
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 

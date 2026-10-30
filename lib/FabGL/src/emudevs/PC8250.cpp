@@ -579,7 +579,7 @@ void PC8250::checkDCDChanged()
 
 
 // ESPPC: in IRAM, ticked every fourth emulated instruction
-void IRAM_ATTR PC8250::tick()
+void EMU_IRAM PC8250::tick()
 {
   // check for interrupts?
   if (m_IER) {
