@@ -604,8 +604,9 @@ void Machine::run()
 // after every instruction: it cost 91 host cycles per instruction against 318 for the instruction
 // itself (measured with the monitor's 'm'), about a fifth of all the emulator's time, since tick()
 // is an ordinary function in flash. Interrupts are therefore taken at most BATCH instructions late,
-// a few microseconds, as they are on real hardware at the end of a long instruction. The breakpoint
-// check stays per instruction, a compare with zero when none is set.
+// a few microseconds, as they are on real hardware at the end of a long instruction. The batch is a
+// single call to i8086::step(), which saves the call per instruction; while a breakpoint is armed
+// the instructions go one by one, so that it is checked before each of them.
 void IRAM_ATTR Machine::runTask(void * pvParameters)
 {
   constexpr int BATCH = 16;
@@ -642,13 +643,18 @@ void IRAM_ATTR Machine::runTask(void * pvParameters)
     bool stats = s_vmStats;
     uint32_t t0 = stats ? esp_cpu_get_cycle_count() : 0;
 
-    for (int i = 0; i < BATCH; ++i) {
-      if (m->m_breakAddr &&
-          (((uint32_t)i8086::CS() << 4) + i8086::IP()) == m->m_breakAddr) {
-        m->m_breakAddr = 0;               // one shot, so resuming does not trip instantly
-        m->m_serialDebug.breakNow();
+    // the whole batch in one call; one at a time only while a breakpoint is armed
+    if (__builtin_expect(m->m_breakAddr == 0, 1))
+      i8086::step(BATCH);
+    else {
+      for (int i = 0; i < BATCH; ++i) {
+        if (m->m_breakAddr &&
+            (((uint32_t)i8086::CS() << 4) + i8086::IP()) == m->m_breakAddr) {
+          m->m_breakAddr = 0;               // one shot, so resuming does not trip instantly
+          m->m_serialDebug.breakNow();
+        }
+        i8086::step();
       }
-      i8086::step();
     }
 
     if (__builtin_expect(stats, 0)) {

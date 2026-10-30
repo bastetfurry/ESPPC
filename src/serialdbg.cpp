@@ -570,6 +570,7 @@ void SerialDebug::help()
   write("  c [s]             free CPU time on the video core, measured over s seconds (default 2)\r\n");
   write("  a                 benchmark the OPL2 synthesiser: all nine channels, one second of samples\r\n");
   write("  n                 load latency of internal RAM and guest RAM (PSRAM), in CPU cycles\r\n");
+  write("  n step            cycles per i8086::step(), timed here: it RUNS the guest's next instructions\r\n");
   write("  m on|off          video memory statistics: count and time the guest's accesses; m  report\r\n");
   write("  y on|off          per opcode CPU profile (cycles and counts); y  report the top 24\r\n");
   write("  s [n]             single step n instructions, then show registers\r\n");
@@ -1555,9 +1556,31 @@ void SerialDebug::cmdOPLBench()
 // 32 bit loads, each address made from the value loaded before (ANDed with a zero the compiler
 // cannot see), so no load starts before the one ahead of it has ended. Guest RAM is only read.
 // The first line is the loop on internal RAM, the floor the others are measured against.
-void SerialDebug::cmdLatency()
+// 'n step' times i8086::step() instead, called from here: it runs the guest's next instructions
+// (meant for a loop put there with 'e' and 'j', which leaves the cache warm and the profile out).
+static void IRAM_ATTR __attribute__((noinline)) emptyCall()
+{
+  asm volatile ("");
+}
+
+void SerialDebug::cmdLatency(char const * args)
 {
   constexpr int N = 100000;
+
+  if (strncmp(args, "step", 4) == 0) {
+    uint32_t t = esp_cpu_get_cycle_count();
+    for (int n = 0; n < N; ++n)
+      i8086::step();
+    t = esp_cpu_get_cycle_count() - t;
+    writeFmt("  %-40s %4u cycles per step\r\n", "i8086::step()", (unsigned)((t + N / 2) / N));
+    t = esp_cpu_get_cycle_count();
+    for (int n = 0; n < N / 16; ++n)
+      i8086::step(16);
+    t = esp_cpu_get_cycle_count() - t;
+    writeFmt("  %-40s %4u cycles per step\r\n", "i8086::step(16), as runTask calls it", (unsigned)((t + N / 2) / N));
+    return;
+  }
+
   static volatile uint32_t zeroSrc = 0;
   uint32_t zero = zeroSrc;
 
@@ -1584,6 +1607,12 @@ void SerialDebug::cmdLatency()
   writeFmt("  %-40s %4u cycles per load\r\n", "guest RAM (PSRAM), one word",       (unsigned) chase(guest, 0, 0));
   writeFmt("  %-40s %4u cycles per load\r\n", "guest RAM, 4 KB in 32 byte steps",  (unsigned) chase(guest, 32, 0xffc));
   writeFmt("  %-40s %4u cycles per load\r\n", "guest RAM, spread over 1 MB",       (unsigned) chase(guest, 0x10420, 0xffffc));
+  // the windowed ABI's call8, entry and retw, as runTask pays them for every step()
+  uint32_t t = esp_cpu_get_cycle_count();
+  for (int n = 0; n < N; ++n)
+    emptyCall();
+  t = esp_cpu_get_cycle_count() - t;
+  writeFmt("  %-40s %4u cycles per call\r\n", "call to an empty function in IRAM", (unsigned)((t + N / 2) / N));
   free(dram);
 }
 
@@ -1652,7 +1681,7 @@ void SerialDebug::runMonitor()
       case 't': cmdPortTrace(p); break;
       case 'c': cmdCoreLoad(p);  break;
       case 'a': cmdOPLBench();   break;
-      case 'n': cmdLatency();    break;
+      case 'n': cmdLatency(p);   break;
       case 'm': cmdVideoStats(p); break;
       case 'y': cmdOpProfile(p); break;
       case '?': help();          break;

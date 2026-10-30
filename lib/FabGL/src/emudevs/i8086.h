@@ -130,7 +130,8 @@ public:
   static void setAcknowledgeCallback(Acknowledge value)   { s_state.acknowledge = value; }
   static void setINTR(bool value)                         { s_state.intr = value; }
 
-  static void step();
+  // runs count instructions (see i8086.cpp)
+  static void step(int count = 1);
 
 
   // ESPPC: everything the core touches on every instruction, behind one base address. Xtensa

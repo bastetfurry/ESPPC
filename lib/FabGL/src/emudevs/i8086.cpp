@@ -746,17 +746,21 @@ static inline __attribute__((always_inline)) uint32_t fastShift1(int op, uint32_
 }
 
 
-// ESPPC: in IRAM. It runs once per emulated instruction, and from flash it competes for the
-// cache with guest RAM in PSRAM, which both go through.
-void IRAM_ATTR i8086::step()
+// ESPPC: in IRAM. It runs every emulated instruction, and from flash it competes for the cache
+// with guest RAM in PSRAM, which both go through. 'count' instructions per call: runTask runs a
+// whole batch in one, which saves the call (call8, entry and retw, about 14 cycles, the monitor's
+// 'n') for all but the first, and lets the state's base stay in a register. Every 'return' of an
+// instruction is a 'goto next'.
+void IRAM_ATTR i8086::step(int count)
 {
+begin:
 
   // Interrupts handling
   // Following instructions inhibits interrupts for the next instruction:
   //    MOV SS, xxx     [opcode 0x8e]
   //    POP SS          [opcode 0x17]
   //    STI             [opcode 0xfb]
-  // They are hard coded inside below loop, repeating it using "break" instead of "return"
+  // They are hard coded inside below loop, repeating it using "continue" instead of "goto next"
 
   // Application has set trap flag, so fire INT 1
   // ESPPC: after an instruction that began with TF set, as the 8086 does: the one after the IRET or
@@ -840,7 +844,7 @@ void IRAM_ATTR i8086::step()
         if (rep_override_en)
           ++rep_override_en;
         ++reg_ip;
-        return;
+        goto next;
 
       // JO
       // JNO
@@ -864,14 +868,14 @@ void IRAM_ATTR i8086::step()
         int32_t inv = *opcode_stream & 1; // inv is the invert flag, e.g. 1 means JNAE, whereas 0 means JAE
         int32_t idx = (*opcode_stream >> 1) & 7;
         reg_ip += 2 + (int8_t)opcode_stream[1] * (inv ^ (flags[jxx_dec_a[idx]] || flags[jxx_dec_b[idx]] || flags[jxx_dec_c[idx]] ^ flags[jxx_dec_d[idx]]));
-        return;
+        goto next;
       }
 
       // JMP disp8
       // opcode 0xeb
       op_3:
         reg_ip += 2 + (int8_t)opcode_stream[1];
-        return;
+        goto next;
 
       // CLC|STC|CLI|STI|CLD|STD
       // opcodes 0xf8 ... 0xfd
@@ -887,7 +891,7 @@ void IRAM_ATTR i8086::step()
       // opcode 0xe3
       op_5:
         reg_ip += 2 + !regs16[REG_CX] * (int8_t)opcode_stream[1];
-        return;
+        goto next;
 
       // CALL disp16
       // opcode 0xe8
@@ -897,7 +901,7 @@ void IRAM_ATTR i8086::step()
         reg_ip = pIP + *(uint16_t*)(opcode_stream + 1);
         regs16[REG_SP] -= 2;
         MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = pIP;
-        return;
+        goto next;
       }
 
       // RET (intrasegment)
@@ -905,7 +909,7 @@ void IRAM_ATTR i8086::step()
       op_7:
         reg_ip = MEM16(16 * regs16[REG_SS] + regs16[REG_SP]);
         regs16[REG_SP] += 2;
-        return;
+        goto next;
 
       // POP reg
       // opcodes 0x58 ... 0x5f
@@ -913,7 +917,7 @@ void IRAM_ATTR i8086::step()
         regs16[REG_SP] += 2;  // SP may be read from stack, so we have to increment here
         regs16[*opcode_stream & 7] = MEM16(16 * regs16[REG_SS] + (uint16_t)(regs16[REG_SP] - 2));
         ++reg_ip;
-        return;
+        goto next;
 
       // PUSH reg
       // opcodes 0x50 ... 0x57
@@ -921,21 +925,21 @@ void IRAM_ATTR i8086::step()
         regs16[REG_SP] -= 2;
         MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = regs16[*opcode_stream & 7];
         ++reg_ip;
-        return;
+        goto next;
 
       // MOV reg8, data8
       // opcodes 0xb0 ... 0xb7
       op_10:
         regs8[((*opcode_stream >> 2) & 1) + (*opcode_stream & 3) * 2] = *(opcode_stream + 1);
         reg_ip += 2;
-        return;
+        goto next;
 
       // MOV reg16, data16
       // opcodes 0xb8 ... 0xbf
       op_11:
         regs16[*opcode_stream & 0x7] = *(uint16_t*)(opcode_stream + 1);
         reg_ip += 3;
-        return;
+        goto next;
 
       // POP ES
       // POP SS
@@ -956,7 +960,7 @@ void IRAM_ATTR i8086::step()
         regs16[REG_SP] -= 2;
         MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = regs16[REG_ES + (*opcode_stream >> 3)];
         ++reg_ip;
-        return;
+        goto next;
 
       // REP / REPE / REPNE / REPNZ / REPZ
       // opcodes 0xf2 0xf3
@@ -966,14 +970,14 @@ void IRAM_ATTR i8086::step()
         if (seg_override_en)
           ++seg_override_en;
         ++reg_ip;
-        return;
+        goto next;
 
       // INT imm8
       // opcode 0xcd
       op_15:
         reg_ip += 2;
         pc_interrupt(opcode_stream[1]);
-        return;
+        goto next;
 
       // IRET
       // opcode 0xcf
@@ -984,7 +988,7 @@ void IRAM_ATTR i8086::step()
         regs16[REG_CS] = stack[1];
         set_flags(stack[2]);
         regs16[REG_SP] += 6;
-        return;
+        goto next;
       }
 
       // RETF (intersegment RET)
@@ -995,7 +999,7 @@ void IRAM_ATTR i8086::step()
         reg_ip         = stack[0];
         regs16[REG_CS] = stack[1];
         regs16[REG_SP] += 4;
-        return;
+        goto next;
       }
 
       // MOV sreg, r/m16 (0x8e). The 8088 decodes two bits of the reg field: 4..7 are ES..DS again.
@@ -1035,7 +1039,7 @@ void IRAM_ATTR i8086::step()
         FLAG_ZF = !res;
         FLAG_PF = parity[(uint8_t) res];
         ++reg_ip;
-        return;
+        goto next;
       }
 
       // MOV r/m8, reg8     (0x88)
@@ -1062,7 +1066,7 @@ void IRAM_ATTR i8086::step()
           }
         }
         reg_ip += 1 + rm.len;
-        return;
+        goto next;
       }
 
       // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP r/m8, imm8           (0x80)
@@ -1089,7 +1093,7 @@ void IRAM_ATTR i8086::step()
           }
         }
         reg_ip += 1 + rm.len + (op == 0x81 ? 2 : 1);
-        return;
+        goto next;
       }
 
       // ROL|ROR|RCL|RCR|SHL|SHR|SAR r/m8, 1   (0xd0)
@@ -1103,14 +1107,14 @@ void IRAM_ATTR i8086::step()
         int sh = (opcode_stream[1] >> 3) & 7;
         if (sh == 6) {                      // undocumented, stepEx knows what it does
           stepEx(opcode_stream);
-          return;
+          goto next;
         }
         bool     w   = *opcode_stream & 1;
         FastRM   rm  = decodeRM(opcode_stream + 1, w);
         int      n   = (*opcode_stream & 2) ? regs8[REG_CL] : 1;
         if (n == 0) {
           reg_ip += 1 + rm.len;
-          return;
+          goto next;
         }
         uint32_t v   = w ? (rm.reg ? regs16[rm.idx] : RMEM16(rm.addr))
                          : (rm.reg ? regs8[rm.idx]  : RMEM8(rm.addr));
@@ -1124,7 +1128,7 @@ void IRAM_ATTR i8086::step()
           if (rm.reg) regs8[rm.idx] = res;  else WMEM8(rm.addr, res);
         }
         reg_ip += 1 + rm.len;
-        return;
+        goto next;
       }
 
       // INC r/m8 (0xfe /0), DEC r/m8 (0xfe /1); anything else in the group goes to stepEx
@@ -1133,7 +1137,7 @@ void IRAM_ATTR i8086::step()
         int sub = (opcode_stream[1] >> 3) & 7;
         if (sub > 1) {
           stepEx(opcode_stream);
-          return;
+          goto next;
         }
         FastRM  rm  = decodeRM(opcode_stream + 1, false);
         uint8_t v   = rm.reg ? regs8[rm.idx] : RMEM8(rm.addr);
@@ -1152,7 +1156,7 @@ void IRAM_ATTR i8086::step()
         FLAG_ZF = !res;
         FLAG_PF = parity[res];
         reg_ip += 1 + rm.len;
-        return;
+        goto next;
       }
 
       // MOV r/m8, imm8 (0xc6 /0), MOV r/m16, imm16 (0xc7 /0)
@@ -1160,7 +1164,7 @@ void IRAM_ATTR i8086::step()
       {
         if ((opcode_stream[1] >> 3) & 7) {  // not /0: whatever stepEx makes of it
           stepEx(opcode_stream);
-          return;
+          goto next;
         }
         bool   w  = *opcode_stream & 1;
         FastRM rm = decodeRM(opcode_stream + 1, w);
@@ -1172,7 +1176,7 @@ void IRAM_ATTR i8086::step()
           if (rm.reg) regs8[rm.idx] = imm[0]; else WMEM8(rm.addr, imm[0]);
         }
         reg_ip += 1 + rm.len + (w ? 2 : 1);
-        return;
+        goto next;
       }
 
       // MOVSB MOVSW (0xa4 0xa5), STOSB STOSW (0xaa 0xab), LODSB LODSW (0xac 0xad), with or without
@@ -1211,7 +1215,7 @@ void IRAM_ATTR i8086::step()
             regs16[REG_DI] += n;
             regs16[REG_CX]  = 0;
             ++reg_ip;
-            return;
+            goto next;
           }
         }
 
@@ -1240,7 +1244,7 @@ void IRAM_ATTR i8086::step()
         if (rep_override_en)
           regs16[REG_CX] = 0;
         ++reg_ip;
-        return;
+        goto next;
       }
 
       // IN AL/AX, imm8      (0xe4 0xe5)
@@ -1262,7 +1266,7 @@ void IRAM_ATTR i8086::step()
             regs8[REG_AH] = s_state.readPort(s_state.context, port + 1);
         }
         reg_ip += (op & 8) ? 1 : 2;
-        return;
+        goto next;
       }
 
       // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP r/m, reg and reg, r/m, 8 and 16 bits
@@ -1290,7 +1294,7 @@ void IRAM_ATTR i8086::step()
           }
         }
         reg_ip += 1 + rm.len;
-        return;
+        goto next;
       }
 
       // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP AL, imm8 and AX, imm16 (0x04 ... 0x3d, the fifth and sixth
@@ -1307,7 +1311,7 @@ void IRAM_ATTR i8086::step()
           if (w) regs16[REG_AX] = res; else regs8[REG_AL] = res;
         }
         reg_ip += w ? 3 : 2;
-        return;
+        goto next;
       }
 
       // TEST r/m8, reg8 (0x84), TEST r/m16, reg16 (0x85)
@@ -1320,7 +1324,7 @@ void IRAM_ATTR i8086::step()
                        : (rm.reg ? regs8[rm.idx]  : RMEM8(rm.addr));
         fastALU(4, a, w ? regs16[r] : regs8[(2 * r + r / 4) & 7], w);
         reg_ip += 1 + rm.len;
-        return;
+        goto next;
       }
 
       // TEST r/m, imm (0xf6 /0, 0xf7 /0), NOT (/2), NEG (/3); MUL, IMUL, DIV, IDIV and the
@@ -1330,7 +1334,7 @@ void IRAM_ATTR i8086::step()
         int sub = (opcode_stream[1] >> 3) & 7;
         if (sub == 1 || sub > 3) {
           stepEx(opcode_stream);
-          return;
+          goto next;
         }
         bool     w  = *opcode_stream & 1;
         FastRM   rm = decodeRM(opcode_stream + 1, w);
@@ -1344,7 +1348,7 @@ void IRAM_ATTR i8086::step()
           uint32_t r = fastALU(sub ? 5 : 4, sub ? 0 : v, sub ? v : b, w);
           if (sub == 0) {
             reg_ip += 1 + rm.len + (w ? 2 : 1);
-            return;
+            goto next;
           }
           v = r;
         }
@@ -1355,7 +1359,7 @@ void IRAM_ATTR i8086::step()
           if (rm.reg) regs8[rm.idx] = res;  else WMEM8(rm.addr, res);
         }
         reg_ip += 1 + rm.len;
-        return;
+        goto next;
       }
 
       // INC r/m16 (0xff /0), DEC r/m16 (/1), CALL near r/m16 (/2), JMP near r/m16 (/4), PUSH r/m16
@@ -1365,7 +1369,7 @@ void IRAM_ATTR i8086::step()
         int sub = (opcode_stream[1] >> 3) & 7;
         if (sub == 3 || sub == 5 || sub == 7) {
           stepEx(opcode_stream);
-          return;
+          goto next;
         }
         FastRM rm = decodeRM(opcode_stream + 1, true);
         if (sub < 2) {
@@ -1385,13 +1389,13 @@ void IRAM_ATTR i8086::step()
           FLAG_ZF = !res;
           FLAG_PF = parity[(uint8_t) res];
           reg_ip += 1 + rm.len;
-          return;
+          goto next;
         }
         if (sub == 6) {                     // PUSH: of SP itself the value after the decrement
           regs16[REG_SP] -= 2;
           MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = rm.reg ? regs16[rm.idx] : RMEM16(rm.addr);
           reg_ip += 1 + rm.len;
-          return;
+          goto next;
         }
         uint16_t to = rm.reg ? regs16[rm.idx] : RMEM16(rm.addr);
         if (sub == 2) {                     // CALL
@@ -1399,7 +1403,7 @@ void IRAM_ATTR i8086::step()
           MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = reg_ip + 1 + rm.len;
         }
         reg_ip = to;
-        return;
+        goto next;
       }
 
       // POP r/m16 (0x8f /0): the address from SP before it moves
@@ -1407,14 +1411,14 @@ void IRAM_ATTR i8086::step()
       {
         if ((opcode_stream[1] >> 3) & 7) {
           stepEx(opcode_stream);
-          return;
+          goto next;
         }
         FastRM rm = decodeRM(opcode_stream + 1, true);
         regs16[REG_SP] += 2;
         uint16_t v = MEM16(16 * regs16[REG_SS] + (uint16_t)(regs16[REG_SP] - 2));
         if (rm.reg) regs16[rm.idx] = v; else WMEM16(rm.addr, v);
         reg_ip += 1 + rm.len;
-        return;
+        goto next;
       }
 
       // MOV AL, [moffs] (0xa0), MOV AX, [moffs] (0xa1), MOV [moffs], AL (0xa2), MOV [moffs], AX (0xa3)
@@ -1428,7 +1432,7 @@ void IRAM_ATTR i8086::step()
           if (op & 1) regs16[REG_AX] = RMEM16(addr); else regs8[REG_AL] = RMEM8(addr);
         }
         reg_ip += 3;
-        return;
+        goto next;
       }
 
       // CALL far ptr16:16 (0x9a)
@@ -1440,13 +1444,13 @@ void IRAM_ATTR i8086::step()
         MEM16(16 * regs16[REG_SS] + regs16[REG_SP]) = reg_ip + 5;
         reg_ip         = opcode_stream[1] | (opcode_stream[2] << 8);
         regs16[REG_CS] = opcode_stream[3] | (opcode_stream[4] << 8);
-        return;
+        goto next;
       }
 
       // JMP near rel16 (0xe9)
       op_33:
         reg_ip += 3 + (opcode_stream[1] | (opcode_stream[2] << 8));
-        return;
+        goto next;
 
       // RET imm16 (0xc2), RETF imm16 (0xca)
       op_36:
@@ -1459,7 +1463,7 @@ void IRAM_ATTR i8086::step()
           regs16[REG_SP] += 4 + n;
         } else
           regs16[REG_SP] += 2 + n;
-        return;
+        goto next;
       }
 
       // MOV r/m16, sreg (0x8c), reg field decoded as for 0x8e
@@ -1469,23 +1473,28 @@ void IRAM_ATTR i8086::step()
         uint16_t v  = regs16[REG_ES + ((opcode_stream[1] >> 3) & 3)];
         if (rm.reg) regs16[rm.idx] = v; else WMEM16(rm.addr, v);
         reg_ip += 1 + rm.len;
-        return;
+        goto next;
       }
 
       // XLAT (0xd7)
       op_38:
         regs8[REG_AL] = RMEM8(16 * regs16[seg_override_en ? seg_override : REG_DS] + (uint16_t)(regs8[REG_AL] + regs16[REG_BX]));
         ++reg_ip;
-        return;
+        goto next;
 
       op_0:
         stepEx(opcode_stream);
-        return;
+        goto next;
 
     }
     
   };
 
+
+  // ESPPC: the next instruction of the batch, the interrupt checks above included
+next:
+  if (--count > 0)
+    goto begin;
 }
 
 
