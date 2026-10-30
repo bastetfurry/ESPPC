@@ -2147,11 +2147,19 @@ uint8_t Machine::egaInputStatus1()
     // guest sees is the real one. Software sets the start address of its next page in it (Commander
     // Keen), and the renderer takes it at the first line of the next frame, as the card does at the
     // end of the retrace; off the real one, a page flip came out in the middle of a picture and the
-    // page being drawn showed. Half a frame at least, so one frame is not taken for two. With no
-    // renderer running -- the BIOS POST, pctool -- a real frame's time and a little stand in.
+    // page being drawn showed. With no renderer running -- pctool -- a real frame's time and a
+    // little stand in.
+    //
+    // Four fifths of a frame at least since the last retrace, not half: the EGA BIOS POST times a
+    // frame from one retrace to the next with the PIT and beeps 1 long 3 short (error 7) under
+    // 12.8 ms. Its first retrace falls anywhere in a real frame, and the next real frame end can
+    // come half a frame later; the time the ROM spends counting the 350 lines made up the rest
+    // until the CPU core got faster (9.3 ms measured). From 13.3 ms to the 17.7 ms the fallback
+    // allows, any frame is in its window (12.8 to 20.4 ms). In steady state the retraces still
+    // fall on the real frame ends; after a jump in phase they get there within a few frames.
     int64_t  now   = esp_timer_get_time();
     uint32_t shown = m_graphicsAdapter.egaFramesShown();
-    bool     ended = shown != m_EGAFramesSeen && now - m_EGARetraceUs >= frameUs / 2;
+    bool     ended = shown != m_EGAFramesSeen && now - m_EGARetraceUs >= frameUs * 4 / 5;
     if (!ended && now - m_EGARetraceUs < frameUs + 1000)
       return 0x01;
     m_EGARetraceUs  = now;                        // retrace starts with this read
