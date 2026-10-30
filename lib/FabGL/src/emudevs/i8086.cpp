@@ -107,63 +107,31 @@ namespace fabgl {
 
 
 // Global variable definitions
-// The register file, flags and IP are class members so the accessors in i8086.h can be inline;
-// the code below keeps its original names for them.
+// Everything the core works on per instruction is in i8086::s_state (see i8086.h); the code below
+// keeps its original names for it.
 // Having the registers and flags in arrays is actually faster on the target platform, the ESP32 with its Xtensa cores.
-alignas(4) uint8_t i8086::s_regs[48];
-uint16_t           i8086::s_regIP;
-uint8_t            i8086::s_flags[10];
-#define regs       i8086::s_regs
-#define flags      i8086::s_flags
-#define reg_ip     i8086::s_regIP
-// regs8 and regs16 name the register file at its fixed address: as pointer variables, every
-// register access first had to load the pointer
-#define regs8      i8086::s_regs
-#define regs16     ((uint16_t *) i8086::s_regs)
-// The decoder's state in one struct: Xtensa loads every global's address from a literal pool, so
-// as separate variables each needed its own address load, where one base register serves them all
-static struct {
-  int32_t  regs_offset;
-  uint32_t op_source, op_dest, set_flags_type;
-  int32_t  op_to_addr, op_from_addr;
-  uint16_t seg_override;
-  uint8_t  i_mod_size, i_d, i_w, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en;
-} cs;
-#define regs_offset     cs.regs_offset
-#define op_source       cs.op_source
-#define op_dest         cs.op_dest
-#define set_flags_type  cs.set_flags_type
-#define op_to_addr      cs.op_to_addr
-#define op_from_addr    cs.op_from_addr
-#define seg_override    cs.seg_override
-#define i_mod_size      cs.i_mod_size
-#define i_d             cs.i_d
-#define i_w             cs.i_w
-#define raw_opcode_id   cs.raw_opcode_id
-#define xlat_opcode_id  cs.xlat_opcode_id
-#define extra           cs.extra
-#define rep_mode        cs.rep_mode
-#define seg_override_en cs.seg_override_en
-#define rep_override_en cs.rep_override_en
-
-
-void *                    i8086::s_context;
-i8086::ReadPort           i8086::s_readPort;
-i8086::WritePort          i8086::s_writePort;
-i8086::WriteVideoMemory8  i8086::s_writeVideoMemory8;
-i8086::WriteVideoMemory16 i8086::s_writeVideoMemory16;
-i8086::ReadVideoMemory8   i8086::s_readVideoMemory8;
-i8086::ReadVideoMemory16  i8086::s_readVideoMemory16;
-i8086::Interrupt          i8086::s_interrupt;
-
-uint8_t *                 i8086::s_memory;
-int                       i8086::s_videoMemStart = 0xA0000;   // IBM default, see setVideoMemStart()
-bool                      i8086::s_pendingIRQ;
-uint8_t                   i8086::s_pendingIRQIndex;
-bool                      i8086::s_intr;
-i8086::Acknowledge        i8086::s_acknowledge;
-bool                      i8086::s_halted;
-bool                      i8086::s_trap;
+i8086::State i8086::s_state;
+#define regs            i8086::s_state.regs
+#define flags           i8086::s_state.flags
+#define reg_ip          i8086::s_state.regIP
+#define regs8           regs
+#define regs16          ((uint16_t *) regs)
+#define regs_offset     i8086::s_state.regs_offset
+#define op_source       i8086::s_state.op_source
+#define op_dest         i8086::s_state.op_dest
+#define set_flags_type  i8086::s_state.set_flags_type
+#define op_to_addr      i8086::s_state.op_to_addr
+#define op_from_addr    i8086::s_state.op_from_addr
+#define seg_override    i8086::s_state.seg_override
+#define i_mod_size      i8086::s_state.i_mod_size
+#define i_d             i8086::s_state.i_d
+#define i_w             i8086::s_state.i_w
+#define raw_opcode_id   i8086::s_state.raw_opcode_id
+#define xlat_opcode_id  i8086::s_state.xlat_opcode_id
+#define extra           i8086::s_state.extra
+#define rep_mode        i8086::s_state.rep_mode
+#define seg_override_en i8086::s_state.seg_override_en
+#define rep_override_en i8086::s_state.rep_override_en
 
 
 
@@ -356,9 +324,9 @@ DRAM_ATTR static uint8_t * instr_table_lookup[] = {    rm_mode12_reg1,    // 0
 // ESPPC: in IRAM, the machine's loop calls it whenever an interrupt is pending
 bool IRAM_ATTR i8086::IRQ(uint8_t interrupt_num)
 {
-  if (!s_pendingIRQ) {
-    s_pendingIRQ = true;
-    s_pendingIRQIndex = interrupt_num;
+  if (!s_state.pendingIRQ) {
+    s_state.pendingIRQ = true;
+    s_state.pendingIRQIndex = interrupt_num;
     return true;
   } else {
     return false;
@@ -371,36 +339,36 @@ bool IRAM_ATTR i8086::IRQ(uint8_t interrupt_num)
 
 
 // direct RAM access (not video RAM)
-#define MEM8(addr)  s_memory[addr]
-#define MEM16(addr) (*(uint16_t*)(s_memory + (addr)))
+#define MEM8(addr)  s_state.memory[addr]
+#define MEM16(addr) (*(uint16_t*)(s_state.memory + (addr)))
 
 
 inline __attribute__((always_inline)) uint8_t i8086::RMEM8(int addr)
 {
-  if (addr >= s_videoMemStart && addr < VIDEOMEM_END) {
-    return s_readVideoMemory8(s_context, addr);
+  if (addr >= s_state.videoMemStart && addr < VIDEOMEM_END) {
+    return s_state.readVideoMemory8(s_state.context, addr);
   } else {
-    return s_memory[addr];
+    return s_state.memory[addr];
   }
 }
 
 
 inline __attribute__((always_inline)) uint16_t i8086::RMEM16(int addr)
 {
-  if (addr >= s_videoMemStart && addr < VIDEOMEM_END) {
-    return s_readVideoMemory16(s_context, addr);
+  if (addr >= s_state.videoMemStart && addr < VIDEOMEM_END) {
+    return s_state.readVideoMemory16(s_state.context, addr);
   } else {
-    return *(uint16_t*)(s_memory + addr);
+    return *(uint16_t*)(s_state.memory + addr);
   }
 }
 
 
 inline __attribute__((always_inline)) uint8_t i8086::WMEM8(int addr, uint8_t value)
 {
-  if (addr >= s_videoMemStart && addr < VIDEOMEM_END) {
-    s_writeVideoMemory8(s_context, addr, value);
+  if (addr >= s_state.videoMemStart && addr < VIDEOMEM_END) {
+    s_state.writeVideoMemory8(s_state.context, addr, value);
   } else {
-    s_memory[addr] = value;
+    s_state.memory[addr] = value;
   }
   return value;
 }
@@ -408,10 +376,10 @@ inline __attribute__((always_inline)) uint8_t i8086::WMEM8(int addr, uint8_t val
 
 inline __attribute__((always_inline)) uint16_t i8086::WMEM16(int addr, uint16_t value)
 {
-  if (addr >= s_videoMemStart && addr < VIDEOMEM_END) {
-    s_writeVideoMemory16(s_context, addr, value);
+  if (addr >= s_state.videoMemStart && addr < VIDEOMEM_END) {
+    s_state.writeVideoMemory16(s_state.context, addr, value);
   } else {
-    *(uint16_t*)(s_memory + addr) = value;
+    *(uint16_t*)(s_state.memory + addr) = value;
   }
   return value;
 }
@@ -475,12 +443,12 @@ static inline __attribute__((always_inline)) void set_opcode(uint8_t opcode)
 void IRAM_ATTR i8086::pc_interrupt(uint8_t interrupt_num)
 {
   // fab: interrupt can exit from halt state
-  if (s_halted) {
-    s_halted = false;
+  if (s_state.halted) {
+    s_state.halted = false;
     ++reg_ip; // go to next instruction after HLT
   }
 
-  if (!s_interrupt(s_context, interrupt_num)) {
+  if (!s_state.interrupt(s_state.context, interrupt_num)) {
     uint16_t newIP     = MEM16(4 * interrupt_num);
     uint16_t newCS     = MEM16(4 * interrupt_num + 2);
 
@@ -552,7 +520,7 @@ static int32_t DAA_DAS()
 
 void i8086::reset()
 {
-  regs_offset = (int32_t)(regs - s_memory);
+  regs_offset = (int32_t)(regs - s_state.memory);
 
   memset(regs8, 0, sizeof(regs));
   set_flags(0);
@@ -561,9 +529,9 @@ void i8086::reset()
   seg_override_en = 0;
   rep_override_en = 0;
 
-  s_halted = false;
-  s_trap   = false;
-  s_intr   = false;   // ESPPC: the INTR line comes back from the PIC with the next batch
+  s_state.halted = false;
+  s_state.trap   = false;
+  s_state.intr   = false;   // ESPPC: the INTR line comes back from the PIC with the next batch
 
   regs16[REG_CS] = 0xffff;
   reg_ip = 0;
@@ -755,24 +723,24 @@ void IRAM_ATTR i8086::step()
   // POPF that sets TF runs before the first trap, and the one that clears TF still traps. Taken
   // before it, a handler that IRETs back with TF set got the trap again at once and never returned
   // to the code it steps (CheckIt's "CPU Interrupt Bug" test hung there).
-  if (s_trap && !seg_override_en && !rep_override_en) {
+  if (s_state.trap && !seg_override_en && !rep_override_en) {
     pc_interrupt(1);
   }
   // Check for interrupts triggered by system interfaces
-  else if (FLAG_IF && (s_pendingIRQ || s_intr) && !seg_override_en && !rep_override_en) {
-    if (s_pendingIRQ) {
-      pc_interrupt(s_pendingIRQIndex);
-      s_pendingIRQ = false;
+  else if (FLAG_IF && (s_state.pendingIRQ || s_state.intr) && !seg_override_en && !rep_override_en) {
+    if (s_state.pendingIRQ) {
+      pc_interrupt(s_state.pendingIRQIndex);
+      s_state.pendingIRQ = false;
     } else {
       // ESPPC: INTR, acknowledged now that the CPU takes it (see setINTR())
-      s_intr = false;
-      int vector = s_acknowledge(s_context);
+      s_state.intr = false;
+      int vector = s_state.acknowledge(s_state.context);
       if (vector >= 0)
         pc_interrupt(vector);
     }
   }
 
-  s_trap = FLAG_TF;
+  s_state.trap = FLAG_TF;
 
   // Instructions handling
 
@@ -787,7 +755,7 @@ void IRAM_ATTR i8086::step()
     if (rep_override_en)
       --rep_override_en;
 
-    uint8_t const * opcode_stream = s_memory + 16 * regs16[REG_CS] + reg_ip;
+    uint8_t const * opcode_stream = s_state.memory + 16 * regs16[REG_CS] + reg_ip;
 
     #if I8086_SHOW_OPCODE_STATS
     static uint32_t opcodeStats[256] = {0};
@@ -1185,12 +1153,12 @@ void IRAM_ATTR i8086::step()
         if (rep_override_en && !FLAG_DF && !w && kind < 2 && n > 0) {
           uint32_t dst = 16 * regs16[REG_ES] + regs16[REG_DI];
           uint32_t src = 16 * regs16[seg] + regs16[REG_SI];
-          bool plain = regs16[REG_DI] + n <= 0x10000 && dst + n <= (uint32_t) s_videoMemStart &&
-                       (kind == 1 || (regs16[REG_SI] + n <= 0x10000 && src + n <= (uint32_t) s_videoMemStart));
+          bool plain = regs16[REG_DI] + n <= 0x10000 && dst + n <= (uint32_t) s_state.videoMemStart &&
+                       (kind == 1 || (regs16[REG_SI] + n <= 0x10000 && src + n <= (uint32_t) s_state.videoMemStart));
           if (plain) {
-            uint8_t * d = s_memory + dst;
+            uint8_t * d = s_state.memory + dst;
             if (kind == 0) {
-              uint8_t const * s = s_memory + src;
+              uint8_t const * s = s_state.memory + src;
               for (int32_t i = 0; i < n; ++i)
                 d[i] = s[i];
               regs16[REG_SI] += n;
@@ -1245,13 +1213,13 @@ void IRAM_ATTR i8086::step()
         uint8_t op   = *opcode_stream;
         int32_t port = (op & 8) ? regs16[REG_DX] : opcode_stream[1];
         if (op & 2) {
-          s_writePort(s_context, port, regs8[REG_AL]);
+          s_state.writePort(s_state.context, port, regs8[REG_AL]);
           if (op & 1)
-            s_writePort(s_context, port + 1, regs8[REG_AH]);
+            s_state.writePort(s_state.context, port + 1, regs8[REG_AH]);
         } else {
-          regs8[REG_AL] = s_readPort(s_context, port);
+          regs8[REG_AL] = s_state.readPort(s_state.context, port);
           if (op & 1)
-            regs8[REG_AH] = s_readPort(s_context, port + 1);
+            regs8[REG_AH] = s_state.readPort(s_state.context, port + 1);
         }
         reg_ip += (op & 8) ? 1 : 2;
         return;
@@ -1963,17 +1931,17 @@ void IRAM_ATTR i8086::stepEx(uint8_t const * opcode_stream)
     ex_21: // IN AL/AX, DX/imm8
     {
       int32_t port = extra ? regs16[REG_DX] : (uint8_t) i_data0;
-      regs8[REG_AL] = s_readPort(s_context, port);
+      regs8[REG_AL] = s_state.readPort(s_state.context, port);
       if (i_w)
-        regs8[REG_AH] = s_readPort(s_context, port + 1);
+        regs8[REG_AH] = s_state.readPort(s_state.context, port + 1);
       goto ex_done;
     }
     ex_22: // OUT DX/imm8, AL/AX
     {
       int32_t port = extra ? regs16[REG_DX] : (uint8_t) i_data0;
-      s_writePort(s_context, port, regs8[REG_AL]);
+      s_state.writePort(s_state.context, port, regs8[REG_AL]);
       if (i_w)
-        s_writePort(s_context, port + 1, regs8[REG_AH]);
+        s_state.writePort(s_state.context, port + 1, regs8[REG_AH]);
       goto ex_done;
     }
     ex_30: // CBW
@@ -2089,7 +2057,7 @@ bool __attribute__((noinline)) i8086::stepExCold(uint8_t const * opcode_stream, 
       break;
     case 49: // HLT
       //printf("CPU HALT, IP = %04X:%04X, AX = %04X, BX = %04X, CX = %04X, DX = %04X\n", regs16[REG_CS], reg_ip, regs16[REG_AX], regs16[REG_BX], regs16[REG_CX], regs16[REG_DX]);
-      s_halted = true;
+      s_state.halted = true;
       return true; // no calc ip, no flags
     case 51: // 80186, NEC V20: ENTER
     {
