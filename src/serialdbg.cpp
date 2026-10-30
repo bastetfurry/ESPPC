@@ -569,6 +569,7 @@ void SerialDebug::help()
   write("  t                 show the trace so far;  t off  stop it and free the buffer\r\n");
   write("  c [s]             free CPU time on the video core, measured over s seconds (default 2)\r\n");
   write("  a                 benchmark the OPL2 synthesiser: all nine channels, one second of samples\r\n");
+  write("  n                 load latency of internal RAM and guest RAM (PSRAM), in CPU cycles\r\n");
   write("  m on|off          video memory statistics: count and time the guest's accesses; m  report\r\n");
   write("  y on|off          per opcode CPU profile (cycles and counts); y  report the top 24\r\n");
   write("  s [n]             single step n instructions, then show registers\r\n");
@@ -1550,6 +1551,43 @@ void SerialDebug::cmdOPLBench()
 }
 
 
+// Load latency as the CPU core sees it, on its core and through its cache: chains of dependent
+// 32 bit loads, each address made from the value loaded before (ANDed with a zero the compiler
+// cannot see), so no load starts before the one ahead of it has ended. Guest RAM is only read.
+// The first line is the loop on internal RAM, the floor the others are measured against.
+void SerialDebug::cmdLatency()
+{
+  constexpr int N = 100000;
+  static volatile uint32_t zeroSrc = 0;
+  uint32_t zero = zeroSrc;
+
+  auto chase = [&](uint8_t const * base, uint32_t stride, uint32_t mask) -> uint32_t {
+    uint32_t i = 0;
+    uint32_t t = esp_cpu_get_cycle_count();
+    for (int n = 0; n < N; ++n) {
+      uint32_t v = *(uint32_t const volatile *)(base + i);
+      i = (i + stride + (v & zero)) & mask;
+    }
+    return (esp_cpu_get_cycle_count() - t + N / 2) / N;
+  };
+
+  auto dram = (uint8_t *) heap_caps_calloc(1, 4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!dram) {
+    write("no internal memory for the test\r\n");
+    return;
+  }
+  uint8_t const * guest = m_machine->memory();
+  writeFmt("  %-40s %4u cycles per load\r\n", "internal RAM, one word",            (unsigned) chase(dram, 0, 0));
+  // what every l32r does: its literal is in IRAM, next to the code (step() itself here)
+  writeFmt("  %-40s %4u cycles per load\r\n", "IRAM, one word",
+           (unsigned) chase((uint8_t const *)((uintptr_t) &i8086::step & ~3u), 0, 0));
+  writeFmt("  %-40s %4u cycles per load\r\n", "guest RAM (PSRAM), one word",       (unsigned) chase(guest, 0, 0));
+  writeFmt("  %-40s %4u cycles per load\r\n", "guest RAM, 4 KB in 32 byte steps",  (unsigned) chase(guest, 32, 0xffc));
+  writeFmt("  %-40s %4u cycles per load\r\n", "guest RAM, spread over 1 MB",       (unsigned) chase(guest, 0x10420, 0xffffc));
+  free(dram);
+}
+
+
 void SerialDebug::runMonitor()
 {
   write("\r\n--- monitor, the guest is frozen. '?' for help, 'g' to resume ---\r\n");
@@ -1614,6 +1652,7 @@ void SerialDebug::runMonitor()
       case 't': cmdPortTrace(p); break;
       case 'c': cmdCoreLoad(p);  break;
       case 'a': cmdOPLBench();   break;
+      case 'n': cmdLatency();    break;
       case 'm': cmdVideoStats(p); break;
       case 'y': cmdOpProfile(p); break;
       case '?': help();          break;
